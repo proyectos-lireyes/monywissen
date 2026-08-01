@@ -331,8 +331,35 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
               <div>
                 <label className="text-xs font-bold text-slate-500 block mb-1">Comprobante de Pago / Compra (Imagen)</label>
                 <div className="flex items-center gap-2">
-                  <label className="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold cursor-pointer transition-colors border border-slate-200 dark:border-slate-700 flex items-center gap-1.5">
-                    📷 Adjuntar Imagen
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const { Camera: CapCamera, CameraResultType, CameraSource } = await import('@capacitor/camera');
+                        const image = await CapCamera.getPhoto({
+                          quality: 80,
+                          allowEditing: false,
+                          resultType: CameraResultType.DataUrl,
+                          source: CameraSource.Camera,
+                          promptLabelHeader: 'Tomar Foto',
+                          promptLabelPhoto: 'De la Galería',
+                          promptLabelPicture: 'Tomar Foto'
+                        });
+                        if (image.dataUrl) {
+                          setReceiptImg(image.dataUrl);
+                        }
+                      } catch (err) {
+                        console.error('Error tomando foto:', err);
+                      }
+                    }}
+                    className="flex-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold transition-colors border border-slate-200 dark:border-slate-700 flex items-center justify-center gap-1.5"
+                  >
+                    <span className="text-base">📸</span>
+                    <span>Tomar Foto</span>
+                  </button>
+                  <label className="flex-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold cursor-pointer transition-colors border border-slate-200 dark:border-slate-700 flex items-center justify-center gap-1.5">
+                    <span className="text-base">🖼️</span>
+                    <span>Galería</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -348,7 +375,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                     />
                   </label>
                   {receiptImg && (
-                    <div className="relative group">
+                    <div className="relative group shrink-0">
                       <img src={receiptImg} alt="Comprobante" className="w-10 h-10 object-cover rounded-lg border border-slate-300" />
                       <button
                         type="button"

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { calculateSharedSettlement, formatCurrency, formatDateStr, todayStr } from '../../utils/financialEngine';
 import { QRCodeImage } from '../common/QRCodeImage';
+import { QRScanner } from '../common/QRScanner';
 import {
   Users,
   Handshake,
@@ -20,7 +21,8 @@ import {
   Image as ImageIcon,
   Paperclip,
   Eye,
-  DollarSign
+  DollarSign,
+  Camera
 } from 'lucide-react';
 import { SharedGroup, P2PLoan, Contact, CurrencyCode } from '../../types';
 import { db } from '../../utils/firebase';
@@ -83,10 +85,67 @@ export const MonySharedView: React.FC = () => {
   // Contact Creation & QR Modal state
   const [showAddContactModal, setShowAddContactModal] = useState(false);
   const [showQRScanModal, setShowQRScanModal] = useState(false);
+  const [showQRCamera, setShowQRCamera] = useState(false);
   const [qrScanInput, setQrScanInput] = useState('');
   const [contactAliasInput, setContactAliasInput] = useState('');
   const [contactEmailInput, setContactEmailInput] = useState('');
   const [contactPhoneInput, setContactPhoneInput] = useState('');
+
+  const handleQRScanSuccess = (decodedText: string) => {
+    setShowQRCamera(false);
+    setQrScanInput(decodedText);
+    setTimeout(() => {
+      handleParseQRContactString(decodedText);
+    }, 100);
+  };
+
+  const handleParseQRContactString = (text: string) => {
+    if (!text.trim()) {
+      showToast('No hay contenido en el QR', '⚠️');
+      return;
+    }
+    
+    let parsedAlias = '';
+    let parsedEmail = '';
+    let parsedPhone = '';
+
+    try {
+      const data = JSON.parse(text.trim());
+      if (data.alias || data.name || data.email || data.type === 'monywissen_contact') {
+        parsedAlias = data.alias || data.name || '';
+        parsedEmail = data.email || '';
+        parsedPhone = data.phone || data.telefono || '';
+      }
+    } catch {
+      const lines = text.split('\n');
+      lines.forEach(l => {
+        const lower = l.toLowerCase();
+        if (lower.includes('nombre:') || lower.includes('alias:')) parsedAlias = l.split(':')[1]?.trim() || '';
+        if (lower.includes('correo:') || lower.includes('email:')) parsedEmail = l.split(':')[1]?.trim() || '';
+        if (lower.includes('telefono:') || lower.includes('teléfono:') || lower.includes('phone:')) parsedPhone = l.split(':')[1]?.trim() || '';
+      });
+      if (!parsedAlias && !parsedEmail && !parsedPhone && text.length < 50) {
+        parsedAlias = text.trim();
+      }
+    }
+
+    if (!parsedAlias && !parsedEmail && !parsedPhone) {
+      showToast('No se pudo identificar un contacto en el código QR', '❌');
+      return;
+    }
+
+    setContactAliasInput(parsedAlias || 'Contacto QR');
+    setContactEmailInput(parsedEmail);
+    setContactPhoneInput(parsedPhone);
+    setShowQRScanModal(false);
+    setShowAddContactModal(true);
+    showToast('Datos de contacto extraídos del QR exitosamente', '🪪');
+  };
+
+  const handleParseQRContact = () => {
+    handleParseQRContactString(qrScanInput);
+  };
+
 
   const groups = profile.sharedAccounts || [];
   const loans = profile.p2p || [];
@@ -219,48 +278,6 @@ export const MonySharedView: React.FC = () => {
     setShowGroupExpenseModal(false);
   };
 
-  const handleParseQRContact = () => {
-    if (!qrScanInput.trim()) {
-      showToast('Pega o ingresa el texto del código QR', '⚠️');
-      return;
-    }
-
-    let parsedAlias = '';
-    let parsedEmail = '';
-    let parsedPhone = '';
-
-    try {
-      const data = JSON.parse(qrScanInput.trim());
-      parsedAlias = data.alias || data.name || '';
-      parsedEmail = data.email || '';
-      parsedPhone = data.phone || '';
-    } catch {
-      // Fallback text parsing if not strict JSON
-      const lines = qrScanInput.split('\n');
-      lines.forEach(l => {
-        if (l.toLowerCase().includes('alias:') || l.toLowerCase().includes('nombre:')) {
-          parsedAlias = l.split(':')[1]?.trim() || '';
-        } else if (l.toLowerCase().includes('correo:') || l.includes('@')) {
-          parsedEmail = l.split(':')[1]?.trim() || l.trim();
-        } else if (l.toLowerCase().includes('teléfono:') || l.toLowerCase().includes('telefono:')) {
-          parsedPhone = l.split(':')[1]?.trim() || '';
-        }
-      });
-      if (!parsedAlias && lines[0]) parsedAlias = lines[0].trim();
-    }
-
-    if (!parsedAlias && !parsedEmail) {
-      showToast('No se pudo identificar un contacto en el texto QR', '❌');
-      return;
-    }
-
-    setContactAliasInput(parsedAlias || 'Contacto QR');
-    setContactEmailInput(parsedEmail || `${parsedAlias.toLowerCase().replace(/\s+/g, '')}@mony.app`);
-    setContactPhoneInput(parsedPhone);
-    setShowQRScanModal(false);
-    setShowAddContactModal(true);
-    showToast('Datos de contacto extraídos del QR', '🪪');
-  };
 
   const openAddContactModal = () => {
     setContactAliasInput('');
@@ -886,9 +903,16 @@ export const MonySharedView: React.FC = () => {
                   setShowQRScanModal(true);
                 }}
                 className="px-3 py-2 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-indigo-200 dark:border-indigo-800 transition-colors"
-                title="Escanear o agregar por QR"
+                title="Pegar texto QR"
               >
-                <QrCode className="w-3.5 h-3.5" /> Agregar por QR
+                <QrCode className="w-3.5 h-3.5" /> Pegar QR
+              </button>
+              <button
+                onClick={() => setShowQRCamera(true)}
+                className="px-3 py-2 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-emerald-200 dark:border-emerald-800 transition-colors"
+                title="Escanear con Cámara"
+              >
+                <Camera className="w-3.5 h-3.5" /> Escanear QR
               </button>
               <button
                 onClick={openAddContactModal}
@@ -1201,9 +1225,35 @@ export const MonySharedView: React.FC = () => {
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">Comprobante / Captura (Opcional)</label>
                 <div className="flex items-center gap-2">
-                  <label className="flex-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-dashed border-slate-300 dark:border-slate-600 rounded-xl cursor-pointer text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const { Camera: CapCamera, CameraResultType, CameraSource } = await import('@capacitor/camera');
+                        const image = await CapCamera.getPhoto({
+                          quality: 80,
+                          allowEditing: false,
+                          resultType: CameraResultType.DataUrl,
+                          source: CameraSource.Camera,
+                          promptLabelHeader: 'Tomar Foto',
+                          promptLabelPhoto: 'De la Galería',
+                          promptLabelPicture: 'Tomar Foto'
+                        });
+                        if (image.dataUrl) {
+                          setP2PForm(prev => ({ ...prev, receiptImg: image.dataUrl as string }));
+                        }
+                      } catch (err) {
+                        console.error('Error tomando foto:', err);
+                      }
+                    }}
+                    className="flex-1 px-2 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-dashed border-slate-300 dark:border-slate-600 rounded-xl cursor-pointer text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center justify-center gap-1.5"
+                  >
+                    <Camera className="w-4 h-4 text-blue-600" />
+                    <span className="truncate">Cámara</span>
+                  </button>
+                  <label className="flex-1 px-2 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-dashed border-slate-300 dark:border-slate-600 rounded-xl cursor-pointer text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center justify-center gap-1.5">
                     <Paperclip className="w-4 h-4 text-blue-600" />
-                    <span>{p2pForm.receiptImg ? 'Adjuntado ✅' : 'Subir Imagen de Pago'}</span>
+                    <span className="truncate">Galería</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -1224,10 +1274,11 @@ export const MonySharedView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setPreviewReceiptImg(p2pForm.receiptImg)}
-                      className="p-2 bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300 rounded-xl"
+                      className="p-2 bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300 rounded-xl shrink-0"
                       title="Ver Comprobante"
                     >
-                      <Eye className="w-4 h-4" />
+                      <span className="text-[10px] font-black mr-1">✅</span>
+                      <Eye className="w-4 h-4 inline" />
                     </button>
                   )}
                 </div>
@@ -1290,23 +1341,62 @@ export const MonySharedView: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">Comprobante de Abono (Opcional)</label>
-                <label className="w-full px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-dashed border-slate-300 dark:border-slate-600 rounded-xl cursor-pointer text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center justify-center gap-2">
-                  <Paperclip className="w-4 h-4 text-emerald-600" />
-                  <span>{abonoReceipt ? 'Comprobante Listo ✅' : 'Subir Foto de Transferencia'}</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={e => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onload = ev => setAbonoReceipt(ev.target?.result as string);
-                        reader.readAsDataURL(file);
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const { Camera: CapCamera, CameraResultType, CameraSource } = await import('@capacitor/camera');
+                        const image = await CapCamera.getPhoto({
+                          quality: 80,
+                          allowEditing: false,
+                          resultType: CameraResultType.DataUrl,
+                          source: CameraSource.Camera,
+                          promptLabelHeader: 'Tomar Foto',
+                          promptLabelPhoto: 'De la Galería',
+                          promptLabelPicture: 'Tomar Foto'
+                        });
+                        if (image.dataUrl) {
+                          setAbonoReceipt(image.dataUrl as string);
+                        }
+                      } catch (err) {
+                        console.error('Error tomando foto:', err);
                       }
                     }}
-                    className="hidden"
-                  />
-                </label>
+                    className="flex-1 px-2 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-dashed border-slate-300 dark:border-slate-600 rounded-xl cursor-pointer text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center justify-center gap-1.5"
+                  >
+                    <Camera className="w-4 h-4 text-emerald-600" />
+                    <span>Cámara</span>
+                  </button>
+                  <label className="flex-1 px-2 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-dashed border-slate-300 dark:border-slate-600 rounded-xl cursor-pointer text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center justify-center gap-1.5">
+                    <Paperclip className="w-4 h-4 text-emerald-600" />
+                    <span>Galería</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={e => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = ev => setAbonoReceipt(ev.target?.result as string);
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                  {abonoReceipt && (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewReceiptImg(abonoReceipt)}
+                      className="p-2 bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300 rounded-xl shrink-0"
+                      title="Ver Comprobante"
+                    >
+                      <span className="text-[10px] font-black mr-1">✅</span>
+                      <Eye className="w-4 h-4 inline" />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1695,6 +1785,13 @@ export const MonySharedView: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {showQRCamera && (
+        <QRScanner
+          onClose={() => setShowQRCamera(false)}
+          onScanSuccess={handleQRScanSuccess}
+        />
       )}
     </div>
   );

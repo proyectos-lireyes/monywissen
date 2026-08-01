@@ -26,6 +26,9 @@ jobs:
       - name: 3. Instalar Dependencias
         run: npm ci || npm install
 
+      - name: 3.5. Instalar Capacitor
+        run: npm install @capacitor/core @capacitor/cli @capacitor/android
+
       - name: 4. Compilar Aplicación Web (Vite + React)
         run: npm run build
 
@@ -44,6 +47,21 @@ jobs:
             npx cap init Monywissen com.monywissen.app --web-dir dist
             npx cap add android
           fi
+          
+          # Añadir permisos necesarios al AndroidManifest.xml
+          MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST_PATH" ]; then
+            # Eliminar posibles duplicados y añadir permisos
+            sed -i '/<application/i \
+            <uses-permission android:name="android.permission.INTERNET" />\
+            <uses-permission android:name="android.permission.CAMERA" />\
+            <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\
+            <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\
+            <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\
+            <uses-feature android:name="android.hardware.camera" android:required="false" />\
+            <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />' "$MANIFEST_PATH"
+          fi
+          
           npx cap copy android
           npx cap sync android
 
