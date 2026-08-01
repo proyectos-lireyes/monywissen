@@ -1,0 +1,29 @@
+{
+  "entities": {
+    "users": {
+      "title": "Users",
+      "description": "User profile registrations",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "alias": { "type": "string" },
+        "alias_lower": { "type": "string" },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["email", "alias"]
+    },
+    "backups": {
+      "title": "Backups",
+      "description": "Full application state backups per user",
+      "type": "object",
+      "properties": {
+        "userEmail": { "type": "string" },
+        "dataPayload": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userEmail"]
+    }
+  }
+}

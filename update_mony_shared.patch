@@ -1,0 +1,149 @@
+--- src/components/shared/MonySharedView.tsx
++++ src/components/shared/MonySharedView.tsx
+@@ -2,6 +2,7 @@
+ import { useApp } from '../../context/AppContext';
+ import { calculateSharedSettlement, formatCurrency, formatDateStr, todayStr } from '../../utils/financialEngine';
+ import {
+   Users,
+   Handshake,
+   BookOpen,
+@@ -14,6 +15,8 @@
+   XCircle,
+   UserPlus
+ } from 'lucide-react';
+ import { SharedGroup, P2PLoan, Contact } from '../../types';
++import { db } from '../../utils/firebase';
++import { collection, query, where, getDocs, limit } from 'firebase/firestore';
+ 
+ export const MonySharedView: React.FC = () => {
+@@ -25,6 +28,8 @@
+   const [showSearchModal, setShowSearchModal] = useState(false);
+   const [searchQuery, setSearchQuery] = useState('');
++  const [isSearching, setIsSearching] = useState(false);
++  const [searchResults, setSearchResults] = useState<any[]>([]);
+ 
+   const groups = profile.sharedAccounts || [];
+   const loans = profile.p2p || [];
+@@ -142,21 +147,51 @@
+   };
+ 
+   const handleFindOnNetwork = () => {
+-    const search = prompt('Buscar personas en la red por Email o Alias:');
+-    if (!search) return;
+-
+-    // Simulate network search
+-    setTimeout(() => {
+-      const found = confirm(`Se encontró un usuario en la red que coincide con "${search}". ¿Deseas agregarlo a tus contactos?`);
+-      if (found) {
+-        updateProfileData(draft => {
+-          draft.settings.contacts = draft.settings.contacts || [];
+-          draft.settings.contacts.push({ alias: search.split('@')[0], email: search.includes('@') ? search : `${search}@monywissen.net` });
+-        });
+-        showToast(`Usuario de la red agregado`, '🌐');
+-      } else {
+-        showToast(`Búsqueda cancelada`, 'ℹ️');
++    setShowSearchModal(true);
++    setSearchResults([]);
++    setSearchQuery('');
++  };
++
++  const executeCloudSearch = async () => {
++    const term = searchQuery.trim().toLowerCase();
++    if (!term) return;
++
++    setIsSearching(true);
++    setSearchResults([]);
++
++    try {
++      let q;
++      if (term.includes('@')) {
++        q = query(collection(db, 'users'), where('email', '==', term));
++      } else {
++        const endTerm = term.slice(0, -1) + String.fromCharCode(term.charCodeAt(term.length - 1) + 1);
++        q = query(
++          collection(db, 'users'),
++          where('alias_lower', '>=', term),
++          where('alias_lower', '<', endTerm),
++          limit(10)
++        );
+       }
+-    }, 800);
++
++      const snap = await getDocs(q);
++      const results = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
++      setSearchResults(results);
++    } catch (error) {
++      console.error("Error en búsqueda Cloud:", error);
++      showToast("Error al conectar con la red", "❌");
++    } finally {
++      setIsSearching(false);
++    }
++  };
++
++  const addFromCloud = (user: any) => {
++    updateProfileData(draft => {
++      draft.settings.contacts = draft.settings.contacts || [];
++      if (!draft.settings.contacts.find(c => c.email === user.email)) {
++        draft.settings.contacts.push({ alias: user.alias, email: user.email, phone: user.phone || '' });
++      }
++    });
++    showToast(`Contacto ${user.alias} guardado`, '✅');
++    setShowSearchModal(false);
+   };
+ 
+@@ -433,6 +468,54 @@
+               </div>
+             </div>
+           </div>
+         </div>
+       )}
++
++      {/* Cloud Search Modal */}
++      {showSearchModal && (
++        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
++          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-md w-full space-y-4 shadow-2xl">
++            <div className="flex items-center justify-between">
++              <h3 className="text-base font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-2">
++                <Search className="w-5 h-5" /> Directorio Monywissen
++              </h3>
++              <button onClick={() => setShowSearchModal(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
++                <XCircle className="w-6 h-6" />
++              </button>
++            </div>
++            <div className="flex gap-2">
++              <input
++                type="text"
++                value={searchQuery}
++                onChange={e => setSearchQuery(e.target.value)}
++                onKeyDown={e => e.key === 'Enter' && executeCloudSearch()}
++                placeholder="Buscar por Alias o Email..."
++                className="flex-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
++              />
++              <button onClick={executeCloudSearch} disabled={isSearching} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold disabled:opacity-50">
++                {isSearching ? '...' : 'Buscar'}
++              </button>
++            </div>
++            <div className="max-h-60 overflow-y-auto space-y-2">
++              {searchResults.length === 0 && !isSearching && searchQuery && (
++                <p className="text-xs text-slate-500 text-center py-4">No se encontraron usuarios.</p>
++              )}
++              {searchResults.map(user => (
++                <div key={user.id} className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 rounded-xl flex items-center justify-between">
++                  <div>
++                    <p className="text-sm font-bold text-slate-900 dark:text-slate-100">👤 {user.alias}</p>
++                    <p className="text-[10px] text-slate-500 font-mono">✉️ {user.email}</p>
++                  </div>
++                  <button
++                    onClick={() => addFromCloud(user)}
++                    className="px-3 py-1.5 bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 rounded-lg text-xs font-bold"
++                  >
++                    ➕ Agregar
++                  </button>
++                </div>
++              ))}
++            </div>
++          </div>
++        </div>
++      )}
+     </div>
+   );

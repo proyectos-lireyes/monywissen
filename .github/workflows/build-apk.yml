@@ -1,0 +1,78 @@
+name: Compilar APK Android - Monywissen
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: Compilar Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Descargar Código Fuente
+        uses: actions/checkout@v4
+
+      - name: 2. Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 3. Instalar Dependencias
+        run: npm ci || npm install
+
+      - name: 4. Compilar Aplicación Web (Vite + React)
+        run: npm run build
+
+      - name: 5. Configurar Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: 6. Configurar SDK Android
+        uses: android-actions/setup-android@v3
+
+      - name: 7. Inicializar Capacitor Android (Si no existe)
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap init Monywissen com.monywissen.app --web-dir dist
+            npx cap add android
+          fi
+          npx cap copy android
+          npx cap sync android
+
+      - name: 8. Compilar APK con Gradle
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: 9. Guardar Artefacto APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: monywissen-app-debug.apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+      - name: 10. Renombrar APK y Preparar Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          mv android/app/build/outputs/apk/debug/app-debug.apk android/app/build/outputs/apk/debug/monywissen-$VERSION.apk
+
+      - name: 11. Crear Release en GitHub (Si es una etiqueta de versión)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: android/app/build/outputs/apk/debug/monywissen-*.apk
+          body: |
+            🎉 Nueva versión de Monywissen compilada automáticamente.
+            Descarga el archivo APK e instálalo en tu dispositivo Android.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

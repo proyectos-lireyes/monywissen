@@ -1,0 +1,6 @@
+{
+  "name": "Monywissen",
+  "description": "Asistente Financiero Activo: Gestión de presupuestos, proyecciones, deudas, ahorros en divisas, cuentas compartidas y préstamos P2P.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
