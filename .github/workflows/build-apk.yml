@@ -62,6 +62,19 @@ jobs:
             <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />' "$MANIFEST_PATH"
           fi
           
+          # Forzar versiones de androidx.core compatibles con compileSdk 35
+          cat << 'EOF' >> android/build.gradle
+
+allprojects {
+    configurations.all {
+        resolutionStrategy {
+            force 'androidx.core:core:1.15.0'
+            force 'androidx.core:core-ktx:1.15.0'
+        }
+    }
+}
+EOF
+          
           npx cap copy android
           npx cap sync android
 
