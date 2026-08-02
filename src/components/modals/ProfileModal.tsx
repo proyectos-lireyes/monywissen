@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { UserIcon, Plus, Edit2, Trash2, X, CreditCard, QrCode, LogOut, LogIn } from 'lucide-react';
+import { UserIcon, Plus, Edit2, Trash2, X, CreditCard, QrCode, LogOut, LogIn, AlertOctagon } from 'lucide-react';
+import { requestAccountDeletion } from '../../utils/firebase';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -208,16 +209,37 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
             </button>
 
             {state.authUser && (
-              <button
-                type="button"
-                onClick={() => {
-                  logoutUser();
-                  onClose();
-                }}
-                className="w-full py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 border border-rose-200 dark:border-rose-800/60"
-              >
-                <LogOut className="w-3.5 h-3.5" /> Cerrar Sesión ({state.authUser.email})
-              </button>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    logoutUser();
+                    onClose();
+                  }}
+                  className="w-full py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 border border-slate-200 dark:border-slate-700"
+                >
+                  <LogOut className="w-3.5 h-3.5" /> Cerrar Sesión ({state.authUser.email})
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (window.confirm('¿Estás seguro de que deseas eliminar tu cuenta definitivamente? Tendrás 7 días para recuperarla volviendo a iniciar sesión, después se borrará de forma permanente de la nube.')) {
+                      try {
+                        if (state.authUser?.email) {
+                          await requestAccountDeletion(state.authUser.email);
+                        }
+                        logoutUser();
+                        onClose();
+                      } catch (err) {
+                        showToast('Error al solicitar eliminación de cuenta', '❌');
+                      }
+                    }
+                  }}
+                  className="w-full py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 border border-rose-200 dark:border-rose-800/60"
+                >
+                  <AlertOctagon className="w-3.5 h-3.5" /> Eliminar Cuenta Definitivamente
+                </button>
+              </div>
             )}
           </div>
         ) : (

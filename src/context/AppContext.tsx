@@ -453,12 +453,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const logoutUser = () => {
-    setState(prev => ({
-      ...prev,
+    setState({
+      ...getDefaultSeed(),
       authToken: null,
       authUser: null,
-    }));
-    showToast('Sesión cerrada', '👋');
+    });
+    showToast('Sesión cerrada y datos locales borrados', '👋');
   };
 
   const importFullState = (newState: any) => {

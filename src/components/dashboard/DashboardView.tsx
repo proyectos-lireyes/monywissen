@@ -136,7 +136,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const pieCategories: Record<string, number> = {};
   plan.forEach(e => {
     if (e.amt < 0) {
-      const cat = e.type === 'expense' ? 'Gastos Fijos' : (e.type === 'savings' ? 'Ahorros' : 'Deudas');
+      if (e.type === 'debt' && e.done) return;
+      let cat = 'Deudas';
+      if (e.type === 'expense') {
+        cat = 'Gastos Fijos';
+      } else if (e.type === 'savings') {
+        cat = 'Ahorros';
+      } else if (e.type === 'debt') {
+        cat = e.ref?.name || 'Deudas';
+      }
       pieCategories[cat] = (pieCategories[cat] || 0) + Math.abs(e.amt);
     }
   });
@@ -403,9 +411,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <YAxis stroke="#94a3b8" fontSize={10} />
                   <Tooltip formatter={(value: number) => formatCurrency(value)} />
                   <Legend />
-                  <Bar dataKey="income" name="Ingresos" fill="#10b981" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="expense" name="Gastos" fill="#ef4444" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="debt" name="Deudas" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                  <Line type="monotone" dataKey="income" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={true} />
+                  <Line type="monotone" dataKey="expense" name="Gastos" stroke="#ef4444" strokeWidth={2} dot={true} />
+                  <Line type="monotone" dataKey="debt" name="Deudas" stroke="#f59e0b" strokeWidth={2} dot={true} />
                 </ComposedChart>
               ) : (
                 <ComposedChart data={chartData}>

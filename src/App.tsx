@@ -17,6 +17,7 @@ import { ItemFormModal } from './components/modals/ItemFormModal';
 import { OccurrenceDetailModal } from './components/modals/OccurrenceDetailModal';
 import { ProfileModal } from './components/modals/ProfileModal';
 import { AuthModal } from './components/auth/AuthModal';
+import { OnboardingModal } from './components/modals/OnboardingModal';
 import { LoginScreen } from './components/auth/LoginScreen';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -247,6 +248,9 @@ const AppContent: React.FC = () => {
 
       {/* Auth Modal */}
       <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} />
+
+      {/* Onboarding Modal */}
+      <OnboardingModal />
     </div>
   );
 };

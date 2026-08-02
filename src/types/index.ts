@@ -16,6 +16,7 @@ export interface UserSettings {
   myEmail?: string;
   myAlias?: string;
   myPhone?: string;
+  onboardingCompleted?: boolean;
   notificationsEnabled?: boolean;
   notifTime?: string;
   defaultChart?: number; // 0: Lines, 1: Bars, 2: Doughnut

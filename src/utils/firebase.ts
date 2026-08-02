@@ -62,11 +62,30 @@ export async function registerUserInFirebase(email: string, alias: string, phone
         alias_lower: alias.toLowerCase().trim(),
         phone,
         updatedAt: new Date().toISOString(),
+        deletionRequestedAt: null, // Cancel any pending deletion
+        deletionScheduledFor: null,
       }, { merge: true });
       return { isNew: false, data: userSnap.data() };
     }
   } catch (error) {
     console.error('Firebase registerUser error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Request account deletion
+ */
+export async function requestAccountDeletion(email: string) {
+  try {
+    if (!email) return;
+    const userRef = doc(db, 'users', email.toLowerCase().trim());
+    await setDoc(userRef, {
+      deletionRequestedAt: new Date().toISOString(),
+      deletionScheduledFor: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days
+    }, { merge: true });
+  } catch (error) {
+    console.error('Error requesting account deletion:', error);
     throw error;
   }
 }
