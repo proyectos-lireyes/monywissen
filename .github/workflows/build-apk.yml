@@ -80,7 +80,7 @@ jobs:
       - name: 8. Compilar APK con Gradle
         run: |
           cd android
-          gradle wrapper --gradle-version 8.10.2
+          sed -i 's/distributionUrl=.*/distributionUrl=https\\\:\/\/services.gradle.org\/distributions\/gradle-8.10.2-bin.zip/g' gradle/wrapper/gradle-wrapper.properties
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
