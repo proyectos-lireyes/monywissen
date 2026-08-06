@@ -80,7 +80,7 @@ jobs:
       - name: 7.5. Configurar Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: '8.10.2'
+          gradle-version: '8.13'
 
       - name: 8. Compilar APK con Gradle
         run: |

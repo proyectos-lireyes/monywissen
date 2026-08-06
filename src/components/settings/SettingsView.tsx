@@ -15,6 +15,7 @@ import {
   UserCheck,
   LogOut,
   LogIn,
+  Trash2,
 } from 'lucide-react';
 import { registerUserInFirebase, backupStateToFirebase, restoreStateFromFirebase } from '../../utils/firebase';
 
@@ -24,7 +25,30 @@ interface SettingsViewProps {
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
   const { profile, updateProfileData, showToast, state, importFullState, loginUser, logoutUser, currentProfileName, updateState, startBackgroundUpdateDownload } = useApp();
-  const [subTab, setSubTab] = useState<'rules' | 'backup' | 'about'>('about');
+  const [subTab, setSubTab] = useState<'rules' | 'backup' | 'about' | 'reset'>('about');
+
+  const [resetOptions, setResetOptions] = useState({ incomes: true, expenses: true, debts: true, savings: true, accounts: true });
+  const [showConfirmReset, setShowConfirmReset] = useState(false);
+
+  const handleResetData = () => {
+    updateProfileData(draft => {
+      if (resetOptions.incomes) draft.incomes = [];
+      if (resetOptions.expenses) draft.expenses = [];
+      if (resetOptions.debts) draft.debts = [];
+      if (resetOptions.savings) {
+        draft.savingsList = [];
+        draft.savings = { current: 0, digital: 0 };
+      }
+      if (resetOptions.accounts) {
+        draft.settings.paymentMethods = [];
+        draft.settings.customDebts = [];
+        draft.settings.openingBalance = 0;
+      }
+    });
+    showToast('Datos seleccionados eliminados correctamente', '🗑️');
+    setShowConfirmReset(false);
+    setSubTab('rules');
+  };
 
   const settings = profile.settings;
 
@@ -237,6 +261,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
             }`}
           >
             ℹ️ Acerca de
+          </button>
+          <button
+            onClick={() => setSubTab('reset')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              subTab === 'reset'
+                ? 'bg-red-50 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                : 'text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            🗑️ Reiniciar
           </button>
         </div>
 
@@ -528,6 +562,107 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                   {updateMsg}
                 </p>
               )}
+            </div>
+          </div>
+        )}
+
+        {subTab === 'reset' && (
+          <div className="space-y-4 animate-fade-in pb-12">
+            <div className="bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/30 rounded-2xl p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-900/50 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5 text-red-600 dark:text-red-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-red-900 dark:text-red-100">Reiniciar Cronograma</h3>
+                  <p className="text-xs text-red-700/80 dark:text-red-300/80">
+                    Selecciona qué datos deseas eliminar permanentemente de este perfil.
+                  </p>
+                </div>
+              </div>
+              
+              <div className="space-y-2 mt-4">
+                <label className="flex items-center gap-3 p-3 bg-white/60 dark:bg-slate-900/40 rounded-xl cursor-pointer hover:bg-white dark:hover:bg-slate-900 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={resetOptions.incomes}
+                    onChange={(e) => setResetOptions(prev => ({ ...prev, incomes: e.target.checked }))}
+                    className="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-red-300"
+                  />
+                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Borrar Ingresos</span>
+                </label>
+                <label className="flex items-center gap-3 p-3 bg-white/60 dark:bg-slate-900/40 rounded-xl cursor-pointer hover:bg-white dark:hover:bg-slate-900 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={resetOptions.expenses}
+                    onChange={(e) => setResetOptions(prev => ({ ...prev, expenses: e.target.checked }))}
+                    className="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-red-300"
+                  />
+                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Borrar Gastos Fijos</span>
+                </label>
+                <label className="flex items-center gap-3 p-3 bg-white/60 dark:bg-slate-900/40 rounded-xl cursor-pointer hover:bg-white dark:hover:bg-slate-900 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={resetOptions.debts}
+                    onChange={(e) => setResetOptions(prev => ({ ...prev, debts: e.target.checked }))}
+                    className="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-red-300"
+                  />
+                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Borrar Deudas y Cuotas</span>
+                </label>
+                <label className="flex items-center gap-3 p-3 bg-white/60 dark:bg-slate-900/40 rounded-xl cursor-pointer hover:bg-white dark:hover:bg-slate-900 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={resetOptions.savings}
+                    onChange={(e) => setResetOptions(prev => ({ ...prev, savings: e.target.checked }))}
+                    className="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-red-300"
+                  />
+                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Borrar Ahorros y Metas</span>
+                </label>
+                <label className="flex items-center gap-3 p-3 bg-white/60 dark:bg-slate-900/40 rounded-xl cursor-pointer hover:bg-white dark:hover:bg-slate-900 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={resetOptions.accounts}
+                    onChange={(e) => setResetOptions(prev => ({ ...prev, accounts: e.target.checked }))}
+                    className="w-4 h-4 text-red-600 rounded focus:ring-red-500 border-red-300"
+                  />
+                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Borrar Cuentas y Métodos de Pago</span>
+                </label>
+              </div>
+
+              <div className="mt-5">
+                {showConfirmReset ? (
+                  <div className="space-y-3 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/50 rounded-xl">
+                    <p className="text-sm font-bold text-red-800 dark:text-red-200 text-center">
+                      ¿Estás seguro? Esta acción no se puede deshacer.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmReset(false)}
+                        className="flex-1 py-2.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-sm font-bold transition-colors border border-slate-200 dark:border-slate-700"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleResetData}
+                        className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 shadow-sm transition-colors"
+                      >
+                        Sí, Limpiar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmReset(true)}
+                    disabled={!Object.values(resetOptions).some(Boolean)}
+                    className="w-full py-3 bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-sm transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" /> Ejecutar Limpieza
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}

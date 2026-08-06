@@ -34,7 +34,7 @@ export const QRScanner: React.FC<QRScannerProps> = ({ onScanSuccess, onClose }) 
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl overflow-hidden max-w-sm w-full relative shadow-2xl border border-slate-800">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl overflow-hidden max-w-sm w-full max-h-[90vh] overflow-y-auto relative shadow-2xl border border-slate-800">
         <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
           <h3 className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
             <Camera className="w-5 h-5 text-indigo-500" />

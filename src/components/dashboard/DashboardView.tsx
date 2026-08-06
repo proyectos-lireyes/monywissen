@@ -94,7 +94,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       }
       if (e.amt > 0 && e.type === 'income') chartDataMap[e.date].income += e.amt;
       if (e.amt < 0 && e.type === 'expense') chartDataMap[e.date].expense += Math.abs(e.amt);
-      if (e.amt < 0 && (e.type === 'debt' || e.type === 'cashea' || e.type === 'quoota')) chartDataMap[e.date].debt += Math.abs(e.amt);
+      if (e.amt < 0 && (e.type === 'debt' )) chartDataMap[e.date].debt += Math.abs(e.amt);
       chartDataMap[e.date].balance = e.balance;
     }
   });
@@ -116,7 +116,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       }
       if (e.amt > 0 && e.type === 'income') monthlyDataMap[monthPrefix].income += e.amt;
       if (e.amt < 0 && e.type === 'expense') monthlyDataMap[monthPrefix].expense += Math.abs(e.amt);
-      if (e.amt < 0 && (e.type === 'debt' || e.type === 'cashea' || e.type === 'quoota')) monthlyDataMap[monthPrefix].debt += Math.abs(e.amt);
+      if (e.amt < 0 && (e.type === 'debt' )) monthlyDataMap[monthPrefix].debt += Math.abs(e.amt);
     }
   });
   const monthlyData = Object.values(monthlyDataMap);

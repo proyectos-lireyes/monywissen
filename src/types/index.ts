@@ -39,6 +39,7 @@ export interface CustomDebtType {
   id: string;
   name: string;
   freq: FrequencyType;
+  dueDay?: string;
   hasInterest: boolean;
   usePlan: boolean;
   color: string;

@@ -972,7 +972,7 @@ export const MonySharedView: React.FC = () => {
       {/* Contact Profile & QR Card Modal */}
       {selectedContactDetails && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full space-y-4 shadow-2xl relative">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl relative">
             <button
               onClick={() => setSelectedContactDetails(null)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
@@ -1049,7 +1049,7 @@ export const MonySharedView: React.FC = () => {
       {/* QR Modal */}
       {showQRModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full text-center space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full max-h-[90vh] overflow-y-auto text-center space-y-4 shadow-2xl">
             <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Tu Tarjeta de Contacto</h3>
             <div className="p-4 bg-slate-100 dark:bg-slate-800 rounded-2xl flex justify-center border border-slate-200 dark:border-slate-700">
               <QRCodeImage
@@ -1074,7 +1074,7 @@ export const MonySharedView: React.FC = () => {
       {/* Cloud Search Modal */}
       {showSearchModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-md w-full space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-2">
                 <Search className="w-5 h-5" /> Directorio Monywissen
@@ -1122,7 +1122,7 @@ export const MonySharedView: React.FC = () => {
       {/* P2P Modal (Create or Edit) */}
       {showP2PModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-md w-full space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
             <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
               {editingLoanId
                 ? 'Editar Préstamo P2P'
@@ -1306,7 +1306,7 @@ export const MonySharedView: React.FC = () => {
       {/* Abono Modal */}
       {abonoLoanId !== null && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
             <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
               <DollarSign className="w-5 h-5 text-emerald-600" />
               <span>Registrar Abono Parcial</span>
@@ -1421,7 +1421,7 @@ export const MonySharedView: React.FC = () => {
       {/* Preview Receipt Modal */}
       {previewReceiptImg && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-lg w-full space-y-3 relative shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-lg w-full max-h-[90vh] overflow-y-auto space-y-3 relative shadow-2xl">
             <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
               <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                 <ImageIcon className="w-4 h-4 text-indigo-600" />
@@ -1450,7 +1450,7 @@ export const MonySharedView: React.FC = () => {
       {/* Create Group Modal */}
       {showGroupModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-md w-full space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
             <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
               <Users className="w-5 h-5 text-blue-600" />
               <span>Crear Nuevo Grupo de Gastos</span>
@@ -1599,7 +1599,7 @@ export const MonySharedView: React.FC = () => {
       {/* Add Group Expense Modal */}
       {showGroupExpenseModal && groupExpenseGroupIdx !== null && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-md w-full space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
             <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
               <Plus className="w-5 h-5 text-blue-600" />
               <span>Registrar Gasto del Grupo</span>
@@ -1687,7 +1687,7 @@ export const MonySharedView: React.FC = () => {
       {/* Add Contact Modal */}
       {showAddContactModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
             <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
               <UserPlus className="w-5 h-5 text-blue-600" />
               <span>Nuevo Contacto</span>
@@ -1749,7 +1749,7 @@ export const MonySharedView: React.FC = () => {
       {/* QR Code Reader / Parser Modal */}
       {showQRScanModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
             <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
               <QrCode className="w-5 h-5 text-indigo-600" />
               <span>Agregar Contacto por QR</span>

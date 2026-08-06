@@ -83,7 +83,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           setCutDay(item.cutDay || 5);
           setDueDay(item.dueDay || '15-30');
           setApr(item.apr || '');
-          setFreq(item.freq || (item.type === 'cashea' || item.type === 'quoota' ? 'biweekly' : 'monthly'));
+          setFreq(item.freq || 'monthly');
           setDate(item.start || todayStr());
         }
       } else if (type === 'saving') {
@@ -105,7 +105,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       setDay(1);
       setDate(todayStr());
       setDesc('');
-      setDebtType('fixed');
+      setDebtType('');
       setBalance('');
       setInstallments('');
       setCutDay(5);
@@ -210,13 +210,28 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
         else draft.expenses.push(item);
       } else if (type === 'debt') {
         const finalDueDay = freq === 'biweekly' ? dueDay : (dueDay || day);
+        
+        let calculatedAmount = numAmt;
+        const bal = parseFloat(String(balance)) || numAmt;
+        const inst = parseInt(String(installments), 10) || 1;
+        
+        if (calculatedAmount === 0 && bal > 0) {
+            const hasInt = debtType === 'loan_interest' || debtType === 'card' || (profile.settings.customDebts && profile.settings.customDebts.find(d => d.id === debtType)?.hasInterest);
+            if (hasInt && parseFloat(String(apr) || '0') > 0) {
+                const r = (parseFloat(String(apr)) / 100) / 12;
+                calculatedAmount = bal * (r * Math.pow(1 + r, inst)) / (Math.pow(1 + r, inst) - 1);
+            } else {
+                calculatedAmount = bal / inst;
+            }
+        }
+
         const item: DebtItem = {
           id: editIndex !== null ? draft.debts[editIndex].id : `debt_${Date.now()}`,
           name,
           type: debtType,
           balance: parseFloat(String(balance)) || numAmt,
-          amount: numAmt,
-          minPay: numAmt,
+          amount: calculatedAmount,
+          minPay: calculatedAmount,
           installments: parseInt(String(installments), 10) || 1,
           start: date,
           currency: currency as any,
@@ -224,6 +239,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           dueDay: finalDueDay,
           freq: debtType === 'card' ? 'monthly' : freq,
           apr: apr ? parseFloat(String(apr)) : undefined,
+          hasInterest: (debtType === 'loan_interest' || debtType === 'card' || (profile.settings.customDebts && profile.settings.customDebts.find(d => d.id === debtType)?.hasInterest)) ? true : false,
         };
 
         if (editIndex !== null) draft.debts[editIndex] = item;
@@ -264,8 +280,8 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
-        <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800 shrink-0">
           <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
             {editIndex !== null ? 'Editar Registro' : 'Nuevo Registro'}
           </h3>
@@ -274,440 +290,321 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-3">
-          {type === 'saving' ? (
-            <>
-              <div>
-                <label className="text-xs font-bold text-slate-500">Concepto / Vendedor</label>
-                <input
-                  type="text"
-                  required
-                  value={savPerson}
-                  onChange={e => setSavPerson(e.target.value)}
-                  placeholder="Ej. Cambio de efectivo"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-bold text-slate-500">Monto</label>
-                  <input
-                    type="number"
-                    required
-                    value={amount}
-                    onChange={e => setAmount(e.target.value)}
-                    placeholder="Ej. 100"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-500">Moneda</label>
-                  <select
-                    value={currency}
-                    onChange={e => setCurrency(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="USD_BCV">USD (BCV)</option>
-                    <option value="USDT">USDT</option>
-                    <option value="EUR_BCV">EUR (BCV)</option>
-                    <option value="BS">Bs.</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-500">Modalidad</label>
-                <select
-                  value={savType}
-                  onChange={e => setSavType(e.target.value as any)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                >
-                  <option value="physical">💵 Efectivo (Físico)</option>
-                  <option value="digital">🌐 Digital (Plataforma)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-500 block mb-1">Comprobante de Pago / Compra (Imagen)</label>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        const { Camera: CapCamera, CameraResultType, CameraSource } = await import('@capacitor/camera');
-                        const image = await CapCamera.getPhoto({
-                          quality: 80,
-                          allowEditing: false,
-                          resultType: CameraResultType.DataUrl,
-                          source: CameraSource.Camera,
-                          promptLabelHeader: 'Tomar Foto',
-                          promptLabelPhoto: 'De la Galería',
-                          promptLabelPicture: 'Tomar Foto'
-                        });
-                        if (image.dataUrl) {
-                          setReceiptImg(image.dataUrl);
-                        }
-                      } catch (err) {
-                        console.error('Error tomando foto:', err);
-                      }
-                    }}
-                    className="flex-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold transition-colors border border-slate-200 dark:border-slate-700 flex items-center justify-center gap-1.5"
-                  >
-                    <span className="text-base">📸</span>
-                    <span>Tomar Foto</span>
-                  </button>
-                  <label className="flex-1 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold cursor-pointer transition-colors border border-slate-200 dark:border-slate-700 flex items-center justify-center gap-1.5">
-                    <span className="text-base">🖼️</span>
-                    <span>Galería</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={e => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const reader = new FileReader();
-                          reader.onload = ev => setReceiptImg(ev.target?.result as string);
-                          reader.readAsDataURL(file);
-                        }
-                      }}
-                      className="hidden"
-                    />
-                  </label>
-                  {receiptImg && (
-                    <div className="relative group shrink-0">
-                      <img src={receiptImg} alt="Comprobante" className="w-10 h-10 object-cover rounded-lg border border-slate-300" />
-                      <button
-                        type="button"
-                        onClick={() => setReceiptImg('')}
-                        className="absolute -top-1 -right-1 bg-rose-500 text-white text-[9px] w-4 h-4 rounded-full flex items-center justify-center font-bold"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <div>
-                <label className="text-xs font-bold text-slate-500">Nombre / Concepto</label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  placeholder="Ej. Salario, Alquiler..."
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-bold text-slate-500">Monto</label>
-                  <input
-                    type="number"
-                    required
-                    value={amount}
-                    onChange={e => setAmount(e.target.value)}
-                    placeholder="Ej. 50"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-slate-500">Moneda</label>
-                  <select
-                    value={currency}
-                    onChange={e => setCurrency(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="USD_BCV">USD (BCV)</option>
-                    <option value="USDT">USDT</option>
-                    <option value="EUR_BCV">EUR (BCV)</option>
-                    <option value="BS">Bs.</option>
-                  </select>
-                </div>
-              </div>
-
-              {(type === 'expense' || type === 'income') && (
-                <div>
-                  <label className="text-xs font-bold text-slate-500">Etiquetas (Opcional, separadas por coma)</label>
-                  <input
-                    type="text"
-                    value={tags}
-                    onChange={e => setTags(e.target.value)}
-                    placeholder="Ej. urgente, casa, personal"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-              )}
-
-              {type === 'expense' && (
-                <div>
-                  <label className="text-xs font-bold text-slate-500">Categoría (Opcional)</label>
-                  <input
-                    type="text"
-                    value={category}
-                    onChange={e => setCategory(e.target.value)}
-                    placeholder="Ej. Comida, Transporte..."
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-              )}
-
-              {type === 'debt' ? (
-                <>
+        <div className="p-5 overflow-y-auto flex-1 custom-scrollbar">
+          <form onSubmit={handleSubmit} className="space-y-3">
+            {type === 'saving' ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="text-xs font-bold text-slate-500">Tipo de Deuda</label>
+                    <label className="text-xs font-bold text-slate-500 block">Tipo</label>
                     <select
-                      value={debtType}
-                      onChange={e => {
-                        const selected = e.target.value;
-                        setDebtType(selected);
-                        if (selected === 'cashea' || selected === 'quoota') {
-                          setFreq('biweekly');
-                        } else if (selected === 'card') {
-                          setFreq('monthly');
-                        } else {
-                          const customDef = (profile.settings.customDebts || []).find(cd => cd.id === selected);
-                          if (customDef && customDef.freq) {
-                            setFreq(customDef.freq as any);
-                          }
-                        }
-                      }}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100 font-bold"
+                      value={savType}
+                      onChange={e => setSavType(e.target.value as any)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
                     >
-                      <option value="card">💳 Tarjeta de Crédito</option>
-                      <option value="fixed">🏦 Préstamo Bancario / Fijo</option>
-                      <option value="noloan">🤝 Deuda Personal / Sin Interés</option>
-                      <option value="cashea">⭐ Cashea (Quincenal)</option>
-                      <option value="quoota">⭐ Quoota (Quincenal)</option>
-                      {(profile.settings.customDebts || []).map(cd => (
-                        <option key={cd.id} value={cd.id}>⭐ {cd.name}</option>
-                      ))}
+                      <option value="physical">💵 Efectivo (Físico)</option>
+                      <option value="digital">🏦 Digital (Bancos)</option>
                     </select>
-                    {(() => {
-                      const customDef = (profile.settings.customDebts || []).find(cd => cd.id === debtType);
-                      if (!customDef) return null;
-                      return (
-                        <div className="mt-1.5 p-2 bg-indigo-50/80 dark:bg-indigo-950/40 rounded-xl border border-indigo-100 dark:border-indigo-900/50 flex items-center justify-between text-[11px] text-indigo-900 dark:text-indigo-200">
-                          <span className="font-bold flex items-center gap-1">
-                            <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: customDef.color || '#6366f1' }} />
-                            {customDef.name}
-                          </span>
-                          <span className="text-[10px] opacity-80">
-                            {customDef.freq === 'weekly' ? 'Semanal' : customDef.freq === 'biweekly' ? 'Quincenal' : 'Mensual'} • {customDef.hasInterest ? 'Con interés' : 'Sin interés'}
-                          </span>
-                        </div>
-                      );
-                    })()}
                   </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 block">Monto</label>
+                    <input
+                      type="number" required value={amount} onChange={e => setAmount(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 block">Concepto / Vendedor</label>
+                  <input
+                    type="text" required value={savPerson} onChange={e => setSavPerson(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="text-xs font-bold text-slate-500">Nombre / Concepto</label>
+                  <input
+                    type="text" required value={name} onChange={e => setName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
+                  />
+                </div>
 
-                  {debtType === 'card' ? (
-                    <div className="p-3 bg-amber-50/70 dark:bg-amber-950/30 rounded-2xl border border-amber-200 dark:border-amber-900/50 space-y-2.5">
-                      <span className="text-xs font-bold text-amber-900 dark:text-amber-200 block">💳 Configuración Tarjeta de Crédito</span>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-500 block">Día de Corte</label>
-                          <input
-                            type="number"
-                            min="1"
-                            max="31"
-                            required
-                            value={cutDay}
-                            onChange={e => setCutDay(e.target.value)}
-                            placeholder="Ej. 5"
-                            className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-500 block">Día Límite de Pago</label>
-                          <input
-                            type="number"
-                            min="1"
-                            max="31"
-                            required
-                            value={dueDay}
-                            onChange={e => setDueDay(e.target.value)}
-                            placeholder="Ej. 25"
-                            className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-500 block">Uso / Deuda Actual</label>
-                          <input
-                            type="number"
-                            required
-                            value={balance}
-                            onChange={e => setBalance(e.target.value)}
-                            placeholder="Ej. 150"
-                            className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-500 block">Pago Mínimo Cuota</label>
-                          <input
-                            type="number"
-                            required
-                            value={amount}
-                            onChange={e => setAmount(e.target.value)}
-                            placeholder="Ej. 15"
-                            className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                          />
-                        </div>
-                      </div>
+                {type === 'debt' ? (
+                  <>
+                    <div>
+                      <label className="text-xs font-bold text-slate-500">Tipo de Deuda</label>
+                      <select
+                        value={debtType}
+                        onChange={e => {
+                          const selected = e.target.value;
+                          setDebtType(selected);
+                          if (selected === 'card') {
+                             setFreq('monthly');
+                             setInstallments(1);
+                          } else {
+                             const customDef = profile.settings.customDebts?.find(d => d.id === selected);
+                             if (customDef) {
+                                setFreq(customDef.freq as any || 'monthly');
+                                setDueDay(customDef.dueDay || '1');
+                             } else {
+                                setFreq('monthly');
+                             }
+                          }
+                        }}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100 font-bold"
+                      >
+                        <option value="" disabled>Seleccione...</option>
+                        <option value="card">💳 Tarjeta de Crédito</option>
+                        <option value="loan_interest">🏦 Préstamo con Interés</option>
+                        <option value="loan_no_interest">🤝 Préstamo sin Interés</option>
+                        {profile.settings.customDebts && profile.settings.customDebts.map(cd => (
+                           <option key={cd.id} value={cd.id}>✨ {cd.name}</option>
+                        ))}
+                      </select>
                     </div>
-                  ) : (
-                    <>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-xs font-bold text-slate-500 block">Saldo Total Adeudado</label>
-                          <input
-                            type="number"
-                            required
-                            value={balance}
-                            onChange={e => setBalance(e.target.value)}
-                            placeholder="Ej. 300"
-                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs font-bold text-slate-500 block">Monto por Cuota</label>
-                          <input
-                            type="number"
-                            required
-                            value={amount}
-                            onChange={e => setAmount(e.target.value)}
-                            placeholder="Ej. 50"
-                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                          />
-                        </div>
-                      </div>
 
+                    {debtType === '' ? null : debtType === 'card' ? (
+                      <div className="p-3 bg-amber-50/70 dark:bg-amber-950/30 rounded-2xl border border-amber-200 dark:border-amber-900/50 space-y-2.5">
+                        <span className="text-xs font-bold text-amber-900 dark:text-amber-200 block">💳 Configuración Tarjeta de Crédito</span>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-500 block">Día de Corte</label>
+                            <input
+                              type="number" min="1" max="31" required value={cutDay} onChange={e => setCutDay(e.target.value)}
+                              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-500 block">Día de Cobro</label>
+                            <input
+                              type="number" min="1" max="31" required value={dueDay} onChange={e => setDueDay(e.target.value)}
+                              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-500 block">Monto Total</label>
+                            <input
+                              type="number" required value={balance} onChange={e => setBalance(e.target.value)}
+                              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-500 block">Cuotas (Meses)</label>
+                            <input
+                              type="number" min="1" required value={installments} onChange={e => setInstallments(e.target.value)}
+                              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-500 block">Tasa APR (%)</label>
+                            <input
+                              type="number" step="any" min="0" value={apr} onChange={e => setApr(e.target.value)}
+                              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            />
+                          </div>
+                        </div>
+                        {parseInt(String(installments) || '1') > 0 && parseFloat(String(balance) || '0') > 0 && (
+                           <div className="p-2 bg-amber-100/50 dark:bg-amber-900/40 rounded-xl text-[10px] font-bold text-amber-900 dark:text-amber-200 text-center">
+                              {(() => {
+                                 const bal = parseFloat(String(balance) || '0');
+                                 const inst = parseInt(String(installments) || '1');
+                                 let pmt = bal / inst;
+                                 if (parseFloat(String(apr) || '0') > 0) {
+                                    const r = (parseFloat(String(apr)) / 100) / 12;
+                                    pmt = bal * (r * Math.pow(1 + r, inst)) / (Math.pow(1 + r, inst) - 1);
+                                 }
+                                 return (
+                                   <div className="flex justify-between items-center px-2">
+                                     <span>Cuota mensual: {formatCurrency(pmt)}</span>
+                                     <span className="opacity-70">Total pagado: {formatCurrency(pmt * inst)}</span>
+                                   </div>
+                                 );
+                              })()}
+                           </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-xs font-bold text-slate-500 block">Monto Total</label>
+                            <input
+                              type="number" required value={balance} onChange={e => setBalance(e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-bold text-slate-500 block">Día de Pago</label>
+                            {freq === 'weekly' ? (
+                              <select
+                                value={dueDay} onChange={e => setDueDay(e.target.value)}
+                                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                              >
+                                <option value="1">Lunes</option>
+                                <option value="2">Martes</option>
+                                <option value="3">Miércoles</option>
+                                <option value="4">Jueves</option>
+                                <option value="5">Viernes</option>
+                                <option value="6">Sábado</option>
+                                <option value="0">Domingo</option>
+                              </select>
+                            ) : freq === 'biweekly' ? (
+                              <select
+                                value={dueDay} onChange={e => setDueDay(e.target.value)}
+                                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                              >
+                                <option value="15-30">15 y 30</option>
+                                <option value="14-28">14 y 28</option>
+                                <option value="13-27">13 y 27</option>
+                                <option value="1-15">1 y 15</option>
+                              </select>
+                            ) : freq === 'triweekly' ? (
+                              <select
+                                value={dueDay} onChange={e => setDueDay(e.target.value)}
+                                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                              >
+                                <option value="1">Semana 1</option>
+                                <option value="2">Semana 2</option>
+                                <option value="3">Semana 3</option>
+                                <option value="4">Semana 4</option>
+                              </select>
+                            ) : (
+                              <input
+                                type="number" min="1" max="31" required value={dueDay} onChange={e => setDueDay(e.target.value)}
+                                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                              />
+                            )}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-xs font-bold text-slate-500 block">Número de Cuotas</label>
+                            <input
+                              type="number" min="1" required value={installments} onChange={e => setInstallments(e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            />
+                          </div>
+                          {(debtType === 'loan_interest' || (profile.settings.customDebts && profile.settings.customDebts.find(d => d.id === debtType)?.hasInterest)) && (
+                            <div>
+                              <label className="text-xs font-bold text-slate-500 block">Interés (%)</label>
+                              <input
+                                type="number" step="any" min="0" required value={apr} onChange={e => setApr(e.target.value)}
+                                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                              />
+                            </div>
+                          )}
+                        </div>
+                        {parseInt(String(installments) || '1') > 0 && parseFloat(String(balance) || '0') > 0 && (
+                           <div className="p-2 bg-slate-100 dark:bg-slate-800/80 rounded-xl text-[10px] font-bold text-slate-700 dark:text-slate-300 text-center">
+                              {(() => {
+                                 const bal = parseFloat(String(balance) || '0');
+                                 const inst = parseInt(String(installments) || '1');
+                                 const hasInt = debtType === 'loan_interest' || (profile.settings.customDebts && profile.settings.customDebts.find(d => d.id === debtType)?.hasInterest);
+                                 let pmt = bal / inst;
+                                 if (hasInt && parseFloat(String(apr) || '0') > 0) {
+                                    // standard amortization: r = annual rate / 12
+                                    const r = (parseFloat(String(apr)) / 100) / 12;
+                                    if (r > 0) {
+                                      pmt = bal * (r * Math.pow(1 + r, inst)) / (Math.pow(1 + r, inst) - 1);
+                                    }
+                                 }
+                                 return (
+                                   <div className="flex justify-between items-center px-2">
+                                     <span>Cuota mensual: {formatCurrency(pmt)}</span>
+                                     <span className="opacity-70">Total a pagar: {formatCurrency(pmt * inst)}</span>
+                                   </div>
+                                 );
+                              })()}
+                           </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-xs font-bold text-slate-500 block">Periodicidad / Frecuencia</label>
+                        <label className="text-xs font-bold text-slate-500 block">Monto</label>
+                        <input
+                          type="number" required value={amount} onChange={e => setAmount(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-slate-500 block">Divisa</label>
                         <select
-                          value={freq}
-                          onChange={e => setFreq(e.target.value as FrequencyType)}
+                          value={currency} onChange={e => setCurrency(e.target.value)}
                           className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
                         >
-                          <option value="monthly">Mensual</option>
-                          <option value="biweekly">Quincenal</option>
-                          <option value="weekly">Semanal</option>
-                          <option value="triweekly">Trisemanal (3 Semanas)</option>
+                          <option value="USD_BCV">USD (BCV)</option>
+                          <option value="EUR_BCV">EUR (BCV)</option>
+                          <option value="USDT">USDT (Binance)</option>
+                          <option value="BS">Bs (Bolívares)</option>
                         </select>
                       </div>
-
-                      {freq === 'biweekly' && (
-                        <div className="p-2.5 bg-blue-50/70 dark:bg-blue-950/30 rounded-xl border border-blue-200 dark:border-blue-900/50 space-y-1">
-                          <label className="text-[11px] font-bold text-blue-900 dark:text-blue-200 block">Esquema Quincenal de Cobro</label>
-                          <select
-                            value={dueDay}
-                            onChange={e => setDueDay(e.target.value)}
-                            className="w-full px-3 py-1.5 rounded-xl border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                          >
-                            <option value="15-30">Días 15 y 30 (Fin de Mes)</option>
-                            <option value="13-26">Días 13 y 26</option>
-                            <option value="14-28">Días 14 y 28</option>
-                          </select>
-                        </div>
-                      )}
-
-                      {freq === 'monthly' && (
-                        <div>
-                          <label className="text-xs font-bold text-slate-500 block">Día de Vencimiento / Cobro (1-31)</label>
-                          <input
-                            type="number"
-                            min="1"
-                            max="31"
-                            value={dueDay}
-                            onChange={e => setDueDay(e.target.value)}
-                            placeholder="Ej. 15"
-                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                          />
-                        </div>
-                      )}
-
+                    </div>
+                    {forceOneTime ? (
+                      <div>
+                        <label className="text-xs font-bold text-slate-500 block">Fecha</label>
+                        <input
+                          type="date" value={date} onChange={e => setDate(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                        />
+                      </div>
+                    ) : (
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="text-xs font-bold text-slate-500 block">Número de Cuotas</label>
-                          <input
-                            type="number"
-                            value={installments}
-                            onChange={e => setInstallments(e.target.value)}
-                            placeholder="Ej. 6"
+                          <label className="text-xs font-bold text-slate-500 block">Frecuencia</label>
+                          <select
+                            value={freq} onChange={e => setFreq(e.target.value as any)}
                             className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                          />
+                          >
+                            <option value="monthly">Mensual</option>
+                            <option value="biweekly">Quincenal</option>
+                            <option value="weekly">Semanal</option>
+                          </select>
                         </div>
-                        <div>
-                          <label className="text-xs font-bold text-slate-500 block">Fecha de Inicio</label>
-                          <input
-                            type="date"
-                            value={date}
-                            onChange={e => setDate(e.target.value)}
-                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                          />
-                        </div>
+                        {freq === 'monthly' && (
+                          <div>
+                            <label className="text-xs font-bold text-slate-500 block">Día</label>
+                            <input
+                              type="number" min="1" max="31" value={day} onChange={e => setDay(e.target.value)}
+                              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                            />
+                          </div>
+                        )}
                       </div>
-                    </>
-                  )}
-                </>
-              ) : (
-                !forceOneTime && (
-                  <div>
-                    <label className="text-xs font-bold text-slate-500">Frecuencia</label>
-                    <select
-                      value={freq}
-                      onChange={e => setFreq(e.target.value as FrequencyType)}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                    >
-                      <option value="one-time">Una vez</option>
-                      <option value="weekly">Semanal</option>
-                      <option value="biweekly">Quincenal (15 y 30)</option>
-                      <option value="monthly">Mensual</option>
-                    </select>
-                  </div>
-                )
-              )}
-
-              {(freq === 'one-time' || forceOneTime) && (
-                <div>
-                  <label className="text-xs font-bold text-slate-500">Fecha</label>
-                  <input
-                    type="date"
-                    required
-                    value={date}
-                    onChange={e => setDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                  />
-                </div>
-              )}
-            </>
-          )}
-
-          <div className="flex items-center justify-end gap-2 pt-3">
-            {editIndex !== null && (
-              <button
-                type="button"
-                onClick={handleDelete}
-                className="px-3.5 py-2 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/30 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" /> Eliminar
-              </button>
+                    )}
+                  </>
+                )}
+              </>
             )}
-            <button
-              type="submit"
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors"
-            >
-              Guardar
-            </button>
-          </div>
-        </form>
+
+            <div className="pt-2 flex gap-2">
+              {editIndex !== null && (
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  className="p-3 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors border border-red-100 dark:border-red-900/50"
+                  title="Eliminar"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
+              )}
+              <button
+                type="submit"
+                className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-sm transition-colors"
+              >
+                <CheckCircle className="w-5 h-5" /> {editIndex !== null ? 'Guardar Cambios' : 'Guardar'}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   );

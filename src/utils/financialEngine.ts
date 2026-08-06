@@ -33,6 +33,14 @@ export function getDateInMonth(year: number, month: number, day: number): string
 export function advanceDateFreq(curr: Date, freq: string, dueDay?: string | number): void {
   if (freq === 'weekly') {
     curr.setDate(curr.getDate() + 7);
+    if (dueDay !== undefined) {
+      const targetDay = parseInt(String(dueDay), 10);
+      if (!isNaN(targetDay) && targetDay >= 0 && targetDay <= 6) {
+        const currentDay = curr.getDay();
+        const diff = targetDay - currentDay;
+        curr.setDate(curr.getDate() + diff);
+      }
+    }
   } else if (freq === 'biweekly') {
     const parts = String(dueDay || '15-30').split('-');
     const v1 = parseInt(parts[0], 10) || 15;
@@ -55,7 +63,14 @@ export function advanceDateFreq(curr: Date, freq: string, dueDay?: string | numb
       curr.setDate(v1);
     }
   } else if (freq === 'triweekly') {
-    curr.setDate(curr.getDate() + 21);
+    // Treat as a specific week of the month (1, 2, 3, or 4) mapped to 7, 14, 21, 28
+    const week = parseInt(String(dueDay || '1'), 10);
+    const targetDay = week * 7;
+    const m = curr.getMonth();
+    curr.setMonth(m + 1, targetDay);
+    if (curr.getMonth() !== (m + 1) % 12) {
+      curr.setDate(0);
+    }
   } else {
     const targetDay = parseInt(String(dueDay || curr.getDate()), 10);
     curr.setDate(1);
@@ -322,9 +337,12 @@ export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
       const pay = parseFloat(String(debt.amount || 0));
       let totalDebt = parseFloat(String(debt.balance || 0));
 
-      if (isStandardDebt && debt.hasInterest && debt.apr) {
-        const months = debt.installments || 1;
-        totalDebt += (totalDebt * debt.apr) * (months / 12);
+      // If this debt has an APR, we assume the `pay` amount already includes interest (calculated at creation).
+      // Therefore, the true total debt is simply pay * installments.
+      const hasInt = debt.hasInterest || (customDef && customDef.hasInterest);
+      if (hasInt && debt.apr) {
+        const inst = debt.installments || 1;
+        totalDebt = pay * inst;
       }
 
       let accumulated = 0;
@@ -371,7 +389,7 @@ export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
       }
     } else if (debt.type === 'card') {
       const pay = parseFloat(String(debt.minPay || debt.balance || 0));
-      const maxOccurrences = debt.plan === 'full' ? 1 : (parseInt(String(debt.plan || '').split('-')[1], 10) || 9999);
+      const maxOccurrences = debt.installments ? parseInt(String(debt.installments), 10) : (debt.plan === 'full' ? 1 : (parseInt(String(debt.plan || '').split('-')[1], 10) || 1));
       let occurrences = 0;
 
       const debtStartStr = debt.start || startD;

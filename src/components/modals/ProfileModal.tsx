@@ -93,8 +93,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
-        <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl relative overflow-hidden">
+        <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800 shrink-0">
           <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
             Tu Perfil
           </h3>
@@ -103,6 +103,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
           </button>
         </div>
 
+        <div className="p-5 overflow-y-auto space-y-4 flex-1 custom-scrollbar">
         {/* Profile Avatar & Name */}
         <div className="flex flex-col items-center gap-2">
           <label className="relative cursor-pointer group">
@@ -408,10 +409,11 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
         </div>
       </div>
 
+      </div>
       {/* QR Code Contact Modal */}
       {showQRModal && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl relative animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-sm w-full max-h-[90vh] overflow-y-auto text-center space-y-4 shadow-2xl relative animate-fade-in">
             <button
               onClick={() => setShowQRModal(false)}
               className="absolute top-4 right-4 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"

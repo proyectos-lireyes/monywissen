@@ -84,7 +84,7 @@ export const LoginScreen: React.FC = () => {
       <div className="absolute top-0 right-0 w-96 h-96 bg-blue-100/60 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
       <div className="absolute bottom-0 left-0 w-96 h-96 bg-indigo-100/60 rounded-full blur-3xl pointer-events-none -ml-20 -mb-20" />
 
-      <div className="max-w-md w-full bg-white border border-slate-200/80 rounded-3xl p-6 sm:p-8 shadow-xl relative z-10 space-y-6">
+      <div className="max-w-md w-full max-h-[90vh] overflow-y-auto bg-white border border-slate-200/80 rounded-3xl p-6 sm:p-8 shadow-xl relative z-10 space-y-6">
         {/* Brand & Title */}
         <div className="text-center space-y-2">
           <div className="inline-flex items-center justify-center p-3 bg-blue-50 border border-blue-100 rounded-2xl text-blue-600 mb-1 shadow-xs">

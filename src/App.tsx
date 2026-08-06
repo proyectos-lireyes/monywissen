@@ -115,7 +115,7 @@ const AppContent: React.FC = () => {
       
       const debtsData = profile.debts.map(d => [
         d.name,
-        d.type === 'fixed' ? 'Cuota Fija' : 'Cashea',
+        d.type === 'card' ? 'TDC' : (d.type === 'loan_interest' ? 'Préstamo' : 'Sin Interés'),
         formatCurrency(d.balance || 0),
         formatCurrency(getRemainingDebtAmount(d, profile.overrides))
       ]);
@@ -172,10 +172,10 @@ const AppContent: React.FC = () => {
       />
 
       {/* Slide-out Drawer */}
-      <DrawerNav isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <DrawerNav isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} onExportPDF={handleExportPDF} />
 
       {/* Main View Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 transition-all">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 pb-24 transition-all">
         {activeView === 'dashboard' && (
           <DashboardView
             onOpenCreate={handleOpenCreate}

@@ -14,7 +14,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
   const [strategyMode, setStrategyMode] = useState<'snowball' | 'avalanche'>('snowball');
   const [showCustomDebtModal, setShowCustomDebtModal] = useState(false);
   const [editingCustomDebt, setEditingCustomDebt] = useState<any>(null);
-  const [customDebtForm, setCustomDebtForm] = useState({ name: '', freq: 'monthly', hasInterest: false, usePlan: false, color: '#9c27b0' });
+  const [customDebtForm, setCustomDebtForm] = useState({ name: '', freq: 'monthly', hasInterest: false, usePlan: false, color: '#9c27b0', dueDay: '1' });
   const [showCloudTemplatesModal, setShowCloudTemplatesModal] = useState(false);
   const [cloudTemplates, setCloudTemplates] = useState<any[]>([]);
   const [isSearchingTemplates, setIsSearchingTemplates] = useState(false);
@@ -43,6 +43,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
           id: `custom_${Date.now()}`,
           name: template.name,
           freq: template.freq,
+          dueDay: template.dueDay || '1',
           hasInterest: template.hasInterest,
           usePlan: template.usePlan,
           color: template.color
@@ -106,7 +107,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
 
   const handleAddCustomDebt = () => {
     setEditingCustomDebt(null);
-    setCustomDebtForm({ name: '', freq: 'monthly', hasInterest: false, usePlan: false, color: '#9c27b0' });
+    setCustomDebtForm({ name: '', freq: 'monthly', hasInterest: false, usePlan: false, color: '#9c27b0', dueDay: '1' });
     setShowCustomDebtModal(true);
   };
 
@@ -159,7 +160,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
               Gestión de Deudas
             </h2>
             <p className="text-xs text-slate-400">
-              Tarjetas de crédito, financiamientos, préstamos y esquemas como Cashea/Quoota.
+              Tarjetas de crédito, financiamientos y préstamos.
             </p>
           </div>
           <button
@@ -192,6 +193,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
           >
             ✅ Saldadas ({settledDebts.length})
           </button>
+
           <button
             onClick={() => setSubTab('types')}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
@@ -283,7 +285,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                             )}
                           </p>
                           <p className="text-[10px] text-slate-500 font-medium">
-                            {item.type === 'card' ? '💳 Tarjeta de Crédito' : (item.type === 'cashea' ? '⭐ Cashea' : (item.type === 'quoota' ? '⭐ Quoota' : (item.type === 'fixed' ? '🏦 Préstamo Fijo' : '🤝 Sin Interés')))}
+                            {item.type === 'card' ? '💳 Tarjeta de Crédito' : (item.type === 'loan_interest' ? '🏦 Préstamo con Interés' : '🤝 Préstamo sin Interés')}
                             {' • '}
                             {item.type === 'card' 
                               ? `Corte: día ${item.cutDay || 5} / Pago: día ${item.dueDay || 25}`
@@ -364,40 +366,35 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
             </div>
           )
         ) : subTab === 'types' ? (
-          /* Custom Debt Types */
-          <div className="space-y-3">
+          <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-400 uppercase">
-                Modelos Personalizados de Deuda
-              </span>
-              <div className="flex gap-2">
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wide">
+                  Modelos Personalizados de Deuda
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => {
-                    setShowCloudTemplatesModal(true);
-                    fetchTemplates();
-                  }}
-                  className="px-3 py-1.5 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 rounded-xl text-xs font-bold flex items-center gap-1 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
+                  onClick={() => setShowCloudTemplatesModal(true)}
+                  className="px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-400 font-bold text-xs flex items-center gap-1.5"
                 >
-                  🌐 Explorar
+                  <span className="text-base">🌐</span> Explorar
                 </button>
                 <button
                   onClick={handleAddCustomDebt}
-                  className="px-3 py-1.5 bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 rounded-xl text-xs font-bold"
+                  className="px-3 py-1.5 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-bold text-xs"
                 >
                   + Crear Tipo
                 </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {customDebts.map((cd, cIdx) => (
-                <div
-                  key={cd.id || cIdx}
-                  className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-2">
+            <div className="space-y-2">
+              {customDebts.map(cd => (
+                <div key={cd.id} className="p-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
                     <div
-                      className="w-3.5 h-3.5 rounded-full"
+                      className="w-4 h-4 rounded-full shadow-sm"
                       style={{ backgroundColor: cd.color }}
                     />
                     <div>
@@ -504,7 +501,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
 
       {showCustomDebtModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-md w-full space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl ">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div>
                 <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
@@ -531,49 +528,49 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                       icon: '💳',
                       label: 'Tarjeta de Crédito',
                       desc: 'Pagos mensuales con cálculo de pago mínimo',
-                      form: { name: 'Tarjeta de Crédito', freq: 'monthly', hasInterest: true, usePlan: false, color: '#1a73e8' }
+                      form: { name: 'Tarjeta de Crédito', freq: 'monthly', dueDay: '1', hasInterest: true, usePlan: false, color: '#1a73e8' }
                     },
                     {
                       icon: '🏦',
                       label: 'Préstamo Bancario',
                       desc: 'Cuotas fijas mensuales con tasa de interés',
-                      form: { name: 'Préstamo Bancario / Personal', freq: 'monthly', hasInterest: true, usePlan: true, color: '#d93025' }
+                      form: { name: 'Préstamo Bancario / Personal', freq: 'monthly', dueDay: '1', hasInterest: true, usePlan: true, color: '#d93025' }
                     },
                     {
                       icon: '⭐',
                       label: 'Financiamiento (BNPL)',
-                      desc: 'Cashea, Quoota o cuotas quincenales sin interés',
-                      form: { name: 'Financiamiento (BNPL)', freq: 'biweekly', hasInterest: false, usePlan: true, color: '#fbbc04' }
+                      desc: 'Cuotas quincenales sin interés',
+                      form: { name: 'Financiamiento (BNPL)', freq: 'biweekly', dueDay: '15-30', hasInterest: false, usePlan: true, color: '#fbbc04' }
                     },
                     {
                       icon: '🚗',
                       label: 'Crédito Vehicular',
                       desc: 'Financiamiento de automóvil o vivienda',
-                      form: { name: 'Crédito Vehicular / Vivienda', freq: 'monthly', hasInterest: true, usePlan: true, color: '#0f9d58' }
+                      form: { name: 'Crédito Vehicular / Vivienda', freq: 'monthly', dueDay: '1', hasInterest: true, usePlan: true, color: '#0f9d58' }
                     },
                     {
                       icon: '🏬',
                       label: 'Casa Comercial',
                       desc: 'Daka, Multimax, Credidaka o tienda local',
-                      form: { name: 'Casa Comercial / Tienda', freq: 'biweekly', hasInterest: false, usePlan: true, color: '#e65100' }
+                      form: { name: 'Casa Comercial / Tienda', freq: 'biweekly', dueDay: '15-30', hasInterest: false, usePlan: true, color: '#e65100' }
                     },
                     {
                       icon: '🤝',
                       label: 'Prestamista Informal',
                       desc: 'Cobros semanales o quincenales con intereses',
-                      form: { name: 'Prestamista Particular', freq: 'weekly', hasInterest: true, usePlan: false, color: '#9c27b0' }
+                      form: { name: 'Prestamista Particular', freq: 'weekly', dueDay: '1', hasInterest: true, usePlan: false, color: '#9c27b0' }
                     },
                     {
                       icon: '👥',
                       label: 'San / Bolso / Pandero',
                       desc: 'Ahorro o préstamo colaborativo entre conocidos',
-                      form: { name: 'San / Bolso Familiar', freq: 'biweekly', hasInterest: false, usePlan: false, color: '#00acc1' }
+                      form: { name: 'San / Bolso Familiar', freq: 'biweekly', dueDay: '15-30', hasInterest: false, usePlan: false, color: '#00acc1' }
                     },
                     {
                       icon: '🎓',
                       label: 'Crédito Educativo',
                       desc: 'Matrículas o financiamiento de estudios',
-                      form: { name: 'Crédito Educativo', freq: 'monthly', hasInterest: false, usePlan: true, color: '#e91e63' }
+                      form: { name: 'Crédito Educativo', freq: 'monthly', dueDay: '1', hasInterest: false, usePlan: true, color: '#e91e63' }
                     }
                   ].map((preset, pIdx) => (
                     <button
@@ -616,18 +613,76 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-1">Frecuencia de Cobro por Defecto</label>
-                  <select
-                    value={customDebtForm.freq}
-                    onChange={e => setCustomDebtForm({...customDebtForm, freq: e.target.value})}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="weekly">Semanal</option>
-                    <option value="biweekly">Quincenal</option>
-                    <option value="monthly">Mensual</option>
-                    <option value="triweekly">Trisemanal (3 Semanas)</option>
-                  </select>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Frecuencia</label>
+                    <select
+                      value={customDebtForm.freq}
+                      onChange={e => {
+                        const newFreq = e.target.value;
+                        let defaultDueDay = '1';
+                        if (newFreq === 'biweekly') defaultDueDay = '15-30';
+                        if (newFreq === 'weekly') defaultDueDay = '1';
+                        if (newFreq === 'triweekly') defaultDueDay = '1';
+                        setCustomDebtForm({...customDebtForm, freq: newFreq, dueDay: defaultDueDay});
+                      }}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                    >
+                      <option value="weekly">Semanal</option>
+                      <option value="biweekly">Quincenal</option>
+                      <option value="monthly">Mensual</option>
+                      <option value="triweekly">Trisemanal (3 Semanas)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">
+                      {customDebtForm.freq === 'weekly' ? 'Día de la semana' : customDebtForm.freq === 'biweekly' ? 'Quincenas' : customDebtForm.freq === 'triweekly' ? 'Semana del mes' : 'Día del mes'}
+                    </label>
+                    {customDebtForm.freq === 'weekly' ? (
+                      <select
+                        value={customDebtForm.dueDay}
+                        onChange={e => setCustomDebtForm({...customDebtForm, dueDay: e.target.value})}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                      >
+                        <option value="1">Lunes</option>
+                        <option value="2">Martes</option>
+                        <option value="3">Miércoles</option>
+                        <option value="4">Jueves</option>
+                        <option value="5">Viernes</option>
+                        <option value="6">Sábado</option>
+                        <option value="0">Domingo</option>
+                      </select>
+                    ) : customDebtForm.freq === 'biweekly' ? (
+                      <select
+                        value={customDebtForm.dueDay}
+                        onChange={e => setCustomDebtForm({...customDebtForm, dueDay: e.target.value})}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                      >
+                        <option value="15-30">15 y 30</option>
+                        <option value="14-28">14 y 28</option>
+                        <option value="13-27">13 y 27</option>
+                        <option value="1-15">1 y 15</option>
+                      </select>
+                    ) : customDebtForm.freq === 'triweekly' ? (
+                      <select
+                        value={customDebtForm.dueDay}
+                        onChange={e => setCustomDebtForm({...customDebtForm, dueDay: e.target.value})}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                      >
+                        <option value="1">Semana 1</option>
+                        <option value="2">Semana 2</option>
+                        <option value="3">Semana 3</option>
+                        <option value="4">Semana 4</option>
+                      </select>
+                    ) : (
+                      <input
+                        type="number" min="1" max="31"
+                        value={customDebtForm.dueDay}
+                        onChange={e => setCustomDebtForm({...customDebtForm, dueDay: e.target.value})}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                      />
+                    )}
+                  </div>
                 </div>
 
                 <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl space-y-2 border border-slate-200 dark:border-slate-700">
@@ -691,7 +746,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
 
       {showCloudTemplatesModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-md w-full space-y-4 shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-indigo-600 dark:text-indigo-400">
                 🌐 Plantillas en la Nube

@@ -57,7 +57,7 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
         baseAmount = parseFloat(targetItem.amount || 0);
         itemCurrency = targetItem.currency || 'USD_BCV';
       }
-    } else if (type === 'debt' || type === 'debt_cut' || type === 'cashea' || type === 'quoota') {
+    } else if (type === 'debt' || type === 'debt_cut' ) {
       targetItem = (profile.debts || []).find(d => d.id === refId);
       if (targetItem) {
         itemTitle = targetItem.name;
@@ -227,8 +227,8 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
-        <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800 shrink-0">
           <div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
               {type === 'income' ? '📈 Ingreso' : (type === 'debt' ? '💳 Cuota / Deuda' : '📉 Gasto / Pago')}
@@ -242,6 +242,7 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
           </button>
         </div>
 
+        <div className="p-5 overflow-y-auto space-y-4 flex-1 custom-scrollbar">
         {/* Amount & Date Financial Card */}
         <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-700/60 space-y-3">
           <div className="grid grid-cols-2 gap-3 text-xs">
@@ -539,6 +540,7 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
             )}
           </div>
         )}
+        </div>
       </div>
     </div>
   );
