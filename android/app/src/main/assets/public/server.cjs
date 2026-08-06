@@ -212,7 +212,7 @@ async function startServer() {
     return res.json({ success: true, count: results.length, templates: results });
   });
   app.post("/api/debt-templates", (req, res) => {
-    const { name, freq, hasInterest, usePlan, color, authorAlias } = req.body;
+    const { name, freq, dueDay, hasInterest, usePlan, color, authorAlias } = req.body;
     if (!name) {
       return res.status(400).json({ error: "Name is required" });
     }
@@ -220,6 +220,7 @@ async function startServer() {
       id: `tpl_${Date.now()}`,
       name,
       freq: freq || "monthly",
+      dueDay: dueDay || "1",
       hasInterest: !!hasInterest,
       usePlan: !!usePlan,
       color: color || "#9c27b0",
