@@ -46,16 +46,14 @@ jobs:
           fi
           
           # Forzar versiones de androidx.core compatibles con compileSdk 35
-          cat << 'INNER_EOF' >> android/build.gradle
-          allprojects {
-              configurations.all {
-                  resolutionStrategy {
-                      force 'androidx.core:core:1.15.0'
-                      force 'androidx.core:core-ktx:1.15.0'
-                  }
-              }
-          }
-INNER_EOF
+          echo "allprojects {" >> android/build.gradle
+          echo "    configurations.all {" >> android/build.gradle
+          echo "        resolutionStrategy {" >> android/build.gradle
+          echo "            force 'androidx.core:core:1.15.0'" >> android/build.gradle
+          echo "            force 'androidx.core:core-ktx:1.15.0'" >> android/build.gradle
+          echo "        }" >> android/build.gradle
+          echo "    }" >> android/build.gradle
+          echo "}" >> android/build.gradle
           
           npx cap sync android
 
