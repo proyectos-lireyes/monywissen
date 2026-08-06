@@ -4,4 +4,5 @@
     <string name="title_activity_main">Monywissen</string>
     <string name="package_name">com.monywissen.app</string>
     <string name="custom_url_scheme">com.monywissen.app</string>
+    <string name="server_client_id">987406631845-hqjtsjsrcs9n9mme89tu66idm714238s.apps.googleusercontent.com</string>
 </resources>

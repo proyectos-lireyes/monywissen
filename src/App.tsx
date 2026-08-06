@@ -24,10 +24,36 @@ import autoTable from 'jspdf-autotable';
 import { formatCurrency, calculateProjections, getRemainingDebtAmount } from './utils/financialEngine';
 
 const AppContent: React.FC = () => {
-  const { activeView, profile, showToast, state } = useApp();
+  const { activeView, profile, showToast, state, importFullState } = useApp();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
+
+  React.useEffect(() => {
+    if ('launchQueue' in window) {
+      (window as any).launchQueue.setConsumer(async (launchParams: any) => {
+        if (!launchParams.files || launchParams.files.length === 0) {
+          return;
+        }
+        for (const fileHandle of launchParams.files) {
+          try {
+            const file = await fileHandle.getFile();
+            const text = await file.text();
+            const parsed = JSON.parse(text);
+            if (parsed && parsed.profiles) {
+              importFullState(parsed);
+              showToast(`Respaldo ${file.name} cargado correctamente`, '🎉');
+            } else {
+              showToast('El archivo de respaldo no es válido', '❌');
+            }
+          } catch (e) {
+            console.error('Error reading launched file:', e);
+            showToast('Error al leer el archivo importado', '❌');
+          }
+        }
+      });
+    }
+  }, []);
 
   // Form Modal state
   const [formType, setFormType] = useState<'income' | 'expense' | 'debt' | 'saving' | null>(null);

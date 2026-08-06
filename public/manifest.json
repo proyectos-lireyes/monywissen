@@ -1,0 +1,23 @@
+{
+  "name": "Monywissen",
+  "short_name": "Monywissen",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0ea5e9",
+  "file_handlers": [
+    {
+      "action": "/",
+      "accept": {
+        "application/json": [".mnwsn", ".mswsn"]
+      }
+    }
+  ],
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Fondo azul institucional Monywissen -->
+  <rect width="512" height="512" rx="115" fill="#1f6ddc"/>
+  
+  <!-- Sombra paralela para dar profundidad -->
+  <path d="M 140 350 L 140 190 L 256 290 L 372 170 L 372 350 Z" fill="rgba(0,0,0,0.15)" transform="translate(0, 15)"/>
+  
+  <!-- Letra M estilizada como un gráfico de crecimiento financiero -->
+  <path d="M 140 350 L 140 190 L 256 290 L 372 170 L 372 350" fill="none" stroke="#ffffff" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Indicador verde de saldo positivo/crecimiento al final del gráfico -->
+  <circle cx="372" cy="170" r="24" fill="#0f9d58"/>
+  <circle cx="372" cy="170" r="24" fill="none" stroke="#ffffff" stroke-width="8"/>
+</svg>

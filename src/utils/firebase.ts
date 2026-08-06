@@ -1,9 +1,20 @@
+import { Capacitor } from '@capacitor/core';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
-import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithCredential, signInWithRedirect, getRedirectResult } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export const app = initializeApp(firebaseConfig);
+
+if (Capacitor.isNativePlatform()) {
+  GoogleAuth.initialize({
+    clientId: firebaseConfig.oAuthClientId,
+    scopes: ['profile', 'email'],
+    grantOfflineAccess: true,
+  });
+}
+
 export const db = firebaseConfig.firestoreDatabaseId 
   ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
   : getFirestore(app);
@@ -15,8 +26,17 @@ export const googleProvider = new GoogleAuthProvider();
  */
 export async function loginWithGoogleFirebase() {
   try {
-    const result = await signInWithPopup(auth, googleProvider);
-    const user = result.user;
+    let user;
+    if (Capacitor.isNativePlatform()) {
+      const googleUser = await GoogleAuth.signIn();
+      const credential = GoogleAuthProvider.credential(googleUser.authentication.idToken);
+      const result = await signInWithCredential(auth, credential);
+      user = result.user;
+    } else {
+      const result = await signInWithPopup(auth, googleProvider);
+      user = result.user;
+    }
+    
     const email = user.email || '';
     const alias = user.displayName || email.split('@')[0] || 'Usuario Google';
     const phone = user.phoneNumber || '';

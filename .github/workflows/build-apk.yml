@@ -26,9 +26,6 @@ jobs:
       - name: 3. Instalar Dependencias
         run: npm ci || npm install
 
-      - name: 3.5. Instalar Capacitor
-        run: npm install @capacitor/core @capacitor/cli @capacitor/android
-
       - name: 4. Compilar Aplicación Web (Vite + React)
         run: npm run build
 
@@ -48,22 +45,8 @@ jobs:
             npx cap add android
           fi
           
-          # Añadir permisos necesarios al AndroidManifest.xml
-          MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST_PATH" ]; then
-            # Eliminar posibles duplicados y añadir permisos
-            sed -i '/<application/i \
-            <uses-permission android:name="android.permission.INTERNET" />\
-            <uses-permission android:name="android.permission.CAMERA" />\
-            <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\
-            <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\
-            <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\
-            <uses-feature android:name="android.hardware.camera" android:required="false" />\
-            <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />' "$MANIFEST_PATH"
-          fi
-          
           # Forzar versiones de androidx.core compatibles con compileSdk 35
-          cat << 'EOF' >> android/build.gradle
+          cat << 'INNER_EOF' >> android/build.gradle
           allprojects {
               configurations.all {
                   resolutionStrategy {
@@ -72,41 +55,66 @@ jobs:
                   }
               }
           }
-          EOF
+INNER_EOF
           
-          npx cap copy android
           npx cap sync android
 
-      - name: 7.5. Configurar Gradle
+      - name: 8. Configurar Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.13'
 
-      - name: 8. Compilar APK con Gradle
+      - name: 9. Compilar APK (Release) con Gradle
         run: |
           cd android
-          gradle assembleDebug --no-daemon
+          gradle assembleRelease --no-daemon
 
-      - name: 9. Guardar Artefacto APK
+      - name: 10. Firmar APK (Release)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "No se encontraron los secretos de firma. Saltando la firma. Se subirá el archivo 'app-release-unsigned.apk'."
+            cp android/app/build/outputs/apk/release/app-release-unsigned.apk android/app/build/outputs/apk/release/app-release.apk
+          else
+            echo "Decodificando el Keystore..."
+            echo $KEYSTORE_BASE64 | base64 --decode > android/app/release.keystore
+            echo "Firmando el APK..."
+            
+            # Buscar apksigner en el SDK de Android
+            APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -r | head -n 1)
+            
+            $APKSIGNER sign --ks android/app/release.keystore \
+              --ks-key-alias $KEY_ALIAS \
+              --ks-pass pass:$KEYSTORE_PASSWORD \
+              --key-pass pass:$KEY_PASSWORD \
+              --out android/app/build/outputs/apk/release/app-release.apk \
+              android/app/build/outputs/apk/release/app-release-unsigned.apk
+          fi
+
+      - name: 11. Guardar Artefacto APK
         uses: actions/upload-artifact@v4
         with:
-          name: monywissen-app-debug.apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: monywissen-app-release.apk
+          path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
 
-      - name: 10. Renombrar APK y Preparar Release
+      - name: 12. Renombrar APK y Preparar Release
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          mv android/app/build/outputs/apk/debug/app-debug.apk android/app/build/outputs/apk/debug/monywissen-$VERSION.apk
+          mv android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/monywissen-$VERSION.apk
 
-      - name: 11. Crear Release en GitHub (Si es una etiqueta de versión)
+      - name: 13. Crear Release en GitHub (Si es una etiqueta de versión)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
         with:
-          files: android/app/build/outputs/apk/debug/monywissen-*.apk
+          files: android/app/build/outputs/apk/release/monywissen-*.apk
           body: |
-            🎉 Nueva versión de Monywissen compilada automáticamente.
+            🎉 Nueva versión de Monywissen compilada automáticamente (Release).
             Descarga el archivo APK e instálalo en tu dispositivo Android.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

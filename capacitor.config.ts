@@ -3,7 +3,14 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'com.monywissen.app',
   appName: 'Monywissen',
-  webDir: 'dist'
+  webDir: 'dist',
+  plugins: {
+    GoogleAuth: {
+      scopes: ['profile', 'email'],
+      serverClientId: '987406631845-hqjtsjsrcs9n9mme89tu66idm714238s.apps.googleusercontent.com',
+      forceCodeForRefreshToken: true,
+    },
+  },
 };
 
 export default config;

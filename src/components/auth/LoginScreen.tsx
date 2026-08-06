@@ -22,7 +22,7 @@ export const LoginScreen: React.FC = () => {
       showToast(`¡Bienvenido ${res.user.alias}! Sesión iniciada con Google`, '🌐');
     } catch (err: any) {
       console.error('Google Sign In Error:', err);
-      showToast('No se pudo abrir el popup de Google en el navegador. Por favor ingresa con tu correo.', '⚠️');
+      showToast('Error al iniciar sesión con Google: ' + err.message, '⚠️');
     } finally {
       setLoading(false);
     }

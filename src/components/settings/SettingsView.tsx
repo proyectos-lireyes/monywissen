@@ -191,7 +191,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Monywissen_FULL_${new Date().toISOString().slice(0, 10)}.mnwsn`;
+    a.download = `Monywissen_FULL_${new Date().toISOString().slice(0, 10)}.mswsn`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -213,7 +213,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
           showToast('Archivo de respaldo no válido', '❌');
         }
       } catch (err) {
-        showToast('Error al leer el archivo .mnwsn', '❌');
+        showToast('Error al leer el archivo .mswsn', '❌');
       }
     };
     reader.readAsText(file);
@@ -405,7 +405,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
             <div className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/40 rounded-2xl space-y-3">
               <h3 className="text-xs font-bold text-blue-700 dark:text-blue-300">📁 Respaldo Físico Local</h3>
               <p className="text-xs text-slate-600 dark:text-slate-300">
-                Exporta la base de datos completa a un archivo `.mnwsn` en tu dispositivo o importa datos guardados previamente.
+                Exporta la base de datos completa a un archivo `.mswsn` en tu dispositivo o importa datos guardados previamente.
               </p>
 
               <div className="flex flex-col sm:flex-row gap-2">
@@ -413,12 +413,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                   onClick={handleExportFile}
                   className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
                 >
-                  <Download className="w-4 h-4" /> Exportar Archivo (.mnwsn)
+                  <Download className="w-4 h-4" /> Exportar Archivo (.mswsn)
                 </button>
 
                 <label className="flex-1 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer">
                   <CloudUpload className="w-4 h-4" /> Importar Archivo
-                  <input type="file" accept=".mnwsn,.json" onChange={handleImportFile} className="hidden" />
+                  <input type="file" accept=".mswsn,.json" onChange={handleImportFile} className="hidden" />
                 </label>
               </div>
             </div>
