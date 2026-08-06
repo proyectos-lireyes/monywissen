@@ -5,7 +5,7 @@ on:
     branches:
       - main
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 jobs:
@@ -20,8 +20,8 @@ jobs:
       - name: 2. Configurar Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 'lts/*'
-          cache: 'npm'
+          node-version: "lts/*"
+          cache: "npm"
 
       - name: 3. Instalar Dependencias
         run: npm ci || npm install
@@ -32,8 +32,8 @@ jobs:
       - name: 5. Configurar Java JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '17'
+          distribution: "zulu"
+          java-version: "17"
 
       - name: 6. Configurar SDK Android
         uses: android-actions/setup-android@v3
@@ -44,7 +44,7 @@ jobs:
             npx cap init Monywissen com.monywissen.app --web-dir dist
             npx cap add android
           fi
-          
+
           # Forzar versiones de androidx.core compatibles con compileSdk 35
           echo "allprojects {" >> android/build.gradle
           echo "    configurations.all {" >> android/build.gradle
@@ -54,18 +54,17 @@ jobs:
           echo "        }" >> android/build.gradle
           echo "    }" >> android/build.gradle
           echo "}" >> android/build.gradle
-          
+
           npx cap sync android
 
       - name: 8. Configurar Gradle
         uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.13'
 
       - name: 9. Compilar APK (Release) con Gradle
         run: |
           cd android
-          gradle assembleRelease --no-daemon
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
 
       - name: 10. Firmar APK (Release)
         env:
