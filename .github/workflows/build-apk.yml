@@ -103,13 +103,16 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          mv android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/monywissen-$VERSION.apk
+          # Keep a versioned name but also copy to a static name for latest URL
+          cp android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/monywissen-$VERSION.apk
+          mv android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/monywissen-latest.apk
 
       - name: 13. Crear Release en GitHub (Si es una etiqueta de versión)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
         with:
-          files: android/app/build/outputs/apk/release/monywissen-*.apk
+          files: |
+            android/app/build/outputs/apk/release/monywissen-*.apk
           body: |
             🎉 Nueva versión de Monywissen compilada automáticamente (Release).
             Descarga el archivo APK e instálalo en tu dispositivo Android.

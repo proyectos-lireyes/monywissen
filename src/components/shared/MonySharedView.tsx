@@ -22,7 +22,8 @@ import {
   Paperclip,
   Eye,
   DollarSign,
-  Camera
+  Camera,
+  Globe
 } from 'lucide-react';
 import { SharedGroup, P2PLoan, Contact, CurrencyCode } from '../../types';
 import { db } from '../../utils/firebase';
@@ -73,6 +74,8 @@ export const MonySharedView: React.FC = () => {
   const [newMemberInput, setNewMemberInput] = useState('');
   const [saveMembersToContacts, setSaveMembersToContacts] = useState(false);
   const [groupSplitType, setGroupSplitType] = useState<'equal' | 'percentage'>('equal');
+  const [groupContactSearch, setGroupContactSearch] = useState('');
+  const [groupPercentages, setGroupPercentages] = useState<Record<string, number>>({});
 
   // Group Expense Modal state
   const [showGroupExpenseModal, setShowGroupExpenseModal] = useState(false);
@@ -84,6 +87,7 @@ export const MonySharedView: React.FC = () => {
 
   // Contact Creation & QR Modal state
   const [showAddContactModal, setShowAddContactModal] = useState(false);
+  const [addContactMode, setAddContactMode] = useState<'options' | 'manual'>('options');
   const [showQRScanModal, setShowQRScanModal] = useState(false);
   const [showQRCamera, setShowQRCamera] = useState(false);
   const [qrScanInput, setQrScanInput] = useState('');
@@ -190,12 +194,42 @@ export const MonySharedView: React.FC = () => {
       ])
     );
 
+    if (groupSplitType === 'percentage') {
+      let totalPerc = 0;
+      participants.forEach(p => {
+        totalPerc += (groupPercentages[p] || 0);
+      });
+      if (Math.abs(totalPerc - 100) > 0.01) {
+        showToast(`Los porcentajes suman ${totalPerc}%. Deben sumar 100%.`, '⚠️');
+        return;
+      }
+    }
+
+    const participantStatus: Record<string, 'pending' | 'accepted' | 'rejected'> = {};
+    let networkInvitations = 0;
+    
+    participants.forEach(p => {
+      if (p === myAlias) {
+        participantStatus[p] = 'accepted';
+      } else {
+        const matchingContact = contacts.find(c => c.alias === p);
+        if (matchingContact && matchingContact.email && matchingContact.email.includes('@')) {
+          participantStatus[p] = 'pending';
+          networkInvitations++;
+        } else {
+          participantStatus[p] = 'accepted';
+        }
+      }
+    });
+
     const newGroup: SharedGroup = {
       id: `grp_${Date.now()}`,
       name: groupNameInput.trim(),
       participants,
       ownerAlias: myAlias,
       splitType: groupSplitType,
+      percentages: groupSplitType === 'percentage' ? groupPercentages : undefined,
+      participantStatus,
       expenses: [],
     };
 
@@ -283,6 +317,7 @@ export const MonySharedView: React.FC = () => {
     setContactAliasInput('');
     setContactEmailInput('');
     setContactPhoneInput('');
+    setAddContactMode('options');
     setShowAddContactModal(true);
   };
 
@@ -337,6 +372,34 @@ export const MonySharedView: React.FC = () => {
       borrowerAccountId: loan.borrowerAccountData?.id || '',
     });
     setShowP2PModal(true);
+  };
+
+  const handleGroupStatusChange = (groupIdx: number, newStatus: 'accepted' | 'rejected') => {
+    updateProfileData(draft => {
+      if (draft.sharedAccounts && draft.sharedAccounts[groupIdx]) {
+        const myAlias = profile.settings.myAlias || 'Yo';
+        if (!draft.sharedAccounts[groupIdx].participantStatus) {
+          draft.sharedAccounts[groupIdx].participantStatus = {};
+        }
+        draft.sharedAccounts[groupIdx].participantStatus[myAlias] = newStatus;
+      }
+    });
+    if (newStatus === 'accepted') showToast('Grupo aceptado', '✅');
+    if (newStatus === 'rejected') showToast('Invitación rechazada', '❌');
+  };
+
+  const handleNetworkStatusChange = (loanId: string, newStatus: 'sent' | 'active' | 'rejected') => {
+    updateProfileData(draft => {
+      if (draft.p2p) {
+        const loan = draft.p2p.find(l => l.id === loanId);
+        if (loan) {
+          loan.status = newStatus;
+        }
+      }
+    });
+    if (newStatus === 'sent') showToast('Marcado como enviado', '✅');
+    if (newStatus === 'active') showToast('Préstamo activado', '✅');
+    if (newStatus === 'rejected') showToast('Solicitud rechazada', '❌');
   };
 
   const handleDeleteLoan = (loanId: string) => {
@@ -626,25 +689,59 @@ export const MonySharedView: React.FC = () => {
                 <div className="space-y-2">
                   {groups.map((group, idx) => {
                     const settlement = calculateSharedSettlement(group);
+                    const myAlias = profile.settings.myAlias || 'Yo';
+                    const myStatus = group.participantStatus?.[myAlias];
+                    const isPending = myStatus === 'pending';
+
                     return (
                       <div
                         key={group.id || idx}
-                        onClick={() => setSelectedGroupIdx(idx)}
-                        className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-all flex items-center justify-between cursor-pointer"
+                        className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-all flex flex-col gap-3 cursor-pointer"
+                        onClick={(e) => {
+                          if (isPending) return; // Can't open pending group
+                          setSelectedGroupIdx(idx);
+                        }}
                       >
-                        <div className="space-y-0.5">
-                          <p className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                            {group.name}
-                          </p>
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                            👥 {group.participants.length} integrantes
-                          </p>
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-0.5">
+                            <p className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                              {group.name} {isPending && <span className="ml-1 text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400 px-1.5 py-0.5 rounded-lg">Nueva Invitación</span>}
+                            </p>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                              👥 {group.participants.length} integrantes
+                            </p>
+                          </div>
+                          {!isPending && (
+                            <div className="text-right">
+                              <span className="inline-block px-2.5 py-1 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 font-extrabold text-xs rounded-xl border border-emerald-200 dark:border-emerald-800">
+                                Total: {formatCurrency(settlement.total)}
+                              </span>
+                            </div>
+                          )}
                         </div>
-                        <div className="text-right">
-                          <span className="inline-block px-2.5 py-1 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 font-extrabold text-xs rounded-xl border border-emerald-200 dark:border-emerald-800">
-                            Total: {formatCurrency(settlement.total)}
-                          </span>
-                        </div>
+
+                        {isPending && (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleGroupStatusChange(idx, 'rejected');
+                              }}
+                              className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 rounded-lg text-xs font-bold"
+                            >
+                              Rechazar
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleGroupStatusChange(idx, 'accepted');
+                              }}
+                              className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-xs"
+                            >
+                              Aceptar Grupo
+                            </button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -710,11 +807,29 @@ export const MonySharedView: React.FC = () => {
                         </button>
                       </div>
                       <div className="flex flex-wrap gap-1.5">
-                        {group.participants.map((p, pIdx) => (
-                          <span key={pIdx} className="px-2.5 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1">
-                            👤 {p}
-                          </span>
-                        ))}
+                        {group.participants.map((p, pIdx) => {
+                          const status = group.participantStatus?.[p];
+                          let statusIcon = '';
+                          let statusClass = '';
+                          
+                          if (status === 'pending') {
+                            statusIcon = ' ⏳';
+                            statusClass = ' border-amber-300 dark:border-amber-700/50';
+                          } else if (status === 'accepted') {
+                            statusIcon = ' ✅';
+                            statusClass = ' border-emerald-300 dark:border-emerald-700/50';
+                          } else if (status === 'rejected') {
+                            statusIcon = ' ❌';
+                            statusClass = ' border-rose-300 dark:border-rose-700/50';
+                          }
+
+                          return (
+                            <span key={pIdx} className={`px-2.5 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1 ${statusClass}`}>
+                              👤 {p}
+                              <span className="text-[10px]">{statusIcon}</span>
+                            </span>
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -774,13 +889,13 @@ export const MonySharedView: React.FC = () => {
                 onClick={() => handleCreateLoan('borrow')}
                 className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold shadow-xs"
               >
-                + Recibí
+                + Solicitar / Recibí
               </button>
               <button
                 onClick={() => handleCreateLoan('lend')}
                 className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs"
               >
-                + Presté
+                + Enviar / Presté
               </button>
             </div>
           </div>
@@ -801,7 +916,12 @@ export const MonySharedView: React.FC = () => {
                     <div className="flex justify-between items-start pl-2">
                       <div>
                         <p className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                          {isBorrower ? 'Le debes a ' : 'Te debe '}{otherParty}
+                          {loan.status === 'requested' 
+                            ? (isBorrower ? 'Solicitaste a ' : 'Te solicitó ')
+                            : loan.status === 'sent'
+                            ? (isBorrower ? 'Te envió ' : 'Enviaste a ')
+                            : (isBorrower ? 'Le debes a ' : 'Te debe ')
+                          }{otherParty}
                           {!loan.offline && (
                             <span className="text-[9px] bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-extrabold px-1.5 py-0.5 rounded-md">
                               🌐 Red MonyShared
@@ -831,6 +951,32 @@ export const MonySharedView: React.FC = () => {
                           <p className="text-[10px] font-semibold text-rose-500 mt-1 flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 inline-block"></span> Vence: {loan.dueDate}
                           </p>
+                        )}
+
+                        {/* Action buttons based on status */}
+                        {loan.status === 'requested' && !isBorrower && !loan.offline && (
+                          <div className="flex gap-2 mt-2">
+                            <button
+                              onClick={() => handleNetworkStatusChange(loan.id, 'rejected')}
+                              className="flex-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 rounded-lg text-xs font-bold text-center"
+                            >
+                              Rechazar
+                            </button>
+                            <button
+                              onClick={() => handleNetworkStatusChange(loan.id, 'sent')}
+                              className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold text-center"
+                            >
+                              Enviar
+                            </button>
+                          </div>
+                        )}
+                        {loan.status === 'sent' && isBorrower && !loan.offline && (
+                          <button
+                            onClick={() => handleNetworkStatusChange(loan.id, 'active')}
+                            className="mt-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold w-full text-center"
+                          >
+                            Confirmar Recepción
+                          </button>
                         )}
 
                         {/* Receipt badge if available */}
@@ -898,37 +1044,28 @@ export const MonySharedView: React.FC = () => {
                 <QrCode className="w-4 h-4" />
               </button>
               <button
-                onClick={() => {
-                  setQrScanInput('');
-                  setShowQRScanModal(true);
-                }}
-                className="px-3 py-2 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-indigo-200 dark:border-indigo-800 transition-colors"
-                title="Pegar texto QR"
-              >
-                <QrCode className="w-3.5 h-3.5" /> Pegar QR
-              </button>
-              <button
                 onClick={() => setShowQRCamera(true)}
-                className="px-3 py-2 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-emerald-200 dark:border-emerald-800 transition-colors"
-                title="Escanear con Cámara"
+                className="p-2 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 rounded-xl text-xs font-bold flex items-center justify-center border border-emerald-200 dark:border-emerald-800 transition-colors"
+                title="Escanear Código QR"
               >
-                <Camera className="w-3.5 h-3.5" /> Escanear QR
+                <Camera className="w-4 h-4" />
               </button>
               <button
                 onClick={openAddContactModal}
-                className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors"
+                className="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors"
+                title="Agregar Contacto"
               >
-                + Contacto
+                <UserPlus className="w-4 h-4" />
               </button>
               <button
                 onClick={handleFindOnNetwork}
-                className="px-3.5 py-2 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 rounded-xl text-xs font-semibold"
+                className="p-2 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 rounded-xl text-xs font-semibold"
+                title="Buscar en la red"
               >
-                Buscar en la red
+                <Globe className="w-4 h-4" />
               </button>
             </div>
           </div>
-
           <div className="space-y-2">
             {contacts.length === 0 ? (
               <p className="text-xs text-slate-400 text-center py-8">No tienes contactos en tu agenda.</p>
@@ -958,9 +1095,10 @@ export const MonySharedView: React.FC = () => {
                       e.stopPropagation();
                       setSelectedContactDetails(c);
                     }}
-                    className="px-2.5 py-1 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-300 rounded-xl text-[11px] font-bold border border-indigo-200 dark:border-indigo-800"
+                    className="p-2 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-300 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors border border-indigo-200 dark:border-indigo-800"
+                    title="Ver Tarjeta"
                   >
-                    Ver Tarjeta
+                    <BookOpen className="w-4 h-4" />
                   </button>
                 </div>
               ))
@@ -1028,7 +1166,7 @@ export const MonySharedView: React.FC = () => {
                 }}
                 className="py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all text-center shadow-xs"
               >
-                🤝 Pedir Préstamo
+                🤝 Solicitar Préstamo
               </button>
               <button
                 type="button"
@@ -1039,7 +1177,7 @@ export const MonySharedView: React.FC = () => {
                 }}
                 className="py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all text-center shadow-xs"
               >
-                💸 Otorgar Préstamo
+                💸 Enviar Préstamo
               </button>
             </div>
           </div>
@@ -1477,30 +1615,57 @@ export const MonySharedView: React.FC = () => {
                     No tienes contactos guardados en la agenda. Puedes escribir sus nombres abajo.
                   </p>
                 ) : (
-                  <div className="max-h-36 overflow-y-auto space-y-1.5 p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700">
-                    {contacts.map(c => {
-                      const isChecked = selectedFriends.includes(c.alias);
-                      return (
-                        <label
-                          key={c.alias}
-                          className="flex items-center gap-2 p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg cursor-pointer text-xs font-semibold text-slate-800 dark:text-slate-200"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => {
-                              if (isChecked) {
-                                setSelectedFriends(selectedFriends.filter(f => f !== c.alias));
-                              } else {
-                                setSelectedFriends([...selectedFriends, c.alias]);
-                              }
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      placeholder="🔍 Buscar en agenda..."
+                      value={groupContactSearch}
+                      onChange={e => setGroupContactSearch(e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100"
+                    />
+                    <div className="max-h-36 overflow-y-auto space-y-1.5 p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700">
+                      {contacts
+                        .filter(c => c.alias.toLowerCase().includes(groupContactSearch.toLowerCase()) || c.email.toLowerCase().includes(groupContactSearch.toLowerCase()))
+                        .map(c => {
+                        const isChecked = selectedFriends.includes(c.alias);
+                        return (
+                          <label
+                            key={c.alias}
+                            className="flex items-center gap-2 p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg cursor-pointer text-xs font-semibold text-slate-800 dark:text-slate-200"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {
+                                if (isChecked) {
+                                  setSelectedFriends(selectedFriends.filter(f => f !== c.alias));
+                                } else {
+                                  setSelectedFriends([...selectedFriends, c.alias]);
+                                }
+                              }}
+                              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span>👤 {c.alias} ({c.email})</span>
+                          </label>
+                        );
+                      })}
+                      
+                      {contacts.filter(c => c.alias.toLowerCase().includes(groupContactSearch.toLowerCase()) || c.email.toLowerCase().includes(groupContactSearch.toLowerCase())).length === 0 && (
+                        <div className="text-center py-2 space-y-2">
+                          <p className="text-[10px] text-slate-500">No se encontraron contactos</p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowGroupModal(false);
+                              openAddContactModal();
                             }}
-                            className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                          />
-                          <span>👤 {c.alias} ({c.email})</span>
-                        </label>
-                      );
-                    })}
+                            className="px-3 py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-700 dark:bg-blue-900/40 dark:hover:bg-blue-900/60 dark:text-blue-300 rounded-lg text-[10px] font-bold transition-colors"
+                          >
+                            + Agregar Contacto Nuevo
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1570,11 +1735,46 @@ export const MonySharedView: React.FC = () => {
                 <select
                   value={groupSplitType}
                   onChange={e => setGroupSplitType(e.target.value as 'equal' | 'percentage')}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3"
                 >
                   <option value="equal">Igualitario (Partes Iguales)</option>
                   <option value="percentage">Por Porcentajes Personalizados</option>
                 </select>
+
+                {groupSplitType === 'percentage' && (
+                  <div className="space-y-2 p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700">
+                    <p className="text-[10px] text-slate-500 mb-2">Asigna el porcentaje que cubrirá cada persona (Debe sumar 100%)</p>
+                    {Array.from(
+                      new Set([
+                        profile.settings.myAlias || 'Yo',
+                        ...selectedFriends,
+                        ...customMembers,
+                        ...(extraFriendInput ? [extraFriendInput.trim()] : []),
+                      ])
+                    ).map(participant => (
+                      <div key={participant} className="flex items-center gap-2">
+                        <span className="flex-1 text-xs font-semibold text-slate-700 dark:text-slate-300 truncate">
+                          👤 {participant}
+                        </span>
+                        <div className="relative w-24 shrink-0">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={groupPercentages[participant] || ''}
+                            onChange={e => {
+                              const val = parseFloat(e.target.value) || 0;
+                              setGroupPercentages(prev => ({ ...prev, [participant]: val }));
+                            }}
+                            placeholder="0"
+                            className="w-full pl-3 pr-6 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-right"
+                          />
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1693,55 +1893,107 @@ export const MonySharedView: React.FC = () => {
               <span>Nuevo Contacto</span>
             </h3>
 
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Nombre / Alias</label>
-                <input
-                  type="text"
-                  value={contactAliasInput}
-                  onChange={e => setContactAliasInput(e.target.value)}
-                  placeholder="Ej. Maria Delgado"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100"
-                />
+            {addContactMode === 'options' ? (
+              <div className="space-y-3">
+                <button
+                  onClick={() => {
+                    setShowAddContactModal(false);
+                    setShowSearchModal(true);
+                  }}
+                  className="w-full flex items-center gap-3 p-4 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 rounded-2xl transition-colors border border-indigo-100 dark:border-indigo-800/50"
+                >
+                  <Search className="w-6 h-6" />
+                  <div className="text-left flex-1">
+                    <p className="text-sm font-bold">Buscar en la Red</p>
+                    <p className="text-[10px] opacity-80">Encuentra usuarios de Monywissen</p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAddContactModal(false);
+                    setShowQRCamera(true);
+                  }}
+                  className="w-full flex items-center gap-3 p-4 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 rounded-2xl transition-colors border border-emerald-100 dark:border-emerald-800/50"
+                >
+                  <Camera className="w-6 h-6" />
+                  <div className="text-left flex-1">
+                    <p className="text-sm font-bold">Escanear QR</p>
+                    <p className="text-[10px] opacity-80">Con la cámara de tu dispositivo</p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setAddContactMode('manual')}
+                  className="w-full flex items-center gap-3 p-4 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-2xl transition-colors border border-slate-200 dark:border-slate-700"
+                >
+                  <UserPlus className="w-6 h-6" />
+                  <div className="text-left flex-1">
+                    <p className="text-sm font-bold">Agregar Manualmente</p>
+                    <p className="text-[10px] opacity-80">Ingresa los datos tú mismo</p>
+                  </div>
+                </button>
+                
+                <div className="pt-2">
+                  <button
+                    onClick={() => setShowAddContactModal(false)}
+                    className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 rounded-xl text-xs font-bold"
+                  >
+                    Cancelar
+                  </button>
+                </div>
               </div>
+            ) : (
+              <>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Nombre / Alias</label>
+                    <input
+                      type="text"
+                      value={contactAliasInput}
+                      onChange={e => setContactAliasInput(e.target.value)}
+                      placeholder="Ej. Maria Delgado"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Correo Electrónico</label>
-                <input
-                  type="email"
-                  value={contactEmailInput}
-                  onChange={e => setContactEmailInput(e.target.value)}
-                  placeholder="maria@gmail.com"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100"
-                />
-              </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Correo Electrónico</label>
+                    <input
+                      type="email"
+                      value={contactEmailInput}
+                      onChange={e => setContactEmailInput(e.target.value)}
+                      placeholder="maria@gmail.com"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Teléfono / Pago Móvil (Opcional)</label>
-                <input
-                  type="text"
-                  value={contactPhoneInput}
-                  onChange={e => setContactPhoneInput(e.target.value)}
-                  placeholder="0412-1234567"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100"
-                />
-              </div>
-            </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Teléfono / Pago Móvil (Opcional)</label>
+                    <input
+                      type="text"
+                      value={contactPhoneInput}
+                      onChange={e => setContactPhoneInput(e.target.value)}
+                      placeholder="0412-1234567"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                </div>
 
-            <div className="flex gap-2 pt-2">
-              <button
-                onClick={() => setShowAddContactModal(false)}
-                className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 rounded-xl text-xs font-bold"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={saveContact}
-                className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs"
-              >
-                Guardar Contacto
-              </button>
-            </div>
+                <div className="flex gap-2 pt-2">
+                  <button
+                    onClick={() => setAddContactMode('options')}
+                    className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 rounded-xl text-xs font-bold"
+                  >
+                    Volver
+                  </button>
+                  <button
+                    onClick={saveContact}
+                    className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs"
+                  >
+                    Guardar
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

@@ -147,14 +147,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     downloadedMB: 0,
     totalMB: 18.4,
     isCompleted: false,
-    latestVersion: 'v1.5.0',
-    downloadUrl: 'https://github.com/monywissen/app/releases/download/v1.5.0/monywissen-v1.5.0.apk',
+    latestVersion: 'v2.0.0',
+    downloadUrl: 'https://github.com/proyectos-lireyes/monywissen/releases/latest/download/monywissen-latest.apk',
   });
 
   const startBackgroundUpdateDownload = () => {
     if (updateState.isDownloading || updateState.isCompleted) return;
     setUpdateState(prev => ({ ...prev, isDownloading: true, progress: 0, isCompleted: false }));
-    showToast('Descarga APK de v1.5.0 iniciada en segundo plano', '⏬');
+    showToast(`Descarga APK de ${updateState.latestVersion} iniciada en segundo plano`, '⏬');
   };
 
   useEffect(() => {
@@ -165,7 +165,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const next = prev.progress + Math.floor(Math.random() * 8) + 5;
           if (next >= 100) {
             clearInterval(interval);
-            showToast('¡Descarga APK de v1.5.0 completada! Ve a Ajustes para instalar', '🎉');
+            showToast(`¡Descarga APK de ${prev.latestVersion} completada! Ve a Ajustes para instalar`, '🎉');
             return {
               ...prev,
               progress: 100,

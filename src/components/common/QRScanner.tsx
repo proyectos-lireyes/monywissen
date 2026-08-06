@@ -13,7 +13,12 @@ export const QRScanner: React.FC<QRScannerProps> = ({ onScanSuccess, onClose }) 
   useEffect(() => {
     const scanner = new Html5QrcodeScanner(
       'qr-reader',
-      { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
+      { 
+        fps: 10, 
+        qrbox: { width: 250, height: 250 }, 
+        aspectRatio: 1.0,
+        videoConstraints: { facingMode: "environment" }
+      },
       false
     );
 

@@ -51,7 +51,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenDetails,
 }) => {
   const { profile, updateProfileData, showToast, setActiveView, integrityReport } = useApp();
-  const [chartMode, setChartMode] = useState<number>(profile.settings.defaultChart || 0); // 0: Composed, 1: Bar, 2: Pie
+  const [chartMode, setChartMode] = useState<number>(profile.settings.defaultChart || 4); // 0: Composed, 1: Bar, 2: Pie
   const [showBalanceLine, setShowBalanceLine] = useState(true);
   const [showFlowLines, setShowFlowLines] = useState(true);
 
@@ -102,6 +102,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const chartData = Object.values(chartDataMap);
 
   // Monthly Aggregation Data
+  
+const getWeekStart = (dateStr: string) => {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() - (day - 1));
+  const m = d.getUTCMonth() + 1;
+  const da = d.getUTCDate();
+  return `${d.getUTCFullYear()}-${m < 10 ? '0'+m : m}-${da < 10 ? '0'+da : da}`;
+};
+
+  // Weekly Aggregation Data
+  const weeklyDataMap: Record<string, { label: string; income: number; expense: number; debt: number }> = {};
+  plan.forEach(e => {
+    if (e.date >= profile.settings.planStart && e.date <= profile.settings.planEnd) {
+      const weekPrefix = getWeekStart(e.date);
+      if (!weeklyDataMap[weekPrefix]) {
+        weeklyDataMap[weekPrefix] = {
+          label: weekPrefix.substring(5,10),
+          income: 0,
+          expense: 0,
+          debt: 0,
+        };
+      }
+      if (e.amt > 0 && e.type === 'income') weeklyDataMap[weekPrefix].income += e.amt;
+      if (e.amt < 0 && e.type === 'expense') weeklyDataMap[weekPrefix].expense += Math.abs(e.amt);
+      if (e.amt < 0 && (e.type === 'debt' )) weeklyDataMap[weekPrefix].debt += Math.abs(e.amt);
+    }
+  });
+  const weeklyData = Object.values(weeklyDataMap);
+
   const monthlyDataMap: Record<string, { label: string; income: number; expense: number; debt: number }> = {};
   plan.forEach(e => {
     if (e.date >= profile.settings.planStart && e.date <= profile.settings.planEnd) {
@@ -254,6 +284,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </h3>
             <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
               <button
+                onClick={() => setChartMode(4)}
+                className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
+                  chartMode === 4
+                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
+                }`}
+              >
+                Semanal
+              </button>
+              <button
                 onClick={() => setChartMode(0)}
                 className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
                   chartMode === 0
@@ -405,6 +445,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <Tooltip formatter={(value: number) => formatCurrency(value)} />
                   <Legend />
                 </PieChart>
+              ) : chartMode === 4 ? (
+                <ComposedChart data={weeklyData}>
+                  <XAxis dataKey="label" stroke="#94a3b8" fontSize={10} />
+                  <YAxis stroke="#94a3b8" fontSize={10} />
+                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <Legend />
+                  <Line type="monotone" dataKey="income" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={true} />
+                  <Line type="monotone" dataKey="expense" name="Gastos" stroke="#ef4444" strokeWidth={2} dot={true} />
+                  <Line type="monotone" dataKey="debt" name="Deudas" stroke="#f59e0b" strokeWidth={2} dot={true} />
+                </ComposedChart>
               ) : chartMode === 1 ? (
                 <ComposedChart data={monthlyData}>
                   <XAxis dataKey="label" stroke="#94a3b8" fontSize={10} />

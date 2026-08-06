@@ -503,7 +503,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
               {updateReady && !updateState.isDownloading && !updateState.isCompleted && (
                 <div className="p-3 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900/60 rounded-xl space-y-2 text-xs">
                   <p className="font-extrabold text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-blue-600" /> Novedades de la versión v1.5.0:
+                    <Sparkles className="w-4 h-4 text-blue-600" /> Novedades de la versión {updateState.latestVersion}:
                   </p>
                   <ul className="text-[11px] text-slate-600 dark:text-slate-300 space-y-1 list-disc list-inside">
                     <li>Conversión automática multimoneda a Tasa Oficial BCV en Gastos Compartidos.</li>
@@ -537,7 +537,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                     }}
                     className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-sm transition-colors"
                   >
-                    <Download className="w-3.5 h-3.5" /> Instalar APK v1.5.0
+                    <Download className="w-3.5 h-3.5" /> Instalar APK {updateState.latestVersion}
                   </button>
                 ) : updateState.isDownloading ? (
                   <button
@@ -552,7 +552,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                     onClick={startBackgroundUpdateDownload}
                     className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors"
                   >
-                    <Download className="w-3.5 h-3.5" /> Descargar APK v1.5.0
+                    <Download className="w-3.5 h-3.5" /> Descargar APK {updateState.latestVersion}
                   </button>
                 )}
               </div>

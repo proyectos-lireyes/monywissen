@@ -121,7 +121,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                         </button>
                       </div>
                       <p className="text-[10px] text-indigo-700 dark:text-indigo-300">
-                        Monywissen v1.5.0 está disponible con nuevas funcionalidades y mejoras.
+                        Monywissen {updateState.latestVersion} está disponible con nuevas funcionalidades y mejoras.
                       </p>
                     </div>
                   )}

@@ -158,6 +158,7 @@ export interface SharedGroup {
   admins?: string[];
   splitType: 'equal' | 'percentage';
   percentages?: Record<string, number>;
+  participantStatus?: Record<string, 'pending' | 'accepted' | 'rejected'>;
   phoneMap?: Record<string, string>;
   participantEmails?: string[];
   expenses: SharedExpense[];
