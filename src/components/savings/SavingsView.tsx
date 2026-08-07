@@ -9,7 +9,7 @@ interface SavingsViewProps {
 }
 
 export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEdit }) => {
-  const { profile, updateProfileData, showToast } = useApp();
+  const { profile, updateProfileData, showToast, convertAmount } = useApp();
   const [showPlatformsModal, setShowPlatformsModal] = useState(false);
 
   const savingsList = profile.savingsList || [];
@@ -20,8 +20,9 @@ export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEd
 
   savingsList.forEach(x => {
     if (x.status === 'completed' || x.delivered) {
-      if (x.savType === 'digital') digitalTotal += x.amount;
-      else physicalTotal += x.amount;
+      const amt = convertAmount(x.amount, x.currency);
+      if (x.savType === 'digital') digitalTotal += amt;
+      else physicalTotal += amt;
     }
   });
 
@@ -163,7 +164,7 @@ export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEd
                         <span className="text-slate-400 text-[10px]">Sin imagen</span>
                       )}
                     </td>
-                    <td className="py-3 font-black text-emerald-600">{formatCurrency(item.amount)}</td>
+                    <td className="py-3 font-black text-emerald-600">{formatCurrency(convertAmount(item.amount, item.currency))}</td>
                     <td className="py-3 text-right">
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
                         {item.status === 'completed' || item.delivered ? '✅ Listo' : '⏳ Pendiente'}
@@ -198,9 +199,40 @@ export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEd
             </button>
 
             <div className="space-y-2 max-h-60 overflow-y-auto">
-              {platforms.map(p => (
-                <div key={p.id} className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl flex items-center justify-between">
+              {platforms.map((p, idx) => (
+                <div key={p.id} className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl flex items-center justify-between group">
                   <span className="text-xs font-bold text-slate-900 dark:text-slate-100">🌐 {p.name}</span>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={() => {
+                        const newName = prompt('Editar nombre:', p.name);
+                        if (newName) {
+                          updateProfileData(draft => {
+                            if (draft.settings.savingPlatforms) {
+                               draft.settings.savingPlatforms[idx].name = newName;
+                            }
+                          });
+                        }
+                      }}
+                      className="p-1.5 text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded-lg"
+                    >
+                      ✎
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (confirm(`¿Eliminar ${p.name}?`)) {
+                          updateProfileData(draft => {
+                            if (draft.settings.savingPlatforms) {
+                              draft.settings.savingPlatforms.splice(idx, 1);
+                            }
+                          });
+                        }
+                      }}
+                      className="p-1.5 text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/40 rounded-lg"
+                    >
+                      🗑️
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

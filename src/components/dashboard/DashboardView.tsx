@@ -50,12 +50,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenCreate,
   onOpenDetails,
 }) => {
-  const { profile, updateProfileData, showToast, setActiveView, integrityReport } = useApp();
+  const { profile, updateProfileData, showToast, setActiveView, integrityReport, exchangeRates } = useApp();
   const [chartMode, setChartMode] = useState<number>(profile.settings.defaultChart || 4); // 0: Composed, 1: Bar, 2: Pie
   const [showBalanceLine, setShowBalanceLine] = useState(true);
   const [showFlowLines, setShowFlowLines] = useState(true);
 
-  const plan = calculateProjections(profile);
+  const plan = calculateProjections(profile, exchangeRates);
   const today = todayStr();
 
   // Find balance for today
@@ -66,7 +66,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const delayedItems: any[] = [];
 
   plan.forEach(e => {
-    if (e.date <= today) todayBalance = e.balance;
+    if (e.done) todayBalance += e.amt;
+    
     if (e.amt > 0) totalIncome += e.amt;
     if (e.amt < 0 && e.type !== 'savings') totalExpense += Math.abs(e.amt);
     if (e.criticalDelay && !criticalAlert) criticalAlert = { date: e.date, reason: e.label };

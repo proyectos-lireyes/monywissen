@@ -69,6 +69,7 @@ export interface IncomeItem {
   freq: FrequencyType;
   day?: number | string; // Day number or biweekly pair '15-30'
   date?: string; // For 'one-time'
+  receiptImg?: string;
   desc?: string;
   tags?: string[];
   currency?: CurrencyCode;
@@ -81,10 +82,10 @@ export interface ExpenseItem {
   freq: FrequencyType;
   day?: number | string;
   date?: string;
+  receiptImg?: string;
   end?: string; // Optional end date
   flex?: boolean;
   desc?: string;
-  receiptImg?: string;
   deliveryImgs?: string[];
   category?: string;
   tags?: string[];

@@ -124,7 +124,13 @@ export function getRemainingDebtAmount(debt: DebtItem, overrides: Record<string,
 /**
  * Calculates day-by-day cash flow projections for a given UserProfile
  */
-export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
+export function calculateProjections(profile: UserProfile, exchangeRates: Record<string, number> = {}): PlanOccurrence[] {
+  const convAmt = (amt: number, currency?: string) => {
+    if (!currency || currency === 'USD_BCV') return amt;
+    const rate = exchangeRates[currency];
+    return rate ? amt * rate : amt;
+  };
+
   if (!profile || !profile.settings) return [];
 
   const settings = profile.settings;
@@ -226,7 +232,7 @@ export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
   (profile.incomes || []).forEach(inc => {
     if (inc.freq === 'one-time') {
       if (inc.date && inc.date >= startD && inc.date <= endD) {
-        addOccurrence(inc.date, inc.name, 'income', inc.amount, inc);
+        addOccurrence(inc.date, inc.name, 'income', convAmt(inc.amount, (inc as any).currency), inc);
       }
     } else if (inc.freq === 'monthly') {
       for (let y = startYear; y <= endYear; y++) {
@@ -234,7 +240,7 @@ export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
         const mEnd = (y === endYear) ? endMonth : 11;
         for (let m = mStart; m <= mEnd; m++) {
           const d = getDateInMonth(y, m, Number(inc.day || 1));
-          if (d >= startD && d <= endD) addOccurrence(d, inc.name, 'income', inc.amount, inc);
+          if (d >= startD && d <= endD) addOccurrence(d, inc.name, 'income', convAmt(inc.amount, (inc as any).currency), inc);
         }
       }
     } else if (inc.freq === 'biweekly') {
@@ -249,8 +255,8 @@ export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
           const d2 = (v2 === '30' || v2 === 'EOM')
             ? new Date(y, m + 1, 0).toISOString().slice(0, 10)
             : getDateInMonth(y, m, parseInt(v2, 10));
-          if (d1 >= startD && d1 <= endD) addOccurrence(d1, inc.name, 'income', inc.amount, inc);
-          if (d2 >= startD && d2 <= endD) addOccurrence(d2, inc.name, 'income', inc.amount, inc);
+          if (d1 >= startD && d1 <= endD) addOccurrence(d1, inc.name, 'income', convAmt(inc.amount, (inc as any).currency), inc);
+          if (d2 >= startD && d2 <= endD) addOccurrence(d2, inc.name, 'income', convAmt(inc.amount, (inc as any).currency), inc);
         }
       }
     } else if (inc.freq === 'weekly') {
@@ -263,7 +269,7 @@ export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
       while (curr <= limit) {
         const dateStr = curr.toISOString().slice(0, 10);
         if (dateStr >= startD && dateStr <= endD) {
-          addOccurrence(dateStr, inc.name, 'income', inc.amount, inc);
+          addOccurrence(dateStr, inc.name, 'income', convAmt(inc.amount, (inc as any).currency), inc);
         }
         curr.setDate(curr.getDate() + 7);
       }
@@ -275,7 +281,7 @@ export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
     const endLimit = exp.end || endD;
     if (exp.freq === 'one-time') {
       if (exp.date && exp.date >= startD && exp.date <= endLimit) {
-        addOccurrence(exp.date, exp.name, 'expense', -exp.amount, exp);
+        addOccurrence(exp.date, exp.name, 'expense', -convAmt(exp.amount, (exp as any).currency), exp);
       }
     } else if (exp.freq === 'monthly') {
       for (let y = startYear; y <= endYear; y++) {
@@ -283,7 +289,7 @@ export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
         const mEnd = (y === endYear) ? endMonth : 11;
         for (let m = mStart; m <= mEnd; m++) {
           const d = getDateInMonth(y, m, Number(exp.day || 1));
-          if (d >= startD && d <= endLimit) addOccurrence(d, exp.name, 'expense', -exp.amount, exp);
+          if (d >= startD && d <= endLimit) addOccurrence(d, exp.name, 'expense', -convAmt(exp.amount, (exp as any).currency), exp);
         }
       }
     } else if (exp.freq === 'biweekly') {
@@ -298,8 +304,8 @@ export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
           const d2 = (v2 === '30' || v2 === 'EOM')
             ? new Date(y, m + 1, 0).toISOString().slice(0, 10)
             : getDateInMonth(y, m, parseInt(v2, 10));
-          if (d1 >= startD && d1 <= endLimit) addOccurrence(d1, exp.name, 'expense', -exp.amount, exp);
-          if (d2 >= startD && d2 <= endLimit) addOccurrence(d2, exp.name, 'expense', -exp.amount, exp);
+          if (d1 >= startD && d1 <= endLimit) addOccurrence(d1, exp.name, 'expense', -convAmt(exp.amount, (exp as any).currency), exp);
+          if (d2 >= startD && d2 <= endLimit) addOccurrence(d2, exp.name, 'expense', -convAmt(exp.amount, (exp as any).currency), exp);
         }
       }
     } else if (exp.freq === 'weekly') {
@@ -312,7 +318,7 @@ export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
       while (curr <= limit) {
         const dateStr = curr.toISOString().slice(0, 10);
         if (dateStr >= startD && dateStr <= endLimit) {
-          addOccurrence(dateStr, exp.name, 'expense', -exp.amount, exp);
+          addOccurrence(dateStr, exp.name, 'expense', -convAmt(exp.amount, (exp as any).currency), exp);
         }
         curr.setDate(curr.getDate() + 7);
       }
@@ -334,8 +340,8 @@ export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
       const limitDate = debt.end ? new Date(debt.end + 'T12:00:00') : new Date(endD + 'T12:00:00');
 
       const freq = debt.freq || (customDef ? customDef.freq : 'monthly');
-      const pay = parseFloat(String(debt.amount || 0));
-      let totalDebt = parseFloat(String(debt.balance || 0));
+      const pay = convAmt(parseFloat(String(debt.amount || 0)), (debt as any).currency);
+      let totalDebt = convAmt(parseFloat(String(debt.balance || 0)), (debt as any).currency);
 
       // If this debt has an APR, we assume the `pay` amount already includes interest (calculated at creation).
       // Therefore, the true total debt is simply pay * installments.
@@ -366,8 +372,8 @@ export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
 
         let effectivePayToAccumulate = requiredPay;
         if (ov.done && ov.amt !== undefined) {
-          effectivePayToAccumulate = parseFloat(String(ov.amt));
-          const partialsSum = (ov.partials || []).reduce((sum: number, pt: any) => sum + parseFloat(String(pt.amt || 0)), 0);
+          effectivePayToAccumulate = convAmt(parseFloat(String(ov.amt)), (debt as any).currency);
+          const partialsSum = convAmt((ov.partials || []).reduce((sum: number, pt: any) => sum + parseFloat(String(pt.amt || 0)), 0), (debt as any).currency);
           effectivePayToAccumulate += partialsSum;
         }
 
@@ -422,7 +428,7 @@ export function calculateProjections(profile: UserProfile): PlanOccurrence[] {
   // 4. Process Savings
   (profile.savingsList || []).forEach(sav => {
     if (sav.date >= startD && sav.date <= endD) {
-      addOccurrence(sav.date, `Divisa/Ahorro: ${sav.person}`, 'savings', -sav.amount, sav);
+      addOccurrence(sav.date, `Divisa/Ahorro: ${sav.person}`, 'savings', -convAmt(sav.amount, (sav as any).currency), sav);
     }
   });
 

@@ -290,7 +290,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     if (!profile.savingsList || profile.savingsList.length === 0) return;
     
-    const plan = calculateProjections(profile);
+    const plan = calculateProjections(profile, state.exchangeRates);
     const delayedSavings = plan.filter(p => p.type === 'savings' && p.isDelayed && !p.done);
     
     if (delayedSavings.length > 0) {

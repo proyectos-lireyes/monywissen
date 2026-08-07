@@ -21,7 +21,7 @@ interface CalendarViewProps {
 }
 
 export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => {
-  const { profile } = useApp();
+  const { profile, state } = useApp();
   const [currentCalDate, setCurrentCalDate] = useState<Date>(new Date());
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
   const [searchQuery, setSearchQuery] = useState('');
@@ -29,7 +29,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
   const [activeOutflowFilters, setActiveOutflowFilters] = useState<string[]>([]);
   const [selectedDayEvents, setSelectedDayEvents] = useState<{ date: string; events: any[] } | null>(null);
 
-  const plan = calculateProjections(profile);
+  const plan = calculateProjections(profile, state.exchangeRates);
   const today = todayStr();
 
   const year = currentCalDate.getFullYear();

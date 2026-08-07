@@ -35,10 +35,13 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
   const [apr, setApr] = useState<number | string>('');
   const [savPerson, setSavPerson] = useState('');
   const [savType, setSavType] = useState<'physical' | 'digital'>('physical');
+  const [savStatus, setSavStatus] = useState<'pending' | 'completed'>('completed');
+  const [savPlatform, setSavPlatform] = useState('');
   const [category, setCategory] = useState('');
   const [tags, setTags] = useState('');
   const [currency, setCurrency] = useState('USD_BCV');
   const [receiptImg, setReceiptImg] = useState<string>('');
+  const [markAsDone, setMarkAsDone] = useState<boolean>(true);
 
   useEffect(() => {
     if (!isOpen || !type) return;
@@ -46,6 +49,10 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
     if (editIndex !== null) {
       if (type === 'income') {
         const item = profile.incomes[editIndex];
+        if (item && item.freq === 'one-time') {
+           const key = `income_${item.id}_${item.date}`;
+           setMarkAsDone(profile.overrides?.[key]?.done ?? true);
+        }
         if (item) {
           setName(item.name);
           setAmount(item.amount);
@@ -59,6 +66,10 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
         }
       } else if (type === 'expense') {
         const item = profile.expenses[editIndex];
+        if (item && item.freq === 'one-time') {
+           const key = `expense_${item.id}_${item.date}`;
+           setMarkAsDone(profile.overrides?.[key]?.done ?? true);
+        }
         if (item) {
           setName(item.name);
           setAmount(item.amount);
@@ -93,6 +104,8 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           setAmount(item.amount);
           setDate(item.date);
           setSavType(item.savType);
+          setSavStatus(item.status === 'pending' ? 'pending' : 'completed');
+          setSavPlatform(item.platformId || '');
           setCurrency(item.currency || 'USD_BCV');
           setReceiptImg(item.receiptImg || '');
         }
@@ -113,6 +126,8 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       setApr('');
       setSavPerson('');
       setSavType('physical');
+      setSavStatus('completed');
+      setSavPlatform('');
       setCategory('');
       setTags('');
       setCurrency('USD_BCV');
@@ -139,9 +154,10 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           person: savPerson,
           amount: numAmt,
           date,
-          delivered: true,
-          status: 'completed',
+          delivered: savStatus === 'completed',
+          status: savStatus,
           savType,
+          platformId: savType === 'digital' ? savPlatform : undefined,
           currency: currency as any,
           receiptImg: receiptImg || undefined,
         };
@@ -188,10 +204,17 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           desc,
           tags: tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : undefined,
           currency: currency as any,
+          receiptImg: receiptImg || undefined,
         };
 
         if (editIndex !== null) draft.incomes[editIndex] = item;
         else draft.incomes.push(item);
+        
+        if (finalFreq === 'one-time') {
+           draft.overrides = draft.overrides || {};
+           const key = `income_${item.id}_${date}`;
+           draft.overrides[key] = { ...(draft.overrides[key] || {}), done: markAsDone };
+        }
       } else if (type === 'expense') {
         const item: ExpenseItem = {
           id: editIndex !== null ? draft.expenses[editIndex].id : `exp_${Date.now()}`,
@@ -204,10 +227,17 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           category: category || undefined,
           tags: tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : undefined,
           currency: currency as any,
+          receiptImg: receiptImg || undefined,
         };
 
         if (editIndex !== null) draft.expenses[editIndex] = item;
         else draft.expenses.push(item);
+        
+        if (finalFreq === 'one-time') {
+           draft.overrides = draft.overrides || {};
+           const key = `expense_${item.id}_${date}`;
+           draft.overrides[key] = { ...(draft.overrides[key] || {}), done: markAsDone };
+        }
       } else if (type === 'debt') {
         const finalDueDay = freq === 'biweekly' ? dueDay : (dueDay || day);
         
@@ -250,9 +280,10 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           person: savPerson,
           amount: numAmt,
           date,
-          delivered: false,
-          status: 'completed' as const,
+          delivered: savStatus === 'completed',
+          status: savStatus,
           savType,
+          platformId: savType === 'digital' ? savPlatform : undefined,
           currency: currency as any,
         };
         if (editIndex !== null) draft.savingsList[editIndex] = item;
@@ -307,6 +338,32 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                     </select>
                   </div>
                   <div>
+                    <label className="text-xs font-bold text-slate-500 block">Estado</label>
+                    <select
+                      value={savStatus}
+                      onChange={e => setSavStatus(e.target.value as any)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                    >
+                      <option value="completed">✅ Entregado (Listo)</option>
+                      <option value="pending">⏳ Pendiente</option>
+                    </select>
+                  </div>
+                  {savType === 'digital' && (
+                    <div>
+                      <label className="text-xs font-bold text-slate-500 block">Plataforma</label>
+                      <select
+                        value={savPlatform}
+                        onChange={e => setSavPlatform(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                      >
+                        <option value="">Seleccione...</option>
+                        {profile.settings?.savingPlatforms?.map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <div>
                     <label className="text-xs font-bold text-slate-500 block">Monto</label>
                     <input
                       type="number" required value={amount} onChange={e => setAmount(e.target.value)}
@@ -320,6 +377,41 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                     type="text" required value={savPerson} onChange={e => setSavPerson(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
                   />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 block">Divisa</label>
+                  <select
+                    value={currency} onChange={e => setCurrency(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="USD_BCV">Dólar BCV (Bs)</option>
+                    <option value="USD">Dólar USD ($)</option>
+                    <option value="EUR">Euro (€)</option>
+                    <option value="COP">Peso Colombiano</option>
+                    <option value="BRL">Real Brasileño</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 block mb-1">Comprobante (Imagen)</label>
+                  <input
+                    type="file" accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                          setReceiptImg(ev.target?.result as string);
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100"
+                  />
+                  {receiptImg && (
+                    <div className="mt-2">
+                      <img src={receiptImg} alt="Comprobante" className="h-16 rounded-lg object-cover" />
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -548,6 +640,15 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                         </select>
                       </div>
                     </div>
+                    {(forceOneTime || freq === 'one-time') && (type === 'income' || type === 'expense') && (
+                      <div className="pt-2 pb-2">
+                        <label className="flex items-center gap-2 cursor-pointer p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                          <input type="checkbox" checked={markAsDone} onChange={e => setMarkAsDone(e.target.checked)} className="w-4 h-4 text-emerald-600 rounded" />
+                          <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Marcar como procesado (Listo)</span>
+                        </label>
+                      </div>
+                    )}
+                    
                     {forceOneTime ? (
                       <div>
                         <label className="text-xs font-bold text-slate-500 block">Fecha</label>

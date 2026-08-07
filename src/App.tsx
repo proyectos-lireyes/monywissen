@@ -113,7 +113,7 @@ const AppContent: React.FC = () => {
       doc.text(`Proyección: ${profile.settings.planStart} a ${profile.settings.planEnd}`, 14, 30);
       
       // Resumen de Saldo
-      const plan = calculateProjections(profile);
+      const plan = calculateProjections(profile, state.exchangeRates);
       const minBalance = plan.reduce((min, p) => p.balance < min ? p.balance : min, profile.settings.openingBalance || 0);
       const lastBalance = plan.length > 0 ? plan[plan.length - 1].balance : profile.settings.openingBalance || 0;
       
