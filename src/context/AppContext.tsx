@@ -9,8 +9,8 @@ import { AppStateData, UserProfile, ToastMessage, AuthUser } from '../types';
 import { todayStr, calculateProjections } from '../utils/financialEngine';
 import { validateFinancialIntegrity, validateTransactionExecution, IntegrityReport } from '../utils/financialIntegrity';
 import { verifyJWT } from '../utils/security';
-import { backupStateToFirebase } from '../utils/firebase';
-import { checkAndTriggerDaily8AMReminder } from '../utils/notifications';
+import { backupStateToFirebase, subscribeToFirebaseState } from '../utils/firebase';
+import { checkAndTriggerDailyReminder } from '../utils/notifications';
 
 const STORAGE_KEY = 'finplan_profiles_v3';
 
@@ -191,19 +191,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     const fetchRates = async () => {
       try {
-        const [usdRes, eurRes] = await Promise.all([
-          fetch('https://ve.dolarapi.com/v1/dolares/oficial').then(r => r.json()),
-          fetch('https://ve.dolarapi.com/v1/euros/oficial').then(r => r.json())
-        ]);
+        const res = await fetch('/api/exchange-rates');
+        if (!res.ok) throw new Error('API error');
+        const data = await res.json();
         
         // USD_BCV is the base 1 in our system because everything is translated to USD BCV
         // but wait, if the API gives us VES per USD...
-        // For instance, usdRes.promedio = 43 VES.
+        // For instance, data.usd.promedio = 43 VES.
         // So 1 USD = 43 VES.
         // If an amount is in BS, to convert to USD BCV, we divide by usdRes.promedio.
         // Let's store the raw VES values
-        const usdRate = usdRes.promedio || 40;
-        const eurRate = eurRes.promedio || 45;
+        const usdRate = data.usd.promedio || 40;
+        const eurRate = data.eur.promedio || 45;
 
         setExchangeRates({
           'USD_BCV': 1,
@@ -224,14 +223,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return rate ? amount * rate : amount;
   };
 
-  // Sync state to LocalStorage
+  // Sync state to LocalStorage and Firebase
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      
+      // Auto-sync to Firebase if logged in
+      if (state.authUser && state.authUser.email) {
+         // Create a minimal clone without tokens for backup
+         const stateToBackup = JSON.parse(JSON.stringify(state));
+         delete stateToBackup.authToken;
+         
+         // Use setTimeout to debounce slightly, though React handles basic debouncing
+         backupStateToFirebase(state.authUser.email, stateToBackup).catch(err => {
+             console.error('Error syncing to Firebase:', err);
+         });
+      }
     } catch (e) {
       console.error('Error saving state:', e);
     }
   }, [state]);
+
+  // Removed aggressive real-time listener to prevent wiping local data unexpectedly
+  // The user will use explicit Restore actions from Settings.
 
   const showToast = (message: string, icon: string = '✅') => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -249,18 +263,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     ? state.profiles[currentProfileName]
     : getDefaultSeed().profiles.Personal;
 
+  useEffect(() => {
+    // Check notifications every minute
+    const interval = setInterval(() => {
+      const notifEnabled = rawProfile.settings.notificationsEnabled !== false;
+      checkAndTriggerDailyReminder(
+        rawProfile.expenses,
+        rawProfile.debts,
+        notifEnabled,
+        rawProfile.settings.notifTime || '08:00'
+      );
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [rawProfile]);
+
   const profile = useMemo(() => sanitizeProfile(rawProfile), [rawProfile]);
 
-  // Check 8:00 AM Daily Payment Reminders
-  useEffect(() => {
-    if (profile) {
-      checkAndTriggerDaily8AMReminder(
-        profile.expenses || [],
-        profile.debts || [],
-        profile.settings?.notificationsEnabled !== false
-      );
-    }
-  }, [profile]);
+
 
   // Budget Threshold Check
   useEffect(() => {
@@ -290,7 +309,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     if (!profile.savingsList || profile.savingsList.length === 0) return;
     
-    const plan = calculateProjections(profile, state.exchangeRates);
+    const plan = calculateProjections(profile, exchangeRates);
     const delayedSavings = plan.filter(p => p.type === 'savings' && p.isDelayed && !p.done);
     
     if (delayedSavings.length > 0) {
@@ -483,7 +502,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const integrityReport = useMemo(() => {
-    return validateFinancialIntegrity(profile);
+    return validateFinancialIntegrity(profile, exchangeRates);
   }, [profile]);
 
   const validateTransaction = (candidate: { type: 'income' | 'expense' | 'debt' | 'saving'; amount: number; date?: string; freq?: string }) => {

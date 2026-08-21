@@ -23,7 +23,12 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     .map((item, idx) => ({ ...item, realType: 'expense' as const, originalIdx: idx }))
     .filter(e => e.freq === 'one-time');
 
-  const allOneTime = [...oneTimeIncomes, ...oneTimeExpenses].sort((a, b) => {
+  const allOneTime = [...oneTimeIncomes, ...oneTimeExpenses]
+    .filter(item => {
+      const d = item.date || '';
+      return d >= profile.settings.planStart && d <= profile.settings.planEnd;
+    })
+    .sort((a, b) => {
     const dA = a.date || '';
     const dB = b.date || '';
     return dB.localeCompare(dA);

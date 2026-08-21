@@ -13,6 +13,7 @@ export interface UserSettings {
   delayDays: number;
   openingBalance: number;
   freeSpend: number;
+  autoSaveThreshold?: number;
   myEmail?: string;
   myAlias?: string;
   myPhone?: string;
@@ -40,6 +41,10 @@ export interface CustomDebtType {
   name: string;
   freq: FrequencyType;
   dueDay?: string;
+  cutDay?: number | string;
+  creditLimit?: number | string;
+  limitCurrency?: string;
+  isCreditCard?: boolean;
   hasInterest: boolean;
   usePlan: boolean;
   color: string;
@@ -68,11 +73,14 @@ export interface IncomeItem {
   amount: number;
   freq: FrequencyType;
   day?: number | string; // Day number or biweekly pair '15-30'
-  date?: string; // For 'one-time'
+  date?: string; // For 'one-time' (legacy) or start date
+  start?: string; // Optional start date for recurring
+  end?: string; // Optional end date for recurring
   receiptImg?: string;
   desc?: string;
   tags?: string[];
   currency?: CurrencyCode;
+  strictDate?: boolean;
 }
 
 export interface ExpenseItem {
@@ -81,15 +89,17 @@ export interface ExpenseItem {
   amount: number;
   freq: FrequencyType;
   day?: number | string;
-  date?: string;
-  receiptImg?: string;
+  date?: string; // For one-time (legacy) or start date
+  start?: string; // Optional start date for recurring
   end?: string; // Optional end date
   flex?: boolean;
   desc?: string;
+  receiptImg?: string;
   deliveryImgs?: string[];
   category?: string;
   tags?: string[];
   currency?: CurrencyCode;
+  strictDate?: boolean;
 }
 
 export interface DebtItem {
@@ -100,6 +110,7 @@ export interface DebtItem {
   balance: number;
   amortized?: number;
   cardId?: string;
+  strictDate?: boolean;
   cutDay?: number;
   dueDay?: number | string;
   start?: string;
@@ -135,6 +146,7 @@ export interface SavingsItem {
   receiptImg?: string;
   deliveryImgs?: string[];
   currency?: CurrencyCode;
+  strictDate?: boolean;
 }
 
 export interface SharedExpense {
@@ -250,11 +262,16 @@ export interface PlanOccurrence {
   originalDate: string;
   done: boolean;
   isPartial?: boolean;
+  strictDate?: boolean;
+  optimizedFrom?: string;
   userPostponed?: boolean;
   plannedAmt?: number;
   balance: number;
   isDelayed?: boolean;
+  pulledEarly?: boolean;
+  insufficientFunds?: boolean;
   criticalDelay?: boolean;
+  savingsAccumulated?: number;
 }
 
 export interface ToastMessage {

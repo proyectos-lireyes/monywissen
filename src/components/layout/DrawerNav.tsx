@@ -29,7 +29,7 @@ export const DrawerNav: React.FC<DrawerNavProps> = ({ isOpen, onClose, onExportP
 
   const navItems = [
     { id: 'savings', label: 'Ahorros y Divisas', icon: Wallet },
-    { id: 'transactions', label: 'Transacciones Únicas', icon: ArrowLeftRight },
+    { id: 'income', label: 'Ingresos Recurrentes', icon: TrendingUp },
     { id: 'settings', label: 'Ajustes del Sistema', icon: Settings },
   ];
 

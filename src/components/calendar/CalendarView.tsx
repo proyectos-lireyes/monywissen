@@ -21,15 +21,16 @@ interface CalendarViewProps {
 }
 
 export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => {
-  const { profile, state } = useApp();
+  const { profile, state, exchangeRates } = useApp();
   const [currentCalDate, setCurrentCalDate] = useState<Date>(new Date());
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterDate, setFilterDate] = useState('');
   const [activeStateFilters, setActiveStateFilters] = useState<string[]>([]);
   const [activeOutflowFilters, setActiveOutflowFilters] = useState<string[]>([]);
   const [selectedDayEvents, setSelectedDayEvents] = useState<{ date: string; events: any[] } | null>(null);
 
-  const plan = calculateProjections(profile, state.exchangeRates);
+  const plan = calculateProjections(profile, exchangeRates);
   const today = todayStr();
 
   const year = currentCalDate.getFullYear();
@@ -73,9 +74,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
   };
 
   const filterOccurrence = (e: any) => {
+    if (e.type === 'opening_balance') return false;
     const isOverdue = !e.done && e.originalDate < today;
-    const isPostponed = !e.done && (e.userPostponed || e.isDelayed || e.originalDate !== e.date);
-    const isPending = !e.done && !isOverdue && !isPostponed;
+    const isPostponed = !e.done && (e.userPostponed || (e.isDelayed && !e.insufficientFunds) || (e.originalDate && e.originalDate < e.date && !e.insufficientFunds));
+    const isPulledEarly = !e.done && e.pulledEarly;
+    const isDeficit = !e.done && e.insufficientFunds && e.amt < 0;
+    const isPending = !e.done && !isOverdue && !isPostponed && !isPulledEarly && !isDeficit;
     const isDone = e.done;
 
     if (!activeStateFilters.includes('show_done') && isDone) return false;
@@ -85,6 +89,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
       let show = false;
       if (activeStateFilters.includes('overdue') && isOverdue) show = true;
       if (activeStateFilters.includes('postponed') && isPostponed) show = true;
+      if (activeStateFilters.includes('pulledEarly') && isPulledEarly) show = true;
+      if (activeStateFilters.includes('deficit') && isDeficit) show = true;
       if (activeStateFilters.includes('pending') && isPending) show = true;
       if (!show) return false;
     }
@@ -114,6 +120,30 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
             Cronograma Financiero
           </h2>
 
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-slate-500">Filtrar Día:</label>
+              <input
+                type="date"
+                value={filterDate}
+                onChange={(e) => {
+                  const d = e.target.value;
+                  setFilterDate(d);
+                  if (d) {
+                     const dEvents = plan.filter(ev => ev.date === d);
+                     setSelectedDayEvents({ date: d, events: dEvents });
+                     if (viewMode === 'calendar') {
+                        const [y, m] = d.split('-');
+                        setCurrentCalDate(new Date(parseInt(y), parseInt(m) - 1, 1));
+                     }
+                  } else {
+                     setSelectedDayEvents(null);
+                  }
+                }}
+                className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+              />
+            </div>
+
           <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
             <button
               onClick={() => setViewMode('calendar')}
@@ -135,6 +165,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
             >
               <ListIcon className="w-3.5 h-3.5" /> Lista
             </button>
+          </div>
           </div>
         </div>
 
@@ -191,7 +222,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
               const dayNum = i + 1;
               const dateStr = `${prefixMonth}-${dayNum.toString().padStart(2, '0')}`;
               const isToday = dateStr === today;
-              const dayEvents = plan.filter(e => e.date === dateStr && filterOccurrence(e));
+              const actualEvents = plan.filter(e => e.date === dateStr && filterOccurrence(e));
+              const ghostEvents = plan.filter(e => e.originalDate === dateStr && e.date !== dateStr && filterOccurrence(e)).map(e => ({ ...e, isGhost: true }));
+              const dayEvents = [...actualEvents, ...ghostEvents];
 
               return (
                 <div
@@ -224,17 +257,28 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                         key={eIdx}
                         onClick={(e) => {
                           e.stopPropagation();
-                          onOpenDetails(ev.type, ev.ref.id, ev.originalDate, ev.date);
+                          if (!ev.isGhost) {
+                             onOpenDetails(ev.type, ev.ref.id, ev.originalDate, ev.date);
+                          }
                         }}
+                        style={(!ev.done && ev.date >= today && ev.amt <= 0 && ev.ref?.effectiveColor && !ev.isGhost) ? {
+                          borderLeftColor: ev.ref.effectiveColor,
+                          color: ev.ref.effectiveColor
+                        } : {}}
+                        title={ev.isGhost ? `Movido al ${formatDateStr(ev.date)}` : undefined}
                         className={`text-[8px] font-semibold px-1 py-0.5 rounded-sm truncate border-l-2 ${
-                          ev.done
+                          ev.isGhost
+                            ? 'border-slate-300 bg-slate-100/50 text-slate-400 dark:bg-slate-800/30 dark:border-slate-700 dark:text-slate-500 line-through opacity-60 cursor-help'
+                            : ev.done
                             ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                            : ev.amt > 0
-                            ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
-                            : 'border-blue-500 bg-blue-50 text-blue-700'
+                            : (ev.date < today
+                               ? 'border-rose-500 bg-rose-50 text-rose-800'
+                               : ev.amt > 0
+                                 ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                                 : (!ev.ref?.effectiveColor ? 'border-blue-500 bg-blue-50 text-blue-700' : 'bg-slate-50 dark:bg-slate-800'))
                         }`}
                       >
-                        {ev.label}
+                        {!ev.isGhost && ev.pulledEarly ? '⚡ ' : ''}{!ev.isGhost && ev.isDelayed ? '⚠️ ' : ''}{ev.label}
                       </div>
                     ))}
                     {dayEvents.length > 2 && (
@@ -291,9 +335,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
               const nextMonthEnd = new Date(year, month + 2, 0);
               const nextMonthEndStr = `${nextMonthEnd.getFullYear()}-${(nextMonthEnd.getMonth() + 1).toString().padStart(2, '0')}-${nextMonthEnd.getDate().toString().padStart(2, '0')}`;
 
+
               const filteredPlan = plan
-                .filter(e => e.date <= nextMonthEndStr)
+                .filter(e => searchQuery ? true : (e.date <= nextMonthEndStr))
                 .filter(filterOccurrence);
+
 
               if (filteredPlan.length === 0) {
                 return (
@@ -311,19 +357,40 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                 return (
                   <div
                     key={idx}
-                    onClick={() => onOpenDetails(e.type, e.ref?.id || '', e.originalDate || e.date, e.date)}
-                    className={`p-3.5 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-2 cursor-pointer ${
-                      e.done
+                    onClick={() => { if (!e.isGhost) onOpenDetails(e.type, e.ref?.id || '', e.originalDate || e.date, e.date); }}
+                    style={(!e.done && e.date >= today && !isIncome && e.ref?.effectiveColor && !e.isGhost) ? {
+                      borderLeftColor: e.ref.effectiveColor,
+                      borderLeftWidth: '4px'
+                    } : {}}
+                    title={e.isGhost ? `Movido al ${formatDateStr(e.date)}` : undefined}
+                    className={`p-3.5 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${!e.isGhost ? 'cursor-pointer' : 'cursor-help opacity-50'} ${
+                      e.isGhost 
+                        ? 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+                        : e.done
                         ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/50'
                         : isIncome
                         ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60'
-                        : 'bg-slate-50/60 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800 hover:border-slate-300'
+                        : (!e.ref?.effectiveColor ? 'bg-slate-50/60 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800 hover:border-slate-300' : 'bg-slate-50 dark:bg-slate-900 shadow-sm')
                     }`}
                   >
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <p className="text-xs font-black text-slate-900 dark:text-slate-100">
-                          {e.label}
+                        <p className={`text-xs font-black flex items-center gap-2 ${e.isGhost ? 'text-slate-500 line-through' : 'text-slate-900 dark:text-slate-100'}`}>
+                          {e.label} {e.isGhost && <span className="text-[9px] font-normal no-underline ml-1">(Plan original)</span>}
+                          
+                          {!e.isGhost && !e.done && e.pulledEarly && (
+                            <span className="text-[9px] bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider flex items-center gap-1" title={`Adelantado desde el ${e.optimizedFrom}`}>⚡ Adelantado</span>
+                          )}
+                          {!e.done && e.isDelayed && !e.insufficientFunds && (
+                            <span className="text-[9px] bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider flex items-center gap-1" title={`Retrasado desde el ${e.optimizedFrom}`}>⚠️ Pospuesto</span>
+                          )}
+                          {!e.done && e.insufficientFunds && e.amt < 0 && (
+                            <span className="text-[9px] bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider flex items-center gap-1" title="Quiebre / Fondos insuficientes">🚨 Quiebre</span>
+                          )}
+
+                          {!e.done && e.date < today && (
+                            <span className="text-[9px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded-md uppercase tracking-wider">Atrasado</span>
+                          )}
                         </p>
                         {e.done && (
                           <span className="text-[9px] px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200 rounded-md font-extrabold flex items-center gap-1">
@@ -348,6 +415,18 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                           </p>
                         </div>
                       )}
+                      
+                      {/* Warning for INSUFFICIENT FUNDS */}
+                      {!e.done && e.insufficientFunds && !isIncome && (
+                        <div className="mt-1 p-2 bg-rose-50 dark:bg-rose-950/40 rounded-lg border border-rose-200 dark:border-rose-900/50">
+                          <p className="text-[10px] font-bold text-rose-700 dark:text-rose-400 leading-tight mb-1">
+                            {e.balance < 0 ? '⚠️ Saldo insuficiente para este pago.' : '⚠️ Este pago rompe tu colchón de seguridad.'}
+                          </p>
+                          <p className="text-[9px] font-medium text-rose-600/80 dark:text-rose-500/80">
+                            Toca aquí para Moverlo o Descartarlo.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     <div className="text-right flex sm:flex-col justify-between sm:justify-center items-end border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-200/50 dark:border-slate-700/50">
@@ -356,7 +435,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                       </p>
                       <p className="text-[10px] text-slate-500 font-semibold">
                         {isIncome ? 'Saldo posterior: ' : 'Saldo disponible: '}
-                        <span className="font-extrabold text-slate-700 dark:text-slate-300">{formatCurrency(e.balance)}</span>
+                        <span className={'font-extrabold ' + (e.balance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300')}>{formatCurrency(e.balance)}</span>
                       </p>
                     </div>
                   </div>
@@ -377,6 +456,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
             { id: 'pending', label: '🔴 Pendientes' },
             { id: 'overdue', label: '⚠️ Atrasados' },
             { id: 'postponed', label: '🔄 Pospuestos' },
+            { id: 'pulledEarly', label: '⚡ Adelantados' },
+            { id: 'deficit', label: '🚨 Quiebre' },
             { id: 'show_done', label: '👁️ Mostrar Listos' },
           ].map(f => {
             const isActive = activeStateFilters.includes(f.id);
@@ -409,6 +490,16 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                 <X className="w-4 h-4" />
               </button>
             </div>
+            <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-600 dark:text-slate-300">Total Gastos y Pagos (Día)</span>
+              <span className="text-sm font-black text-slate-900 dark:text-slate-100">
+                {formatCurrency(
+                  selectedDayEvents.events.reduce((sum, e) => {
+                    return (e.amt < 0) ? sum + Math.abs(e.amt) : sum;
+                  }, 0)
+                )}
+              </span>
+            </div>
 
             <div className="space-y-2 max-h-72 overflow-y-auto">
               {selectedDayEvents.events.map((e, idx) => (
@@ -418,13 +509,21 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                     setSelectedDayEvents(null);
                     onOpenDetails(e.type, e.ref.id, e.originalDate, e.date);
                   }}
-                  className="p-3 bg-slate-50 dark:bg-slate-800 rounded-2xl flex items-center justify-between cursor-pointer hover:bg-slate-100"
+                  className={`p-3 rounded-2xl flex items-center justify-between cursor-pointer hover:opacity-80 transition-opacity border ${e.pulledEarly ? 'bg-emerald-50 border-emerald-100 dark:bg-emerald-900/20 dark:border-emerald-800/30' : e.insufficientFunds && e.amt < 0 ? 'bg-rose-50 border-rose-100 dark:bg-rose-900/20 dark:border-rose-800/30' : e.isDelayed ? 'bg-amber-50 border-amber-100 dark:bg-amber-900/20 dark:border-amber-800/30' : 'bg-slate-50 border-transparent dark:bg-slate-800'}`}
                 >
-                  <div>
-                    <p className="text-xs font-bold text-slate-900 dark:text-slate-100">{e.label}</p>
-                    <p className="text-[10px] text-slate-400">{e.type}</p>
+                  <div className="flex-1 min-w-0 pr-2 flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: e.ref?.effectiveColor || '#94a3b8' }}></div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-xs font-bold flex items-center gap-1.5 truncate ${e.pulledEarly ? 'text-emerald-900 dark:text-emerald-100' : e.insufficientFunds && e.amt < 0 ? 'text-rose-900 dark:text-rose-100' : 'text-slate-900 dark:text-slate-100'}`}>
+                        {e.label}
+                        {e.pulledEarly && <span title="Adelantado automáticamente" className="text-emerald-500">⚡</span>}
+                        {e.insufficientFunds && e.amt < 0 && <span title="Alerta de Quiebre" className="text-rose-500">🚨</span>}
+                        {e.isDelayed && !e.insufficientFunds && <span title="Retrasado" className="text-amber-500">⚠️</span>}
+                      </p>
+                      <p className={`text-[10px] ${e.pulledEarly ? 'text-emerald-600/70 dark:text-emerald-400/60' : e.insufficientFunds && e.amt < 0 ? 'text-rose-600/70 dark:text-rose-400/60' : 'text-slate-400'}`}>{e.type}</p>
+                    </div>
                   </div>
-                  <p className="text-xs font-black text-slate-900 dark:text-slate-100">
+                  <p className={`text-xs font-black ${e.pulledEarly ? 'text-amber-700 dark:text-amber-300' : e.insufficientFunds && e.amt < 0 ? 'text-rose-700 dark:text-rose-300' : 'text-slate-900 dark:text-slate-100'}`}>
                     {formatCurrency(Math.abs(e.amt))}
                   </p>
                 </div>

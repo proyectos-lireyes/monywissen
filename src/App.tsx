@@ -24,7 +24,7 @@ import autoTable from 'jspdf-autotable';
 import { formatCurrency, calculateProjections, getRemainingDebtAmount } from './utils/financialEngine';
 
 const AppContent: React.FC = () => {
-  const { activeView, profile, showToast, state, importFullState } = useApp();
+  const { activeView, profile, showToast, state, exchangeRates, importFullState } = useApp();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
@@ -113,7 +113,7 @@ const AppContent: React.FC = () => {
       doc.text(`Proyección: ${profile.settings.planStart} a ${profile.settings.planEnd}`, 14, 30);
       
       // Resumen de Saldo
-      const plan = calculateProjections(profile, state.exchangeRates);
+      const plan = calculateProjections(profile, exchangeRates);
       const minBalance = plan.reduce((min, p) => p.balance < min ? p.balance : min, profile.settings.openingBalance || 0);
       const lastBalance = plan.length > 0 ? plan[plan.length - 1].balance : profile.settings.openingBalance || 0;
       

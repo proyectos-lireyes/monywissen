@@ -11,6 +11,16 @@ interface SavingsViewProps {
 export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEdit }) => {
   const { profile, updateProfileData, showToast, convertAmount } = useApp();
   const [showPlatformsModal, setShowPlatformsModal] = useState(false);
+  const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const [showAddPlatformModal, setShowAddPlatformModal] = useState(false);
+
+  const [adjustPhys, setAdjustPhys] = useState(String(profile.savings?.current || 0));
+  const [adjustDig, setAdjustDig] = useState(String(profile.savings?.digital || 0));
+
+  const [newPlatformName, setNewPlatformName] = useState('');
+  const [editingPlatformId, setEditingPlatformId] = useState<string | null>(null);
+  const [editPlatformName, setEditPlatformName] = useState('');
+
 
   const savingsList = profile.savingsList || [];
   const platforms = profile.settings.savingPlatforms || [];
@@ -29,37 +39,56 @@ export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEd
   const globalTotal = physicalTotal + digitalTotal;
 
   const handleAdjustBase = () => {
-    const physStr = prompt('Monto base ahorrado en EFECTIVO (Físico):', String(profile.savings?.current || 0));
-    if (physStr === null) return;
-    const digStr = prompt('Monto base ahorrado DIGITAL (Billeteras):', String(profile.savings?.digital || 0));
-    if (digStr === null) return;
+    setShowAdjustModal(true);
+    setAdjustPhys(String(profile.savings?.current || 0));
+    setAdjustDig(String(profile.savings?.digital || 0));
+  };
 
+  const handleSaveAdjust = (e: React.FormEvent) => {
+    e.preventDefault();
     updateProfileData(draft => {
       draft.savings = {
-        current: parseFloat(physStr) || 0,
-        digital: parseFloat(digStr) || 0,
+        current: parseFloat(adjustPhys) || 0,
+        digital: parseFloat(adjustDig) || 0,
       };
     });
-
     showToast('Base histórica de ahorros actualizada', '⚙️');
+    setShowAdjustModal(false);
   };
 
   const handleAddPlatform = () => {
-    const name = prompt('Nombre de la plataforma (Ej. Binance, Zinli, Facebank):');
-    if (!name) return;
-
-    updateProfileData(draft => {
-      draft.settings.savingPlatforms = draft.settings.savingPlatforms || [];
-      draft.settings.savingPlatforms.push({
-        id: `sp_${Date.now()}`,
-        name,
+    setEditingPlatformId(null);
+    setNewPlatformName('');
+    setShowAddPlatformModal(true);
+  };
+  
+  const handleSavePlatform = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (editingPlatformId) {
+      if (!editPlatformName.trim()) return;
+      updateProfileData(draft => {
+        const plat = draft.settings.savingPlatforms?.find(p => p.id === editingPlatformId);
+        if (plat) plat.name = editPlatformName.trim();
       });
-    });
-
-    showToast(`Plataforma "${name}" guardada`, '🌐');
+      showToast('Plataforma actualizada', '✅');
+    } else {
+      if (!newPlatformName.trim()) return;
+      updateProfileData(draft => {
+        draft.settings.savingPlatforms = draft.settings.savingPlatforms || [];
+        draft.settings.savingPlatforms.push({
+          id: `plat_${Date.now()}`,
+          name: newPlatformName.trim(),
+          currency: 'USD'
+        });
+      });
+      showToast('Plataforma agregada', '✅');
+    }
+    
+    setShowAddPlatformModal(false);
   };
 
-  return (
+return (
     <div className="space-y-4 pb-20">
       <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -91,12 +120,12 @@ export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEd
 
         {/* KPI Cards */}
         <div className="grid grid-cols-3 gap-2">
-          <div className="p-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 rounded-2xl text-center">
-            <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 uppercase">
-              Total Ahorrado
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-2xl text-center">
+            <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase">
+              Físico (Efectivo)
             </span>
-            <p className="text-base font-black text-emerald-600 dark:text-emerald-400">
-              {formatCurrency(globalTotal)}
+            <p className="text-base font-black text-slate-900 dark:text-slate-100">
+              {formatCurrency(physicalTotal)}
             </p>
           </div>
 
@@ -109,12 +138,12 @@ export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEd
             </p>
           </div>
 
-          <div className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-2xl text-center">
-            <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase">
-              Físico (Efectivo)
+          <div className="p-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 rounded-2xl text-center">
+            <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 uppercase">
+              Total Ahorrado
             </span>
-            <p className="text-base font-black text-slate-900 dark:text-slate-100">
-              {formatCurrency(physicalTotal)}
+            <p className="text-base font-black text-emerald-600 dark:text-emerald-400">
+              {formatCurrency(globalTotal)}
             </p>
           </div>
         </div>
@@ -220,7 +249,7 @@ export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEd
                     </button>
                     <button 
                       onClick={() => {
-                        if (confirm(`¿Eliminar ${p.name}?`)) {
+                        if (true) {
                           updateProfileData(draft => {
                             if (draft.settings.savingPlatforms) {
                               draft.settings.savingPlatforms.splice(idx, 1);
@@ -236,6 +265,62 @@ export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEd
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+      {showAdjustModal && (
+        <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-sm w-full p-5 shadow-2xl">
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 mb-4">Ajustar Base Histórica</h3>
+            <form onSubmit={handleSaveAdjust} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-500 block">Efectivo (Físico)</label>
+                <input
+                  type="number" step="0.01" required value={adjustPhys} onChange={e => setAdjustPhys(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-slate-900 dark:text-slate-100"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 block">Digital (Billeteras)</label>
+                <input
+                  type="number" step="0.01" required value={adjustDig} onChange={e => setAdjustDig(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-slate-900 dark:text-slate-100"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setShowAdjustModal(false)} className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors">
+                  Cancelar
+                </button>
+                <button type="submit" className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors shadow-lg shadow-blue-500/30">
+                  Guardar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showAddPlatformModal && (
+        <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-sm w-full p-5 shadow-2xl">
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 mb-4">{editingPlatformId ? 'Editar Plataforma' : 'Nueva Plataforma'}</h3>
+            <form onSubmit={handleSavePlatform} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-500 block">Nombre (Ej. Binance, Zinli, Facebank)</label>
+                <input
+                  type="text" required value={editingPlatformId ? editPlatformName : newPlatformName} onChange={e => editingPlatformId ? setEditPlatformName(e.target.value) : setNewPlatformName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-slate-900 dark:text-slate-100"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setShowAddPlatformModal(false)} className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors">
+                  Cancelar
+                </button>
+                <button type="submit" className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors shadow-lg shadow-blue-500/30">
+                  Agregar
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

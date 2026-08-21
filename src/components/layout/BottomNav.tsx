@@ -1,13 +1,6 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
-import {
-  LayoutDashboard,
-  Calendar,
-  TrendingUp,
-  CreditCard,
-  Building2,
-  Users
-} from 'lucide-react';
+import { LayoutDashboard, Calendar, TrendingUp, CreditCard, Building2, Users, ArrowLeftRight } from 'lucide-react';
 
 export const BottomNav: React.FC = () => {
   const { activeView, setActiveView } = useApp();
@@ -15,7 +8,7 @@ export const BottomNav: React.FC = () => {
   const items = [
     { id: 'dashboard', label: 'Inicio', icon: LayoutDashboard },
     { id: 'calendar', label: 'Plan', icon: Calendar },
-    { id: 'income', label: 'Ingresos', icon: TrendingUp },
+    { id: 'transactions', label: 'Transacciones', icon: ArrowLeftRight },
     { id: 'expenses', label: 'Gastos', icon: CreditCard },
     { id: 'debts', label: 'Deudas', icon: Building2 },
     { id: 'shared', label: 'MonyShared', icon: Users },

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
-import { formatCurrency, formatDateStr, todayStr } from '../../utils/financialEngine';
+import { formatCurrency, formatDateStr, todayStr, calculateProjections } from '../../utils/financialEngine';
 import { X, CheckCircle2, RotateCcw, Calendar as CalendarIcon, ArrowRightLeft, CreditCard, Pencil, Trash2, Check } from 'lucide-react';
 
 interface OccurrenceDetailModalProps {
@@ -35,6 +35,7 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
   const [payCurrency, setPayCurrency] = useState('USD_BCV');
   const [customPayAmt, setCustomPayAmt] = useState('');
   const [showCustomPay, setShowCustomPay] = useState(false);
+  const [actualDate, setActualDate] = useState(todayStr());
 
   // Find target item and its details
   let targetItem: any = null;
@@ -70,6 +71,30 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
         itemTitle = `Ahorro: ${targetItem.person}`;
         baseAmount = parseFloat(targetItem.amount || 0);
         itemCurrency = targetItem.currency || 'USD_BCV';
+      } else if (refId?.startsWith('autosave_')) {
+        const plan = calculateProjections(profile, exchangeRates);
+        const occurrence = plan.find(p => p.ref.id === refId && p.type === 'savings' && p.originalDate === originalDate);
+        if (occurrence) {
+           itemTitle = occurrence.label || 'Ahorro Automático';
+           baseAmount = Math.abs(occurrence.plannedAmt || occurrence.amt || 0);
+           itemCurrency = 'USD_BCV';
+        }
+      }
+    } else if (type === 'income' && refId?.startsWith('autowithdraw_')) {
+      const plan = calculateProjections(profile, exchangeRates);
+      const occurrence = plan.find(p => p.ref.id === refId && p.type === 'income' && p.originalDate === originalDate);
+      if (occurrence) {
+         itemTitle = occurrence.label || 'Rescate de Ahorros';
+         baseAmount = Math.abs(occurrence.plannedAmt || occurrence.amt || 0);
+         itemCurrency = 'USD_BCV';
+      }
+    } else if (type === 'compensation') {
+      const plan = calculateProjections(profile, exchangeRates);
+      const occurrence = plan.find(p => p.type === 'compensation' && p.originalDate === originalDate);
+      if (occurrence) {
+         itemTitle = occurrence.label;
+         baseAmount = Math.abs(occurrence.plannedAmt || occurrence.amt || 0);
+         itemCurrency = 'USD_BCV';
       }
     }
   }
@@ -119,7 +144,7 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
       draft.overrides[key] = {
         ...draft.overrides[key],
         done: true,
-        actualDate: todayStr(),
+        actualDate: actualDate,
         amt: finalAmountUsd,
         payCurrency,
         rawPayAmount: numericInput,
@@ -128,6 +153,19 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
 
     const currLabel = payCurrency === 'BS' ? 'Bs' : (payCurrency === 'EUR_BCV' ? '€' : '$');
     showToast(`Pagado (${currLabel} ${numericInput.toLocaleString()}) → $${finalAmountUsd.toFixed(2)} USD`, '✅');
+    onClose();
+  };
+
+  const handleDiscard = () => {
+    
+    updateProfileData(draft => {
+      draft.overrides = draft.overrides || {};
+      draft.overrides[key] = {
+        ...draft.overrides[key],
+        discarded: true
+      };
+    });
+    showToast('Movimiento descartado', '🗑️');
     onClose();
   };
 
@@ -401,14 +439,14 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
                   onClick={() => setShowCustomPay(true)}
                   className="w-full py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-colors"
                 >
-                  <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-500" /> Pagar con Otra Moneda / Monto Distinto
+                  <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-500" /> Opciones Avanzadas (Monto, Moneda o Fecha)
                 </button>
               </div>
             ) : (
               <div className="p-3.5 bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900/50 rounded-2xl space-y-3">
                 <div className="flex justify-between items-center">
                   <span className="text-[10px] font-bold uppercase text-indigo-700 dark:text-indigo-300 flex items-center gap-1">
-                    <CreditCard className="w-3.5 h-3.5" /> Pago Multimoneda
+                    <CreditCard className="w-3.5 h-3.5" /> Opciones de Pago / Cobro
                   </span>
                   <button onClick={() => setShowCustomPay(false)} className="text-[10px] text-slate-400 hover:text-slate-600 font-bold">
                     Cancelar
@@ -417,7 +455,7 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
 
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="text-[10px] font-bold text-slate-500 block mb-1">Monto Pagado</label>
+                    <label className="text-[10px] font-bold text-slate-500 block mb-1">Monto (Opcional)</label>
                     <input
                       type="number"
                       step="any"
@@ -427,7 +465,6 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
                       className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs"
                     />
                   </div>
-
                   <div>
                     <label className="text-[10px] font-bold text-slate-500 block mb-1">Moneda Usada</label>
                     <select
@@ -435,11 +472,20 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
                       onChange={e => setPayCurrency(e.target.value)}
                       className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs"
                     >
-                      <option value="USD_BCV">USD ($)</option>
-                      <option value="BS">Bolívares (Bs)</option>
-                      <option value="EUR_BCV">Euros (€)</option>
+                      <option value="USD_BCV">$ USD (BCV)</option>
+                      <option value="BS">Bs</option>
+                      <option value="EUR_BCV">€ EUR</option>
                       <option value="USDT">USDT</option>
                     </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-bold text-slate-500 block mb-1">Fecha Real de Pago / Cobro</label>
+                    <input
+                      type="date"
+                      value={actualDate}
+                      onChange={e => setActualDate(e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs"
+                    />
                   </div>
                 </div>
 
@@ -507,12 +553,20 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
 
             {/* Postpone option */}
             {!showPostponeInput ? (
-              <button
-                onClick={() => setShowPostponeInput(true)}
-                className="w-full py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-colors"
-              >
-                <CalendarIcon className="w-3.5 h-3.5" /> Posponer Fecha de Pago
-              </button>
+              <div className="space-y-2">
+                <button
+                  onClick={() => setShowPostponeInput(true)}
+                  className="w-full py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <CalendarIcon className="w-3.5 h-3.5" /> Posponer Fecha de Pago
+                </button>
+                <button
+                  onClick={handleDiscard}
+                  className="w-full py-2 bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-950/30 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Descartar / Ignorar Pago
+                </button>
+              </div>
             ) : (
               <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-2xl space-y-2 border border-slate-200 dark:border-slate-700">
                 <label className="text-[10px] font-bold text-slate-400 uppercase block">Seleccionar Nueva Fecha</label>

@@ -1,8 +1,8 @@
 import { Capacitor } from '@capacitor/core';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, getDocs, query, orderBy, deleteDoc, limit } from 'firebase/firestore';
 import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithCredential, signInWithRedirect, getRedirectResult } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithCredential, signInWithRedirect, getRedirectResult, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export const app = initializeApp(firebaseConfig);
@@ -116,12 +116,28 @@ export async function requestAccountDeletion(email: string) {
 export async function backupStateToFirebase(email: string, appState: any) {
   try {
     if (!email) return;
+    
+    // Main synced backup
     const backupRef = doc(db, 'backups', email.toLowerCase().trim());
     await setDoc(backupRef, {
       userEmail: email.toLowerCase().trim(),
       dataPayload: appState,
       updatedAt: new Date().toISOString(),
     });
+    
+    // Weekly Monday Backup
+    const today = new Date();
+    if (today.getDay() === 1) { // 1 = Monday
+       const mondayDate = today.toISOString().split('T')[0];
+       const weeklyRef = doc(db, 'backups_weekly', `${email.toLowerCase().trim()}_${mondayDate}`);
+       await setDoc(weeklyRef, {
+         userEmail: email.toLowerCase().trim(),
+         dataPayload: appState,
+         backupDate: mondayDate,
+         updatedAt: new Date().toISOString(),
+       });
+    }
+    
   } catch (error) {
     console.error('Firebase backupState error:', error);
   }
@@ -142,5 +158,130 @@ export async function restoreStateFromFirebase(email: string) {
   } catch (error) {
     console.error('Firebase restoreState error:', error);
     return null;
+  }
+}
+
+
+export function subscribeToFirebaseState(email: string, onUpdate: (data: any) => void) {
+  if (!email) return () => {};
+  const backupRef = doc(db, 'backups', email.toLowerCase().trim());
+  return onSnapshot(backupRef, (docSnap) => {
+    if (docSnap.exists()) {
+      const payload = docSnap.data()?.dataPayload;
+      if (payload) {
+        onUpdate(payload);
+      }
+    }
+  });
+}
+
+export async function saveManualBackup(email: string, appState: any, label: string) {
+  try {
+    if (!email) return;
+    const historyRef = collection(db, 'backups', email.toLowerCase().trim(), 'history');
+    
+    // Add new backup
+    const timestamp = Date.now().toString();
+    const newBackupRef = doc(historyRef, timestamp);
+    await setDoc(newBackupRef, {
+      id: timestamp,
+      label,
+      userEmail: email.toLowerCase().trim(),
+      dataPayload: appState,
+      updatedAt: new Date().toISOString(),
+      timestamp: parseInt(timestamp)
+    });
+
+    // Fetch all backups to enforce limit of 4
+    const q = query(historyRef, orderBy('timestamp', 'desc'));
+    const snapshot = await getDocs(q);
+    
+    if (snapshot.docs.length > 4) {
+      // Delete older ones
+      const docsToDelete = snapshot.docs.slice(4);
+      for (const d of docsToDelete) {
+        await deleteDoc(d.ref);
+      }
+    }
+  } catch (error) {
+    console.error('saveManualBackup error:', error);
+    throw error;
+  }
+}
+
+export async function getManualBackups(email: string) {
+  try {
+    if (!email) return [];
+    const historyRef = collection(db, 'backups', email.toLowerCase().trim(), 'history');
+    const q = query(historyRef, orderBy('timestamp', 'desc'));
+    const snapshot = await getDocs(q);
+    
+    return snapshot.docs.map(doc => doc.data());
+  } catch (error) {
+    console.error('getManualBackups error:', error);
+    return [];
+  }
+}
+
+export async function loginWithEmailFirebase(email: string, password: string): Promise<{ user: any, token: string, backupData: any }> {
+  try {
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const fbUser = userCredential.user;
+    const token = await fbUser.getIdToken();
+    
+    // Check if user exists in our db
+    const userRef = doc(db, 'users', email.toLowerCase().trim());
+    const docSnap = await getDoc(userRef);
+    let alias = fbUser.displayName || email.split('@')[0];
+    
+    if (docSnap.exists()) {
+      alias = docSnap.data().alias || alias;
+    }
+    
+    const backupData = await restoreStateFromFirebase(email);
+    
+    return {
+      user: {
+        email: fbUser.email || email,
+        alias: alias,
+        avatar: fbUser.photoURL || '',
+      },
+      token,
+      backupData
+    };
+  } catch (error: any) {
+    console.error('Firebase Email Login Error:', error);
+    throw error;
+  }
+}
+
+export async function registerWithEmailFirebase(email: string, password: string, alias: string): Promise<{ user: any, token: string, backupData: any }> {
+  try {
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const fbUser = userCredential.user;
+    const token = await fbUser.getIdToken();
+    
+    // Save to users collection (merge prevents overwriting existing data)
+    const userRef = doc(db, 'users', email.toLowerCase().trim());
+    await setDoc(userRef, {
+      email: email.toLowerCase().trim(),
+      alias,
+      createdAt: new Date().toISOString()
+    }, { merge: true });
+    
+    const backupData = await restoreStateFromFirebase(email);
+    
+    return {
+      user: {
+        email: fbUser.email || email,
+        alias,
+        avatar: fbUser.photoURL || '',
+      },
+      token,
+      backupData
+    };
+  } catch (error: any) {
+    console.error('Firebase Email Register Error:', error);
+    throw error;
   }
 }

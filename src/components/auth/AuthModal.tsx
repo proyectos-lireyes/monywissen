@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ShieldCheck, LogIn, Lock, X, CloudUpload } from 'lucide-react';
-import { registerUserInFirebase, restoreStateFromFirebase, loginWithGoogleFirebase } from '../../utils/firebase';
+import { registerUserInFirebase, restoreStateFromFirebase, loginWithGoogleFirebase, loginWithEmailFirebase, registerWithEmailFirebase } from '../../utils/firebase';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -11,9 +11,11 @@ interface AuthModalProps {
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const { loginUser, importFullState, showToast } = useApp();
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [alias, setAlias] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isRegistering, setIsRegistering] = useState(false);
 
   if (!isOpen) return null;
 
@@ -136,57 +138,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           {loading ? 'Cargando Google...' : 'Continuar con Google'}
         </button>
 
-        <div className="relative flex items-center justify-center">
-          <div className="border-t border-slate-200 dark:border-slate-800 w-full"></div>
-          <span className="bg-white dark:bg-slate-900 px-2 text-[10px] text-slate-400 font-bold uppercase tracking-wider absolute">
-            o con tu correo
-          </span>
-        </div>
+        
 
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div>
-            <label className="text-xs font-bold text-slate-500">Correo Electrónico</label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="tu@correo.com"
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs font-bold text-slate-500">Alias Único</label>
-            <input
-              type="text"
-              required
-              value={alias}
-              onChange={e => setAlias(e.target.value)}
-              placeholder="Ej. Lissandro"
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs font-bold text-slate-500">Teléfono (Opcional)</label>
-            <input
-              type="tel"
-              value={phone}
-              onChange={e => setPhone(e.target.value)}
-              placeholder="+584141234567"
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-md flex items-center justify-center gap-1.5 transition-colors"
-          >
-            <LogIn className="w-4 h-4" /> {loading ? 'Conectando con Firebase...' : 'Continuar / Iniciar Sesión'}
-          </button>
-        </form>
+        
       </div>
     </div>
   );

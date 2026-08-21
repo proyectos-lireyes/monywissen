@@ -1,0 +1,133 @@
+export function calculateAmortizationPlan(
+  debt: any,
+  overrides: Record<string, any> = {},
+  customDebts: any[] = [],
+  limitDate?: Date,
+  exchangeRates?: Record<string, number>
+): AmortizationInstallment[] {
+  const customDef = customDebts.find(c => c.id === debt.type);
+  const isCard = debt.type === 'card' || debt.type.startsWith('tdc_');
+  const freq = debt.freq || (customDef ? customDef.freq : 'monthly');
+  const dueDay = debt.dueDay || (customDef ? customDef.dueDay : '1');
+
+  let initialTotalDebt = parseFloat(String(debt.balance || 0));
+  const amort = parseFloat(String(debt.amortized || 0));
+  let totalDebt = Math.max(0, initialTotalDebt - amort);
+  const inst = parseInt(String(debt.installments || 1), 10);
+  const hasInt = debt.hasInterest || (customDef && customDef.hasInterest);
+  let pay = totalDebt / inst;
+  
+  if (hasInt && debt.apr && parseFloat(String(debt.apr)) > 0) {
+    const r = (parseFloat(String(debt.apr)) / 100) / 12;
+    const isBiweekly = freq === 'biweekly';
+    const instMonths = isBiweekly ? inst / 2 : inst;
+    const monthlyPay = totalDebt * (r * Math.pow(1 + r, instMonths)) / (Math.pow(1 + r, instMonths) - 1);
+    pay = isBiweekly ? monthlyPay / 2 : monthlyPay;
+    totalDebt = pay * inst;
+  }
+
+  const totalPaid = getDebtTotalPaid(debt, overrides, exchangeRates);
+  const overridesPaid = Math.max(0, totalPaid - amort);
+  let unallocatedPaid = 0;
+  let remainingPrincipal = totalDebt - overridesPaid;
+
+  let curr = new Date((debt.start || todayStr()) + 'T12:00:00');
+  
+  if (freq !== 'one-time') {
+    if (amort > 0) {
+        // If some is already amortized, advance cycle to skip past it
+        snapDateFreq(curr, freq, dueDay); // first snap to valid date
+        advanceDateFreq(curr, freq, dueDay); // then advance to next cycle
+    } else {
+        // Just snap to the nearest valid due date
+        snapDateFreq(curr, freq, dueDay);
+    }
+  }
+
+  const cuotas: AmortizationInstallment[] = [];
+  let i = 0;
+  const maxIterations = 999;
+
+  while (i < maxIterations) {
+    if (limitDate && curr > limitDate) break;
+
+    const dateStr = curr.toISOString().slice(0, 10);
+    const key = `debt_${debt.id}_${dateStr}`;
+    const ov = overrides[key] || {};
+    
+    let expectedAmount = pay;
+    let isPaid = false;
+    let paidAmt = 0;
+    let isCoveredByExplicit = false;
+    let isCoveredBySequential = false;
+    let requiredPay = 0;
+    
+    const partialsSum = (ov.partials || []).reduce((sum: number, pt: any) => sum + getAmtInDebtCurrency(debt, parseFloat(String(pt.amt)) || 0, pt.rawAmt, pt.currency, exchangeRates), 0);
+    
+    if (ov.done || ov.discarded) {
+      isPaid = true;
+      isCoveredByExplicit = true;
+      const amtUsd = ov.amt !== undefined ? parseFloat(String(ov.amt)) : undefined;
+      const finalAmt = amtUsd !== undefined ? getAmtInDebtCurrency(debt, amtUsd, ov.rawPayAmount, ov.payCurrency, exchangeRates) : Math.max(0, pay - partialsSum);
+      paidAmt = finalAmt + partialsSum;
+      expectedAmount = Math.max(pay, paidAmt); 
+    } else {
+      if (unallocatedPaid > 0) {
+        const canCover = Math.min(pay, unallocatedPaid);
+        if (canCover >= pay - 0.01) {
+          isPaid = true;
+          isCoveredBySequential = true;
+          paidAmt = canCover;
+          unallocatedPaid -= canCover;
+        } else {
+          paidAmt = canCover;
+          unallocatedPaid -= canCover;
+        }
+      }
+      
+      paidAmt += partialsSum;
+      
+      if (paidAmt >= pay - 0.01) {
+        isPaid = true;
+      } else {
+        requiredPay = Math.min(pay - paidAmt, Math.max(0, remainingPrincipal));
+        if (requiredPay < 0.01) {
+          requiredPay = 0;
+        }
+        expectedAmount = paidAmt + requiredPay;
+        remainingPrincipal -= requiredPay;
+      }
+    }
+    
+    if (!isPaid && requiredPay <= 0) {
+      if (isCard || i >= inst) {
+        break; 
+      }
+    }
+    
+    if (isCard && i >= inst) break;
+
+    cuotas.push({
+      index: i + 1,
+      date: (ov.userPostponed && ov.actualDate) ? ov.actualDate : dateStr,
+      key,
+      expectedAmount,
+      isPaid,
+      paidAmount: isPaid ? paidAmt : (partialsSum > 0 ? partialsSum : 0),
+      paidCurrency: ov.payCurrency || debt.currency || 'USD_BCV',
+      ov,
+      isCoveredBySequential,
+      isCoveredByExplicit,
+      requiredPay
+    });
+
+    if (ov.userPostponed && ov.actualDate) {
+      curr = new Date(ov.actualDate + 'T12:00:00');
+    }
+
+    advanceDateFreq(curr, freq, dueDay);
+    i++;
+  }
+
+  return cuotas;
+}

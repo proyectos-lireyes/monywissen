@@ -36,11 +36,36 @@ export interface FinancialContradiction {
   suggestedFix: string;
 }
 
+export interface OptimizationSuggestion {
+  id: string;
+  originalDate: string;
+  suggestedDate: string;
+  type: 'EARLY_PAY' | 'DELAY_PAY';
+  itemId: string;
+  itemType: string;
+  itemName: string;
+  amount: number;
+  message: string;
+}
+
+export interface OptimizationSuggestion {
+  id: string;
+  originalDate: string;
+  suggestedDate: string;
+  type: 'EARLY_PAY' | 'DELAY_PAY';
+  itemId: string;
+  itemType: string;
+  itemName: string;
+  amount: number;
+  message: string;
+}
+
 export interface IntegrityReport {
   score: number; // 0 - 100
   status: 'HEALTHY' | 'WARNING' | 'CRITICAL';
   doubleEntryIssues: DoubleEntryIssue[];
   preventiveWarnings: PreventiveFlowWarning[];
+  optimizations: OptimizationSuggestion[];
   contradictions: FinancialContradiction[];
   summary: {
     openingBalance: number;
@@ -156,9 +181,9 @@ export function verifyDoubleEntry(profile: UserProfile): DoubleEntryIssue[] {
  * Evaluates projected daily cash flow step-by-step from planStart to planEnd.
  * Detects upcoming liquidity deficits and cushion breaches before they occur.
  */
-export function detectPreventiveNegativeFlow(profile: UserProfile): PreventiveFlowWarning[] {
+export function detectPreventiveNegativeFlow(profile: UserProfile, exchangeRates: Record<string, number> = {}): PreventiveFlowWarning[] {
   const warnings: PreventiveFlowWarning[] = [];
-  const plan: PlanOccurrence[] = calculateProjections(profile);
+  const plan: PlanOccurrence[] = calculateProjections(profile, exchangeRates);
   const minBalance = profile.settings.minBalance || 0;
 
   let firstDeficitFound = false;
@@ -322,9 +347,19 @@ export function validateTransactionExecution(
 /**
  * Performs a comprehensive audit of the profile, producing a unified IntegrityReport.
  */
-export function validateFinancialIntegrity(profile: UserProfile): IntegrityReport {
+
+/**
+ * Generates smart date shifting recommendations to prevent liquidity issues or pay earlier.
+ */
+
+export function detectOptimizations(profile: UserProfile, exchangeRates: Record<string, number> = {}): OptimizationSuggestion[] {
+  return []; // Replaced by Engine Auto-Pilot
+}
+
+
+export function validateFinancialIntegrity(profile: UserProfile, exchangeRates: Record<string, number> = {}): IntegrityReport {
   const doubleEntryIssues = verifyDoubleEntry(profile);
-  const preventiveWarnings = detectPreventiveNegativeFlow(profile);
+  const preventiveWarnings = detectPreventiveNegativeFlow(profile, exchangeRates);
   const contradictions = detectFinancialContradictions(profile);
 
   // Compute total active debt
@@ -340,7 +375,7 @@ export function validateFinancialIntegrity(profile: UserProfile): IntegrityRepor
   ) + (profile.savings?.current || 0) + (profile.savings?.digital || 0);
 
   // Compute cash flow projections
-  const plan = calculateProjections(profile);
+  const plan = calculateProjections(profile, exchangeRates);
   const minProjectedBalance = plan.reduce(
     (min, p) => (p.balance < min ? p.balance : min),
     plan[0]?.balance || profile.settings.openingBalance || 0
@@ -378,11 +413,13 @@ export function validateFinancialIntegrity(profile: UserProfile): IntegrityRepor
     status = 'WARNING';
   }
 
+  const optimizations = detectOptimizations(profile, exchangeRates);
   return {
     score,
     status,
     doubleEntryIssues,
     preventiveWarnings,
+    optimizations,
     contradictions,
     summary: {
       openingBalance: profile.settings.openingBalance || 0,

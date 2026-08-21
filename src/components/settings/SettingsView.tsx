@@ -17,7 +17,7 @@ import {
   LogIn,
   Trash2,
 } from 'lucide-react';
-import { registerUserInFirebase, backupStateToFirebase, restoreStateFromFirebase } from '../../utils/firebase';
+import { registerUserInFirebase, backupStateToFirebase, restoreStateFromFirebase, getManualBackups, saveManualBackup } from '../../utils/firebase';
 
 interface SettingsViewProps {
   onOpenAuth?: () => void;
@@ -56,6 +56,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
   const [planEnd, setPlanEnd] = useState(settings.planEnd);
   const [minBalance, setMinBalance] = useState(settings.minBalance);
   const [delayDays, setDelayDays] = useState(settings.delayDays);
+  const [autoSaveThreshold, setAutoSaveThreshold] = useState(settings.autoSaveThreshold || 0);
   const [openingBalance, setOpeningBalance] = useState(settings.openingBalance);
   const [freeSpend, setFreeSpend] = useState(settings.freeSpend);
   const [notifTime, setNotifTime] = useState(settings.notifTime || '08:00');
@@ -82,7 +83,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
     }
   };
 
-  const [isFbBackupLoading, setIsFbBackupLoading] = useState(false);
+    const [isFbBackupLoading, setIsFbBackupLoading] = useState(false);
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [availableBackups, setAvailableBackups] = useState<any[]>([]);
   const [fbEmailInput, setFbEmailInput] = useState(
     state.authUser?.email || profile.settings.email || ''
   );
@@ -120,8 +123,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
     setIsFbBackupLoading(true);
     try {
       const userEmail = state.authUser?.email || await getOrForceUserEmail();
-      await backupStateToFirebase(userEmail, state);
-      showToast(`¡Respaldo completo de perfil y datos guardado en Firebase DB!`, '🔥');
+      const label = `Copia de seguridad - ${new Date().toLocaleString()}`;
+      await saveManualBackup(userEmail, state, label);
+      showToast(`¡Respaldo guardado! Tienes hasta 4 copias seguras.`, '🔥');
     } catch (e) {
       console.error(e);
       showToast('Inicia sesión para respaldar en Firebase Cloud', '⚠️');
@@ -134,12 +138,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
     setIsFbBackupLoading(true);
     try {
       const userEmail = state.authUser?.email || await getOrForceUserEmail();
-      const data = await restoreStateFromFirebase(userEmail);
-      if (data) {
-        importFullState(data);
-        showToast('¡Perfil y base de datos financiera restaurados desde Firebase Cloud!', '🎉');
+      const backups = await getManualBackups(userEmail);
+      if (backups && backups.length > 0) {
+        setAvailableBackups(backups);
+        setShowRestoreModal(true);
       } else {
-        showToast(`No se halló respaldo guardado en Firebase para ${userEmail}`, '⚠️');
+        showToast(`No tienes respaldos guardados.`, '⚠️');
       }
     } catch (e) {
       console.error(e);
@@ -147,6 +151,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
     } finally {
       setIsFbBackupLoading(false);
     }
+  };
+
+  const applyRestore = (payload: any) => {
+    importFullState(payload);
+    setShowRestoreModal(false);
+    showToast('¡Perfil y base de datos restaurados con éxito!', '🎉');
   };
 
   const handleCheckUpdate = () => {
@@ -181,6 +191,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
       draft.settings.openingBalance = openingBalance;
       draft.settings.freeSpend = freeSpend;
       draft.settings.notifTime = notifTime;
+      draft.settings.autoSaveThreshold = autoSaveThreshold;
     });
     showToast('Reglas del sistema guardadas', '⚙️');
   };
@@ -278,25 +289,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-bold text-slate-500">Inicio del Plan</label>
-                <input
-                  type="date"
-                  value={planStart}
-                  onChange={e => setPlanStart(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-bold text-slate-500">Fin del Plan</label>
-                <input
-                  type="date"
-                  value={planEnd}
-                  onChange={e => setPlanEnd(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                />
-              </div>
-
-              <div>
                 <label className="text-xs font-bold text-slate-500">Saldo mínimo (Colchón)</label>
                 <input
                   type="number"
@@ -306,21 +298,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                 />
               </div>
               <div>
+                <label className="text-xs font-bold text-slate-500">Excedente para Ahorros</label>
+                <input
+                  type="number"
+                  value={autoSaveThreshold}
+                  onChange={e => setAutoSaveThreshold(parseFloat(e.target.value) || 0)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
+                />
+              </div>
+              <div>
                 <label className="text-xs font-bold text-slate-500">Retraso permitido (días)</label>
                 <input
                   type="number"
                   value={delayDays}
                   onChange={e => setDelayDays(parseInt(e.target.value, 10) || 0)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-500">Inicio base (Dinero Hoy)</label>
-                <input
-                  type="number"
-                  value={openingBalance}
-                  onChange={e => setOpeningBalance(parseFloat(e.target.value) || 0)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
                 />
               </div>

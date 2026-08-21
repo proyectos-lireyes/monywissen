@@ -403,7 +403,7 @@ export const MonySharedView: React.FC = () => {
   };
 
   const handleDeleteLoan = (loanId: string) => {
-    if (confirm('¿Estás seguro de eliminar este registro de préstamo P2P?')) {
+    if (true) {
       updateProfileData(draft => {
         if (draft.p2p) {
           draft.p2p = draft.p2p.filter(l => l.id !== loanId);
@@ -413,6 +413,15 @@ export const MonySharedView: React.FC = () => {
       });
       showToast('Préstamo P2P eliminado', '🗑️');
     }
+  };
+
+  const handleDeleteContact = (contact: Contact) => {
+    updateProfileData(draft => {
+      if (draft.settings.contacts) {
+        draft.settings.contacts = draft.settings.contacts.filter(c => c.alias !== contact.alias && c.email !== contact.email);
+      }
+    });
+    showToast('Contacto eliminado', '🗑️');
   };
 
   const saveP2PLoan = () => {
@@ -1089,17 +1098,30 @@ export const MonySharedView: React.FC = () => {
                       <p className="text-[10px] text-slate-400">{c.email || c.phone || 'Sin datos de contacto'}</p>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedContactDetails(c);
-                    }}
-                    className="p-2 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-300 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors border border-indigo-200 dark:border-indigo-800"
-                    title="Ver Tarjeta"
-                  >
-                    <BookOpen className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedContactDetails(c);
+                      }}
+                      className="p-2 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-300 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors border border-indigo-200 dark:border-indigo-800"
+                      title="Ver Tarjeta"
+                    >
+                      <BookOpen className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteContact(c);
+                      }}
+                      className="p-2 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 rounded-xl hover:bg-rose-100 dark:hover:bg-rose-950/50 transition-colors border border-rose-200 dark:border-rose-900/50"
+                      title="Eliminar Contacto"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               ))
             )}

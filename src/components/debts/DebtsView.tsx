@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { formatCurrency, getRemainingDebtAmount } from '../../utils/financialEngine';
-import { Plus, Building2, Edit2, ShieldAlert, Sparkles, Download, Layers } from 'lucide-react';
+import { formatCurrency, getRemainingDebtAmount, getDebtTotalPaid } from '../../utils/financialEngine';
+import { Plus, Building2, Edit2, ShieldAlert, Sparkles, Download, Layers, Trash2 } from 'lucide-react';
 
 interface DebtsViewProps {
   onOpenCreate: (type: 'debt') => void;
@@ -9,12 +9,34 @@ interface DebtsViewProps {
 }
 
 export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }) => {
-  const { profile, updateProfileData, showToast, convertAmount } = useApp();
+  const { profile, updateProfileData, showToast, convertAmount, exchangeRates } = useApp();
+
+    const formatCurrencyExt = (amt: number, curr?: string) => {
+    let sym = '$';
+    if (curr === 'EUR' || curr === 'EUR_BCV') sym = '€';
+    else if (curr === 'BS') sym = 'Bs';
+    else if (curr === 'COP') sym = '$';
+    else if (curr === 'BRL') sym = 'R$';
+    else if (curr === 'USDT') sym = 'USDT ';
+    
+    const raw = sym + (Math.round((amt || 0) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    
+    if (curr && curr !== 'USD_BCV') {
+      const conv = convertAmount(amt, curr);
+      if (conv !== amt) {
+        return `${raw} (${formatCurrency(conv)})`;
+      }
+    }
+    return raw;
+  };
   const [subTab, setSubTab] = useState<'active' | 'settled' | 'types' | 'strategy'>('active');
   const [strategyMode, setStrategyMode] = useState<'snowball' | 'avalanche'>('snowball');
+  const [sortOption, setSortOption] = useState<'name' | 'total' | 'remaining' | 'paid' | 'type'>('remaining');
   const [showCustomDebtModal, setShowCustomDebtModal] = useState(false);
   const [editingCustomDebt, setEditingCustomDebt] = useState<any>(null);
-  const [customDebtForm, setCustomDebtForm] = useState({ name: '', freq: 'monthly', hasInterest: false, usePlan: false, color: '#9c27b0', dueDay: '1' });
+  const [customDebtForm, setCustomDebtForm] = useState({ name: '', freq: 'monthly', hasInterest: false, usePlan: false, color: '#9c27b0', dueDay: '1', cutDay: '5', creditLimit: '', limitCurrency: 'USD_BCV', isCreditCard: false });
+  const [showFormCutGrid, setShowFormCutGrid] = useState(false);
+  const [showFormDueGrid, setShowFormDueGrid] = useState(false);
   const [showCloudTemplatesModal, setShowCloudTemplatesModal] = useState(false);
   const [cloudTemplates, setCloudTemplates] = useState<any[]>([]);
   const [isSearchingTemplates, setIsSearchingTemplates] = useState(false);
@@ -82,19 +104,79 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
   const debts = profile.debts || [];
   const overrides = profile.overrides || {};
 
-  const activeDebts = debts.filter(d => getRemainingDebtAmount(d, overrides) > 0.01);
-  const settledDebts = debts.filter(d => getRemainingDebtAmount(d, overrides) <= 0.01);
+  const planStart = profile.settings.planStart || '2020-01-01';
+  const planEnd = profile.settings.planEnd || '2099-12-31';
 
-  const totalOriginalActive = activeDebts.reduce((sum, d) => sum + convertAmount(parseFloat(String(d.balance || 0)), d.currency), 0);
-  const totalRemainingActive = activeDebts.reduce((sum, d) => sum + convertAmount(getRemainingDebtAmount(d, overrides), d.currency), 0);
-  const totalPaidActive = Math.max(0, totalOriginalActive - totalRemainingActive);
-  const overallProgressPercent = totalOriginalActive > 0 ? Math.min(100, Math.round((totalPaidActive / totalOriginalActive) * 100)) : 0;
+  let baseActiveDebts = debts.filter(d => getRemainingDebtAmount(d, overrides, exchangeRates) > 0.01);
+  let baseSettledDebts = debts.filter(d => {
+    if (getRemainingDebtAmount(d, overrides, exchangeRates) > 0.01) return false;
+    
+    if (d.start >= planStart && d.start <= planEnd) return true;
+
+    let hasPaymentInWindow = false;
+    for (const key of Object.keys(overrides)) {
+       if (key.startsWith(`debt_${d.id}_`)) {
+          const ov = overrides[key];
+          if (ov.done || (ov.partials && ov.partials.length > 0)) {
+             const paymentDate = ov.actualDate || key.split('_').pop();
+             if (paymentDate && paymentDate >= planStart && paymentDate <= planEnd) {
+                 hasPaymentInWindow = true;
+                 break;
+             }
+             if (ov.partials) {
+                for (const pt of ov.partials) {
+                   if (pt.date >= planStart && pt.date <= planEnd) {
+                       hasPaymentInWindow = true;
+                       break;
+                   }
+                }
+             }
+          }
+       }
+    }
+    return hasPaymentInWindow;
+  });
 
   const customDebts = profile.settings.customDebts || [];
 
+  const applySort = (list: any[]) => {
+    return [...list].sort((a, b) => {
+      if (sortOption === 'name') return a.name.localeCompare(b.name);
+      if (sortOption === 'type') {
+         const typeA = customDebts.find((c: any) => c.id === a.type)?.name || a.type;
+         const typeB = customDebts.find((c: any) => c.id === b.type)?.name || b.type;
+         return typeA.localeCompare(typeB);
+      }
+      
+      const totalA = convertAmount(parseFloat(String(a.balance || 0)), a.currency);
+      const totalB = convertAmount(parseFloat(String(b.balance || 0)), b.currency);
+      if (sortOption === 'total') return totalB - totalA;
+
+      const remA = convertAmount(getRemainingDebtAmount(a, overrides, exchangeRates), (a as any).currency);
+      const remB = convertAmount(getRemainingDebtAmount(b, overrides, exchangeRates), (b as any).currency);
+      if (sortOption === 'remaining') return remB - remA;
+      
+      const paidA = getDebtTotalPaid(a, overrides, exchangeRates);
+      const paidB = getDebtTotalPaid(b, overrides, exchangeRates);
+      const paidAConv = convertAmount(paidA, (a as any).currency);
+      const paidBConv = convertAmount(paidB, (b as any).currency);
+      if (sortOption === 'paid') return paidBConv - paidAConv;
+      
+      return 0;
+    });
+  };
+
+  const activeDebts = applySort(baseActiveDebts);
+  const settledDebts = applySort(baseSettledDebts);
+
+  const totalOriginalActive = activeDebts.reduce((sum, d) => sum + convertAmount(parseFloat(String(d.balance || 0)), d.currency), 0);
+  const totalRemainingActive = activeDebts.reduce((sum, d) => sum + convertAmount(getRemainingDebtAmount(d, overrides, exchangeRates), d.currency), 0);
+  const totalPaidActive = Math.max(0, totalOriginalActive - totalRemainingActive);
+  const overallProgressPercent = totalOriginalActive > 0 ? Math.min(100, Math.round((totalPaidActive / totalOriginalActive) * 100)) : 0;
+
   const orderedDebts = [...activeDebts].sort((a, b) => {
-    const balanceA = convertAmount(getRemainingDebtAmount(a, overrides), (a as any).currency);
-    const balanceB = convertAmount(getRemainingDebtAmount(b, overrides), (b as any).currency);
+    const balanceA = convertAmount(getRemainingDebtAmount(a, overrides, exchangeRates), (a as any).currency);
+    const balanceB = convertAmount(getRemainingDebtAmount(b, overrides, exchangeRates), (b as any).currency);
     if (strategyMode === 'snowball') {
       return balanceA - balanceB; // Lowest balance first
     } else {
@@ -107,7 +189,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
 
   const handleAddCustomDebt = () => {
     setEditingCustomDebt(null);
-    setCustomDebtForm({ name: '', freq: 'monthly', hasInterest: false, usePlan: false, color: '#9c27b0', dueDay: '1' });
+    setCustomDebtForm({ name: '', freq: 'monthly', hasInterest: false, usePlan: false, color: '#9c27b0', dueDay: '1', cutDay: '5', creditLimit: '', limitCurrency: 'USD_BCV', isCreditCard: false });
     setShowCustomDebtModal(true);
   };
 
@@ -129,7 +211,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
         }
       } else {
         draft.settings.customDebts.push({
-          id: `custom_${Date.now()}`,
+          id: customDebtForm.isCreditCard ? `tdc_${Date.now()}` : `custom_${Date.now()}`,
           ...customDebtForm
         });
       }
@@ -140,7 +222,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
   };
 
   const handleDeleteCustomDebt = (id: string) => {
-    if (!confirm('¿Estás seguro de eliminar este tipo de deuda? (Las deudas existentes de este tipo podrían dejar de calcularse correctamente)')) return;
+    
 
     updateProfileData(draft => {
       if (draft.settings.customDebts) {
@@ -216,6 +298,22 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
           </button>
         </div>
 
+        {(subTab === 'active' || subTab === 'settled') && (
+          <div className="flex items-center justify-end px-1 mb-2">
+            <select
+              value={sortOption}
+              onChange={(e) => setSortOption(e.target.value as any)}
+              className="bg-transparent text-xs font-bold text-slate-500 dark:text-slate-400 outline-none cursor-pointer hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+            >
+              <option value="remaining">Ordenar: Mayor Deuda</option>
+              <option value="total">Ordenar: Deuda Total</option>
+              <option value="paid">Ordenar: Más Pagado</option>
+              <option value="name">Ordenar: Por Nombre</option>
+              <option value="type">Ordenar: Por Tipo</option>
+            </select>
+          </div>
+        )}
+
         {subTab === 'active' ? (
           activeDebts.length === 0 ? (
             <p className="text-xs text-slate-400 text-center py-8">
@@ -256,9 +354,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
               {/* Debt Cards */}
               {activeDebts.map(item => {
                 const realIndex = debts.findIndex(d => d.id === item.id);
-                const remaining = getRemainingDebtAmount(item, overrides);
-                const original = parseFloat(String(item.balance || 0));
-                const paid = Math.max(0, original - remaining);
+                const remaining = getRemainingDebtAmount(item, overrides, exchangeRates);
+                const original = remaining + getDebtTotalPaid(item, overrides, exchangeRates);
+                const paid = getDebtTotalPaid(item, overrides, exchangeRates);
                 const progressPct = original > 0 ? Math.min(100, Math.round((paid / original) * 100)) : 0;
                 const installmentsCount = item.installments || 1;
                 const monthlyInstallment = item.amount || item.minPay || 0;
@@ -303,7 +401,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                       <div className="text-right shrink-0">
                         <span className="text-[10px] font-bold uppercase text-slate-400 block">Me falta</span>
                         <p className="text-xs font-black text-rose-600 dark:text-rose-400">
-                          {formatCurrency(remaining)}
+                          {formatCurrencyExt(remaining, (item as any).currency)}
                         </p>
                       </div>
                     </div>
@@ -311,8 +409,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                     {/* Progress bar per item */}
                     <div className="space-y-1">
                       <div className="flex items-center justify-between text-[10px] font-medium text-slate-500 dark:text-slate-400">
-                        <span>Pagado: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrency(paid)}</strong></span>
-                        <span>Total: <strong>{formatCurrency(original)}</strong></span>
+                        <span>Pagado: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrencyExt(paid, item.currency)}</strong></span>
+                        <span>Total: <strong>{formatCurrencyExt(original, item.currency)}</strong></span>
                       </div>
                       <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
                         <div
@@ -328,7 +426,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                         🗓️ {installmentsCount > 1 ? `Plan de ${installmentsCount} cuotas` : 'Pago único / recurrente'}
                       </span>
                       <span className="font-bold text-slate-700 dark:text-slate-200">
-                        Cuota: {formatCurrency(monthlyInstallment)}
+                        Cuota: {formatCurrencyExt(monthlyInstallment, (item as any).currency)}
                       </span>
                     </div>
                   </div>
@@ -358,7 +456,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                       <p className="text-[10px] text-emerald-600">✅ Completada</p>
                     </div>
                     <span className="text-xs font-black text-emerald-700">
-                      {formatCurrency(item.balance)}
+                      {formatCurrencyExt(item.balance, (item as any).currency)}
                     </span>
                   </div>
                 );
@@ -391,7 +489,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
 
             <div className="space-y-2">
               {customDebts.map(cd => (
-                <div key={cd.id} className="p-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                <div key={cd.id} onClick={() => handleEditCustomDebt(cd.id, cd)} className="p-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors">
                   <div className="flex items-center gap-3">
                     <div
                       className="w-4 h-4 rounded-full shadow-sm"
@@ -408,10 +506,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                   </div>
                   <div className="flex items-center gap-1.5">
                     <button onClick={() => handlePublishCustomDebt(cd)} title="Publicar en MonyStore" className="text-[10px] bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 px-2 py-1 rounded-lg font-medium hover:bg-indigo-100">🌐 Publicar</button>
-                    <button onClick={() => handleEditCustomDebt(cd.id, cd)} className="text-[10px] bg-slate-200 dark:bg-slate-700 px-2 py-1 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-300">Editar</button>
-                    <button onClick={() => handleDeleteCustomDebt(cd.id)} className="text-[10px] bg-rose-100 dark:bg-rose-900/30 px-2 py-1 rounded text-rose-600 dark:text-rose-400 hover:bg-rose-200">X</button>
-                  </div>
-                </div>
+                    </div></div>
               ))}
             </div>
           </div>
@@ -458,7 +553,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                 </p>
               ) : (
                 orderedDebts.map((item, idx) => {
-                  const remaining = getRemainingDebtAmount(item, overrides);
+                  const remaining = getRemainingDebtAmount(item, overrides, exchangeRates);
                   const converted = convertAmount(remaining, (item as any).currency);
                   const apr = item.apr || (item.hasInterest ? 20 : 0);
                   
@@ -487,7 +582,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                           {formatCurrency(converted)}
                         </p>
                         <p className="text-[9px] text-slate-400">
-                          Monto Original: {formatCurrency(remaining)} {(item as any).currency || 'USD_BCV'}
+                          Monto Original: {formatCurrencyExt(remaining, item.currency)}
                         </p>
                       </div>
                     </div>
@@ -528,7 +623,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                       icon: '💳',
                       label: 'Tarjeta de Crédito',
                       desc: 'Pagos mensuales con cálculo de pago mínimo',
-                      form: { name: 'Tarjeta de Crédito', freq: 'monthly', dueDay: '1', hasInterest: true, usePlan: false, color: '#1a73e8' }
+                      form: { name: 'Tarjeta de Crédito', freq: 'monthly', dueDay: '15', cutDay: '5', creditLimit: '', isCreditCard: true, hasInterest: true, usePlan: false, color: '#1a73e8' }
                     },
                     {
                       icon: '🏦',
@@ -577,7 +672,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                       key={pIdx}
                       type="button"
                       onClick={() => {
-                        setCustomDebtForm({ ...preset.form });
+                        setCustomDebtForm({ isCreditCard: false, cutDay: '5', creditLimit: '', ...preset.form });
                         showToast(`Plantilla "${preset.label}" seleccionada`, '⭐');
                       }}
                       className="p-2 text-left bg-white dark:bg-slate-800 hover:bg-indigo-50/80 dark:hover:bg-indigo-950/40 border border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-700 rounded-xl transition-all group"
@@ -613,18 +708,117 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
+                <label className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-200 dark:border-amber-800 text-xs font-bold text-amber-800 dark:text-amber-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={customDebtForm.isCreditCard}
+                    onChange={e => {
+                      const isCC = e.target.checked;
+                      setCustomDebtForm({
+                        ...customDebtForm, 
+                        isCreditCard: isCC,
+                        freq: isCC ? 'monthly' : customDebtForm.freq,
+                        hasInterest: isCC ? true : customDebtForm.hasInterest,
+                        usePlan: isCC ? true : customDebtForm.usePlan
+                      });
+                    }}
+                    className="rounded border-amber-400 text-amber-600 focus:ring-amber-600"
+                  />
+                  💳 Configurar como Tarjeta de Crédito (TDC)
+                </label>
+
+                {customDebtForm.isCreditCard && (
+                  <div className="flex flex-col gap-2 p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700">
+                    <div className="grid grid-cols-2 gap-2 relative">
+                      <div className="relative">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-1">Día Corte</label>
+                        <button
+                          type="button"
+                          onClick={() => { setShowFormCutGrid(!showFormCutGrid); setShowFormDueGrid(false); }}
+                          className="w-full text-left px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-900 dark:text-slate-100 flex justify-between items-center"
+                        >
+                          <span>{customDebtForm.cutDay}</span>
+                          <span className="text-[10px] text-slate-400">📅</span>
+                        </button>
+                        {showFormCutGrid && (
+                          <div className="absolute top-full left-0 mt-1 z-10 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg p-2 w-[220px]">
+                            <div className="grid grid-cols-6 gap-1">
+                              {Array.from({ length: 30 }, (_, i) => i + 1).map(d => (
+                                <button
+                                  key={`cut-${d}`} type="button"
+                                  onClick={() => { setCustomDebtForm({...customDebtForm, cutDay: String(d)}); setShowFormCutGrid(false); }}
+                                  className={`text-[10px] py-1 rounded-md font-bold ${customDebtForm.cutDay == String(d) ? 'bg-amber-500 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'}`}
+                                >
+                                  {d}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="relative">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-1">Día Pago</label>
+                        <button
+                          type="button"
+                          onClick={() => { setShowFormDueGrid(!showFormDueGrid); setShowFormCutGrid(false); }}
+                          className="w-full text-left px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-900 dark:text-slate-100 flex justify-between items-center"
+                        >
+                          <span>{customDebtForm.dueDay}</span>
+                          <span className="text-[10px] text-slate-400">📅</span>
+                        </button>
+                        {showFormDueGrid && (
+                          <div className="absolute top-full right-0 mt-1 z-10 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg p-2 w-[220px]">
+                            <div className="grid grid-cols-6 gap-1">
+                              {Array.from({ length: 30 }, (_, i) => i + 1).map(d => (
+                                <button
+                                  key={`due-${d}`} type="button"
+                                  onClick={() => { setCustomDebtForm({...customDebtForm, dueDay: String(d)}); setShowFormDueGrid(false); }}
+                                  className={`text-[10px] py-1 rounded-md font-bold ${customDebtForm.dueDay == String(d) ? 'bg-amber-500 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'}`}
+                                >
+                                  {d}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 mt-1">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 mb-1">Límite</label>
+                        <input
+                          type="number"
+                          placeholder="0.00"
+                          value={customDebtForm.creditLimit}
+                          onChange={e => setCustomDebtForm({...customDebtForm, creditLimit: e.target.value})}
+                          className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-900 dark:text-slate-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 mb-1">Moneda Límite</label>
+                        <select
+                          value={customDebtForm.limitCurrency || 'USD_BCV'}
+                          onChange={e => setCustomDebtForm({...customDebtForm, limitCurrency: e.target.value})}
+                          className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-900 dark:text-slate-100"
+                        >
+                          <option value="USD_BCV">USD (BCV)</option>
+                          <option value="EUR_BCV">EUR (BCV)</option>
+                          <option value="USDT">USDT</option>
+                          <option value="BS">Bs</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 gap-2">
                   <div>
                     <label className="block text-xs font-bold text-slate-500 mb-1">Frecuencia</label>
                     <select
                       value={customDebtForm.freq}
                       onChange={e => {
                         const newFreq = e.target.value;
-                        let defaultDueDay = '1';
-                        if (newFreq === 'biweekly') defaultDueDay = '15-30';
-                        if (newFreq === 'weekly') defaultDueDay = '1';
-                        if (newFreq === 'triweekly') defaultDueDay = '1';
-                        setCustomDebtForm({...customDebtForm, freq: newFreq, dueDay: defaultDueDay});
+                        setCustomDebtForm({...customDebtForm, freq: newFreq});
                       }}
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
                     >
@@ -633,55 +827,6 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                       <option value="monthly">Mensual</option>
                       <option value="triweekly">Trisemanal (3 Semanas)</option>
                     </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">
-                      {customDebtForm.freq === 'weekly' ? 'Día de la semana' : customDebtForm.freq === 'biweekly' ? 'Quincenas' : customDebtForm.freq === 'triweekly' ? 'Semana del mes' : 'Día del mes'}
-                    </label>
-                    {customDebtForm.freq === 'weekly' ? (
-                      <select
-                        value={customDebtForm.dueDay}
-                        onChange={e => setCustomDebtForm({...customDebtForm, dueDay: e.target.value})}
-                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                      >
-                        <option value="1">Lunes</option>
-                        <option value="2">Martes</option>
-                        <option value="3">Miércoles</option>
-                        <option value="4">Jueves</option>
-                        <option value="5">Viernes</option>
-                        <option value="6">Sábado</option>
-                        <option value="0">Domingo</option>
-                      </select>
-                    ) : customDebtForm.freq === 'biweekly' ? (
-                      <select
-                        value={customDebtForm.dueDay}
-                        onChange={e => setCustomDebtForm({...customDebtForm, dueDay: e.target.value})}
-                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                      >
-                        <option value="15-30">15 y 30</option>
-                        <option value="14-28">14 y 28</option>
-                        <option value="13-27">13 y 27</option>
-                        <option value="1-15">1 y 15</option>
-                      </select>
-                    ) : customDebtForm.freq === 'triweekly' ? (
-                      <select
-                        value={customDebtForm.dueDay}
-                        onChange={e => setCustomDebtForm({...customDebtForm, dueDay: e.target.value})}
-                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                      >
-                        <option value="1">Semana 1</option>
-                        <option value="2">Semana 2</option>
-                        <option value="3">Semana 3</option>
-                        <option value="4">Semana 4</option>
-                      </select>
-                    ) : (
-                      <input
-                        type="number" min="1" max="31"
-                        value={customDebtForm.dueDay}
-                        onChange={e => setCustomDebtForm({...customDebtForm, dueDay: e.target.value})}
-                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-                      />
-                    )}
                   </div>
                 </div>
 
@@ -732,6 +877,20 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
               >
                 Cancelar
               </button>
+              {editingCustomDebt && (
+                <button
+                   type="button"
+                   onClick={(e) => {
+                     e.stopPropagation();
+                     handleDeleteCustomDebt(editingCustomDebt);
+                     setShowCustomDebtModal(false);
+                   }}
+                   className="w-12 bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 rounded-xl flex items-center justify-center hover:bg-rose-100 transition-colors"
+                   title="Eliminar"
+                 >
+                   <Trash2 className="w-5 h-5" />
+                 </button>
+              )}
               <button
                 type="button"
                 onClick={saveCustomDebt}

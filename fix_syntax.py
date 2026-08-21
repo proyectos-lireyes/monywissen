@@ -1,9 +1,22 @@
-import os
+import re
 
-with open('src/components/modals/ItemFormModal.tsx', 'r') as f:
+with open('src/utils/financialEngine.ts', 'r') as f:
     content = f.read()
 
-content = content.replace(") : \n                  {type === 'saving' ? (", ") : type === 'saving' ? (")
+target = """    const calculatedTargetMin = settings.minBalance || 0;
+  balance = expensesBeforeFirstIncome + calculatedTargetMin;
+  });
+  for (const d of datesBetween(startD, endD)) {"""
 
-with open('src/components/modals/ItemFormModal.tsx', 'w') as f:
-    f.write(content)
+replacement = """    const calculatedTargetMin = settings.minBalance || 0;
+  balance = expensesBeforeFirstIncome + calculatedTargetMin;
+
+  for (const d of datesBetween(startD, endD)) {"""
+
+if target in content:
+    content = content.replace(target, replacement)
+    with open('src/utils/financialEngine.ts', 'w') as f:
+        f.write(content)
+    print("Fixed syntax error")
+else:
+    print("Target not found")

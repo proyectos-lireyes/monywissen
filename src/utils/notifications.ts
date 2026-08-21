@@ -41,20 +41,29 @@ export function sendLocalNotification(title: string, body: string, icon = '/icon
 /**
  * Checks for due payments today or tomorrow and schedules/triggers the 8:00 AM reminder
  */
-export function checkAndTriggerDaily8AMReminder(
+export function checkAndTriggerDailyReminder(
   expenses: ExpenseItem[],
   debts: DebtItem[],
-  notifEnabled = true
+  notifEnabled = true,
+  notifTimeStr = '08:00'
 ) {
   if (!notifEnabled) return;
 
   const today = new Date();
   const currentHour = today.getHours();
+  const currentMinute = today.getMinutes();
   const todayDateStr = todayStr();
   const dayOfMonth = today.getDate();
 
+  const [targetHour, targetMin] = notifTimeStr.split(':').map(Number);
+  
+  // Check if we reached the notification time
+  if (currentHour < targetHour || (currentHour === targetHour && currentMinute < targetMin)) {
+    return; // Not time yet
+  }
+
   // Check if already reminded today to prevent duplicate popups
-  const lastReminderDate = localStorage.getItem('mony_last_8am_reminder');
+  const lastReminderDate = localStorage.getItem('mony_last_daily_reminder');
   if (lastReminderDate === todayDateStr) {
     return;
   }
