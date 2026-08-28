@@ -1,30 +1,51 @@
 import re
 
-with open('src/components/modals/ItemFormModal.tsx', 'r') as f:
+with open('src/components/modals/OccurrenceDetailModal.tsx', 'r') as f:
     content = f.read()
 
-target = """                                <span className={`text-xs font-bold ${cuota.isPaid ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-900 dark:text-slate-100'} group-hover:text-blue-600 transition-colors`}>
-                                  Cuota {cuota.index} {cuota.isPaid && `- ${formatCurrencyExt(cuota.paidAmount, cuota.paidCurrency)}`}
-                                </span>
-                                <span className="text-[10px] text-slate-500">{cuota.date} {cuota.isPaid && `(Pagado)`}</span>
-                              </div>
-                            </div>
-                            {!cuota.isPaid && ( <span className='text-xs font-bold text-slate-400'>{formatCurrencyExt(cuota.requiredPay, currency)}</span> )}
-                          </div>"""
+target = """    if (type === 'income') {
+      targetItem = (profile.incomes || []).find(i => i.id === refId);
+      if (targetItem) {
+        itemTitle = targetItem.name;
+        baseAmount = parseFloat(targetItem.amount || 0);
+        itemCurrency = targetItem.currency || 'USD_BCV';
+      }
+    } else if (type === 'expense') {"""
 
-replacement = """                                <span className={`text-xs font-bold ${cuota.isPaid ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-900 dark:text-slate-100'} group-hover:text-blue-600 transition-colors`}>
-                                  Cuota {cuota.index} {cuota.isPaid ? `- ${formatCurrencyExt(cuota.paidAmount, cuota.paidCurrency)}` : (cuota.paidAmount > 0 ? `(Abonado: ${formatCurrencyExt(cuota.paidAmount, cuota.paidCurrency)})` : '')}
-                                </span>
-                                <span className="text-[10px] text-slate-500">{cuota.date} {cuota.isPaid && `(Pagado)`}</span>
-                              </div>
-                            </div>
-                            {!cuota.isPaid && ( <span className='text-xs font-bold text-slate-400'>{cuota.paidAmount > 0 ? 'Falta: ' : ''}{formatCurrencyExt(cuota.requiredPay, currency)}</span> )}
-                          </div>"""
+replacement = """    if (type === 'income') {
+      targetItem = (profile.incomes || []).find(i => i.id === refId);
+      if (targetItem) {
+        itemTitle = targetItem.name;
+        baseAmount = parseFloat(targetItem.amount || 0);
+        itemCurrency = targetItem.currency || 'USD_BCV';
+      } else if (refId?.startsWith('autowithdraw_')) {
+        const plan = calculateProjections(profile, exchangeRates);
+        const occurrence = plan.find(p => p.ref.id === refId && p.type === 'income' && p.originalDate === originalDate);
+        if (occurrence) {
+           itemTitle = occurrence.label || 'Rescate de Ahorros';
+           baseAmount = Math.abs(occurrence.plannedAmt || occurrence.amt || 0);
+           itemCurrency = 'USD_BCV';
+        }
+      }
+    } else if (type === 'expense') {"""
 
-if target in content:
+target2 = """    } else if (type === 'income' && refId?.startsWith('autowithdraw_')) {
+      const plan = calculateProjections(profile, exchangeRates);
+      const occurrence = plan.find(p => p.ref.id === refId && p.type === 'income' && p.originalDate === originalDate);
+      if (occurrence) {
+         itemTitle = occurrence.label || 'Rescate de Ahorros';
+         baseAmount = Math.abs(occurrence.plannedAmt || occurrence.amt || 0);
+         itemCurrency = 'USD_BCV';
+      }
+    } else if (type === 'compensation') {"""
+
+replacement2 = """    } else if (type === 'compensation') {"""
+
+if target in content and target2 in content:
     content = content.replace(target, replacement)
-    with open('src/components/modals/ItemFormModal.tsx', 'w') as f:
+    content = content.replace(target2, replacement2)
+    with open('src/components/modals/OccurrenceDetailModal.tsx', 'w') as f:
         f.write(content)
-    print("Patched ItemFormModal")
+    print("Patched OccurrenceDetailModal")
 else:
     print("Target not found")

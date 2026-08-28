@@ -57,7 +57,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
   const [minBalance, setMinBalance] = useState(settings.minBalance);
   const [delayDays, setDelayDays] = useState(settings.delayDays);
   const [autoSaveThreshold, setAutoSaveThreshold] = useState(settings.autoSaveThreshold || 0);
-  const [openingBalance, setOpeningBalance] = useState(settings.openingBalance);
+  const [openingBalanceStr, setOpeningBalanceStr] = useState(String(settings.openingBalance || 0));
   const [freeSpend, setFreeSpend] = useState(settings.freeSpend);
   const [notifTime, setNotifTime] = useState(settings.notifTime || '08:00');
 
@@ -188,7 +188,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
       draft.settings.planEnd = planEnd;
       draft.settings.minBalance = minBalance;
       draft.settings.delayDays = delayDays;
-      draft.settings.openingBalance = openingBalance;
+      draft.settings.openingBalance = parseFloat(openingBalanceStr) || 0;
       draft.settings.freeSpend = freeSpend;
       draft.settings.notifTime = notifTime;
       draft.settings.autoSaveThreshold = autoSaveThreshold;
@@ -288,6 +288,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
         {subTab === 'rules' && (
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-bold text-slate-500">Saldo Inicial Manual</label>
+                <input
+                  type="number"
+                  value={openingBalanceStr === '0' ? '' : openingBalanceStr}
+                  onChange={e => setOpeningBalanceStr(e.target.value)}
+                  placeholder="0 para auto-calcular"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100 mb-3"
+                />
+              </div>
               <div>
                 <label className="text-xs font-bold text-slate-500">Saldo mínimo (Colchón)</label>
                 <input

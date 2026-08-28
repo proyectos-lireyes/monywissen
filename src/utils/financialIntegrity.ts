@@ -201,9 +201,9 @@ export function detectPreventiveNegativeFlow(profile: UserProfile, exchangeRates
         projectedBalance: Math.round(item.balance * 100) / 100,
         requiredCushion: minBalance,
         causeLabel: item.label,
-        causeAmount: item.amt,
+        causeAmount: item?.amt,
         message: `Iliquidez crítica proyectada para el ${item.date}: Saldo de $${item.balance.toFixed(2)}.`,
-        recommendedAction: `Posponer "${item.label}" ($${Math.abs(item.amt)}) o inyectar $${Math.abs(item.balance).toFixed(2)} antes del ${item.date}.`,
+        recommendedAction: `Posponer "${item.label}" ($${Math.abs(item?.amt || 0)}) o inyectar $${Math.abs(item.balance).toFixed(2)} antes del ${item.date}.`,
       });
     }
     // 2. Safety Cushion Breach (Min Balance Breach)
@@ -215,7 +215,7 @@ export function detectPreventiveNegativeFlow(profile: UserProfile, exchangeRates
         projectedBalance: Math.round(item.balance * 100) / 100,
         requiredCushion: minBalance,
         causeLabel: item.label,
-        causeAmount: item.amt,
+        causeAmount: item?.amt,
         message: `Riesgo de colchón mínimo el ${item.date}: Saldo ($${item.balance.toFixed(2)}) por debajo del mínimo deseado ($${minBalance}).`,
         recommendedAction: `Revisar compromisos cercanos para mantener el colchón de seguridad de $${minBalance}.`,
       });
@@ -223,8 +223,8 @@ export function detectPreventiveNegativeFlow(profile: UserProfile, exchangeRates
   });
 
   // 3. High Debt Service Ratio Check (Debt Payments vs Projected Income)
-  const totalIncomeProjected = plan.filter(p => p.amt > 0).reduce((s, p) => s + p.amt, 0);
-  const totalDebtProjected = plan.filter(p => p.amt < 0 && p.type.startsWith('debt')).reduce((s, p) => s + Math.abs(p.amt), 0);
+  const totalIncomeProjected = plan.filter(p => p && p.amt > 0).reduce((s, p) => s + p.amt, 0);
+  const totalDebtProjected = plan.filter(p => p && p.amt < 0 && p.type.startsWith('debt')).reduce((s, p) => s + Math.abs(p.amt), 0);
 
   if (totalIncomeProjected > 0) {
     const dsr = (totalDebtProjected / totalIncomeProjected) * 100;
@@ -383,8 +383,8 @@ export function validateFinancialIntegrity(profile: UserProfile, exchangeRates: 
 
   const firstDeficit = plan.find(p => p.balance < 0);
 
-  const totalIncomeProjected = plan.filter(p => p.amt > 0).reduce((s, p) => s + p.amt, 0);
-  const totalDebtProjected = plan.filter(p => p.amt < 0 && p.type.startsWith('debt')).reduce((s, p) => s + Math.abs(p.amt), 0);
+  const totalIncomeProjected = plan.filter(p => p && p.amt > 0).reduce((s, p) => s + p.amt, 0);
+  const totalDebtProjected = plan.filter(p => p && p.amt < 0 && p.type.startsWith('debt')).reduce((s, p) => s + Math.abs(p.amt), 0);
   const debtServiceRatio = totalIncomeProjected > 0 ? (totalDebtProjected / totalIncomeProjected) * 100 : 0;
 
   const netWorth = (profile.settings.openingBalance || 0) + totalSavings - totalActiveDebt;

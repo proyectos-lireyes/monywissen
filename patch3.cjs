@@ -1,30 +1,8 @@
 const fs = require('fs');
-let content = fs.readFileSync('src/components/modals/ItemFormModal.tsx', 'utf8');
+let code = fs.readFileSync('src/components/dashboard/DashboardView.tsx', 'utf8');
 
-content = content.replace(
-  /useEffect\(\(\) => \{/,
-  `const hasCleanedPreview = React.useRef(false);
+code = code.replace(/plan\.forEach\(e => \{/g, 'plan.forEach(e => { if(!e) return;');
+code = code.replace(/Math\.abs\(opt\.amt\)/g, 'Math.abs(opt?.amt || 0)');
+code = code.replace(/e\.amt/g, 'e?.amt');
 
-  useEffect(() => {
-    if (!isOpen) {
-      hasCleanedPreview.current = false;
-    }`
-);
-
-content = content.replace(
-  /if \(!isOpen \|\| !type\) return;/,
-  `if (!isOpen || !type) return;
-
-    if (type === 'debt' && editIndex === null && !hasCleanedPreview.current) {
-      hasCleanedPreview.current = true;
-      updateProfileData(draft => {
-        if (draft.overrides) {
-          Object.keys(draft.overrides).forEach(k => {
-            if (k.startsWith('debt_preview_')) delete draft.overrides[k];
-          });
-        }
-      });
-    }`
-);
-
-fs.writeFileSync('src/components/modals/ItemFormModal.tsx', content);
+fs.writeFileSync('src/components/dashboard/DashboardView.tsx', code);

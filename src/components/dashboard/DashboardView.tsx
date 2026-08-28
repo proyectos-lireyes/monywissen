@@ -66,7 +66,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   };
   const [adjustmentTarget, setAdjustmentTarget] = useState<string>('0');
   const [tempPlanStart, setTempPlanStart] = useState(profile.settings.planStart);
-  const [tempOpeningBalance, setTempOpeningBalance] = useState(profile.settings.openingBalance);
+  const [tempOpeningBalanceStr, setTempOpeningBalanceStr] = useState(String(profile.settings.openingBalance || 0));
 
   const plan = calculateProjections(profile, exchangeRates);
   const [pinnedTooltip, setPinnedTooltip] = useState<any>(null);
@@ -97,18 +97,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   let criticalAlert: { date: string; reason: string } | null = null;
   const delayedItems: any[] = [];
 
-  plan.forEach(e => {
-    if (e.done) todayBalance += e.amt;
-    if (e.date <= today) projectedToday += e.amt;
+  plan.forEach(e => { if(!e) return;
+    if (e.done) todayBalance += e?.amt;
+    if (e.date <= today) projectedToday += e?.amt;
     
-    if (e.amt > 0 && e.type !== 'compensation' && e.type !== 'opening_balance') totalIncome += e.amt;
-    if (e.amt < 0 && e.type !== 'savings') totalExpense += Math.abs(e.amt);
+    if (e?.amt > 0 && e.type !== 'compensation' && e.type !== 'opening_balance') totalIncome += e?.amt;
+    if (e?.amt < 0 && e.type !== 'savings') totalExpense += Math.abs(e?.amt);
     if (e.criticalDelay && !criticalAlert) criticalAlert = { date: e.date, reason: e.label };
     if (e.isDelayed && e.date >= today && !e.criticalDelay) delayedItems.push(e);
   });
 
   const lastOccurrence = plan[plan.length - 1];
-  const projectedBalance = lastOccurrence ? lastOccurrence.balance : profile.settings.openingBalance;
+  const projectedBalance = lastOccurrence ? lastOccurrence.balance : (plan.length > 0 ? plan[0].balance : (profile.settings.openingBalance || 0));
   const totalDebt = (profile.debts || []).reduce((acc, d) => acc + convertAmount(getRemainingDebtAmount(d, profile.overrides, exchangeRates), d.currency), 0);
 
   // Prepare Recharts Data
@@ -120,13 +120,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     chartDataMap[d] = {
       date: d,
       label: formatDateStr(d).substring(0, 5),
-      balance: profile.settings.openingBalance, // Will be overridden
+      balance: plan.length > 0 ? plan[0].balance : (profile.settings.openingBalance || 0), // Will be overridden
       income: 0,
       expense: 0,
       optimizedAdelantados: 0,
       optimizedAtrasados: 0,
-      deficit: 0,
-      debt: 0,
+      deficit: 0, debt: 0, rescates: 0,
       totalEgresos: 0,
       netAvailable: 0,
       plannedIncome: 0,
@@ -135,9 +134,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
   });
 
-  let runningBalance = profile.settings.openingBalance;
+  let runningBalance = plan.length > 0 ? plan[0].balance : (profile.settings.openingBalance || 0);
 
-  plan.forEach(e => {
+  plan.forEach(e => { if(!e) return;
     if (e.date >= profile.settings.planStart && e.date <= profile.settings.planEnd) {
       if (!chartDataMap[e.date]) {
         chartDataMap[e.date] = {
@@ -148,8 +147,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           expense: 0,
           optimizedAdelantados: 0,
           optimizedAtrasados: 0,
-          deficit: 0,
-          debt: 0,
+          deficit: 0, debt: 0, rescates: 0,
           totalEgresos: 0,
           netAvailable: 0,
           plannedIncome: 0,
@@ -157,20 +155,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           items: [],
         };
       }
-      if (e.amt > 0 && (e.type === 'income')) chartDataMap[e.date].income += e.amt;
-      if (e.amt < 0 && e.type === 'expense') chartDataMap[e.date].expense += Math.abs(e.amt);
-      if (e.amt < 0 && (e.type === 'debt' )) chartDataMap[e.date].debt += Math.abs(e.amt);
+      if (e?.amt > 0 && (e.type === 'income')) chartDataMap[e.date].income += e?.amt;
+      if (e.type === 'rescate_ahorros') chartDataMap[e.date].rescates = (chartDataMap[e.date].rescates || 0) + e?.amt;
+      if (e?.amt < 0 && e.type === 'expense') chartDataMap[e.date].expense += Math.abs(e?.amt);
+      if (e?.amt < 0 && (e.type === 'debt' )) chartDataMap[e.date].debt += Math.abs(e?.amt);
       chartDataMap[e.date].balance = e.balance;
       runningBalance = e.balance;
       chartDataMap[e.date].items.push(e);
     }
     // Also track planned (original) amounts
     if (e.originalDate >= profile.settings.planStart && e.originalDate <= profile.settings.planEnd) {
-      if (e.amt > 0 && (e.type === 'income')) {
-         chartDataMap[e.originalDate].plannedIncome += e.amt;
+      if (!chartDataMap[e.originalDate]) {
+        chartDataMap[e.originalDate] = {
+           date: e.originalDate,
+           label: e.originalDate.substring(5, 10),
+           balance: 0,
+           income: 0, expense: 0, optimizedAdelantados: 0, optimizedAtrasados: 0, deficit: 0, debt: 0, rescates: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: []
+        };
       }
-      if (e.amt < 0 && (e.type === 'expense' || e.type === 'debt')) {
-         chartDataMap[e.originalDate].plannedEgresos += Math.abs(e.amt);
+      if (e?.amt > 0 && (e.type === 'income')) {
+         chartDataMap[e.originalDate].plannedIncome = (chartDataMap[e.originalDate].plannedIncome || 0) + e?.amt;
+      }
+      if (e?.amt < 0 && (e.type === 'expense' || e.type === 'debt')) {
+         chartDataMap[e.originalDate].plannedEgresos = (chartDataMap[e.originalDate].plannedEgresos || 0) + Math.abs(e?.amt);
       }
     }
   });
@@ -187,6 +194,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   Object.values(chartDataMap).forEach(d => { d.totalEgresos = d.expense + d.debt; d.netAvailable = d.income - d.totalEgresos; d.plannedNetFlow = (d.plannedIncome || 0) - (d.plannedEgresos || 0); });
 
+  Object.values(chartDataMap).forEach((d: any) => {
+    d.totalEgresos = d.expense + d.debt;
+    d.preIncomeBalance = d.balance - d.income;
+  });
   const chartData = Object.values(chartDataMap);
 
   // Monthly Aggregation Data
@@ -209,8 +220,8 @@ const CustomTooltip = ({ active, payload, label }: any) => {
             <span>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(entry.value)}</span>
           </div>
         )})}
-        <div className="flex justify-between items-center text-xs mb-1 mt-2 pt-1 border-t border-slate-100 dark:border-slate-800" style={{ color: '#2563eb' }}>
-          <span className="font-bold">Liquidez Real (Saldo):</span>
+        <div className="flex justify-between items-center text-xs mb-1 mt-2 pt-1 border-t border-slate-100 dark:border-slate-800" style={{ color: '#3b82f6' }}>
+          <span className="font-bold">Liquidez Final del Día (Saldo):</span>
           <span className="font-bold">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.balance)}</span>
         </div>
         <div className="flex justify-between items-center text-xs mb-1 pt-1" style={{ color: '#0ea5e9' }}>
@@ -218,25 +229,10 @@ const CustomTooltip = ({ active, payload, label }: any) => {
           <span className="font-bold">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.savingsAccumulated || 0)}</span>
         </div>
         
-        <p className="text-[10px] text-slate-500 mt-3 text-center font-bold bg-slate-100 dark:bg-slate-800 p-1.5 rounded-md">👆 Haz clic en la gráfica para ver detalles</p>
-        {data.items && data.items.length > 0 && (
-          <div className="mt-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <p className="text-[10px] font-bold text-slate-500 uppercase mb-1.5">Detalles del Período</p>
-            <div className="space-y-1.5 max-h-[150px] overflow-y-auto pr-1">
-              {data.items.slice(0, 8).map((item: any, i: number) => (
-                <div key={i} className="flex justify-between items-center text-[11px]">
-                  <span className="text-slate-600 dark:text-slate-300 truncate max-w-[120px]">{item.label}</span>
-                  <span className={`font-semibold ${item.amt > 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                    {item.amt > 0 ? '+' : ''}{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(item.amt)}
-                  </span>
-                </div>
-              ))}
-              {data.items.length > 8 && (
-                <p className="text-[10px] text-slate-400 italic text-center pt-1">... y {data.items.length - 8} más</p>
-              )}
-            </div>
-          </div>
-        )}
+        <div className="mt-3 bg-blue-50 dark:bg-blue-900/30 border border-blue-100 dark:border-blue-800 p-2 rounded-lg text-center">
+          <p className="text-[11px] text-blue-600 dark:text-blue-400 font-bold">👆 Haz clic en la gráfica</p>
+          <p className="text-[9px] text-blue-500/80 dark:text-blue-400/80 mt-0.5 leading-tight">(Haz clic en el punto azul, no en este recuadro)</p>
+        </div>
       </div>
     );
   }
@@ -262,8 +258,8 @@ const getWeekStart = (dateStr: string) => {
     return `${d.getUTCFullYear()}-${m < 10 ? '0'+m : m}-${period}`;
   };
 
-  const biweeklyDataMap: Record<string, { label: string; income: number; expense: number; debt: number; savingsAccumulated?: number; totalEgresos?: number; netAvailable?: number; items: any[]; balance?: number; optimizedAdelantados?: number; optimizedAtrasados?: number; deficit?: number; plannedIncome?: number; plannedEgresos?: number; plannedNetFlow?: number; }> = {};
-  plan.forEach(e => {
+  const biweeklyDataMap: Record<string, { label: string; income: number; expense: number; debt: number; rescates?: number; savingsAccumulated?: number; totalEgresos?: number; netAvailable?: number; items: any[]; balance?: number; optimizedAdelantados?: number; optimizedAtrasados?: number; deficit?: number; plannedIncome?: number; plannedEgresos?: number; plannedNetFlow?: number; }> = {};
+  plan.forEach(e => { if(!e) return;
     if (e.date >= profile.settings.planStart && e.date <= profile.settings.planEnd) {
       const prefix = getBiweeklyStart(e.date);
       if (!biweeklyDataMap[prefix]) {
@@ -273,8 +269,7 @@ const getWeekStart = (dateStr: string) => {
           expense: 0,
           optimizedAdelantados: 0,
           optimizedAtrasados: 0,
-          deficit: 0,
-          debt: 0,
+          deficit: 0, debt: 0, rescates: 0,
           totalEgresos: 0,
           netAvailable: 0,
           plannedIncome: 0,
@@ -282,13 +277,14 @@ const getWeekStart = (dateStr: string) => {
           items: [],
         };
       }
-      if (e.amt > 0 && (e.type === 'income')) biweeklyDataMap[prefix].income += e.amt;
-      if (e.amt < 0 && e.type === 'expense') biweeklyDataMap[prefix].expense += Math.abs(e.amt);
-      if (e.amt < 0 && (e.type === 'debt' )) biweeklyDataMap[prefix].debt += Math.abs(e.amt);
+      if (e?.amt > 0 && (e.type === 'income')) biweeklyDataMap[prefix].income += e?.amt;
+      if (e.type === 'rescate_ahorros') biweeklyDataMap[prefix].rescates = (biweeklyDataMap[prefix].rescates || 0) + e?.amt;
+      if (e?.amt < 0 && e.type === 'expense') biweeklyDataMap[prefix].expense += Math.abs(e?.amt);
+      if (e?.amt < 0 && (e.type === 'debt' )) biweeklyDataMap[prefix].debt += Math.abs(e?.amt);
       biweeklyDataMap[prefix].items.push(e);
-      if (e.pulledEarly) biweeklyDataMap[prefix].optimizedAdelantados += Math.abs(e.amt);
-      if (e.isDelayed && !e.insufficientFunds) biweeklyDataMap[prefix].optimizedAtrasados += Math.abs(e.amt);
-      if (e.insufficientFunds && e.amt < 0) biweeklyDataMap[prefix].deficit += Math.abs(e.amt);
+      if (e.pulledEarly) biweeklyDataMap[prefix].optimizedAdelantados += Math.abs(e?.amt);
+      if (e.isDelayed && !e.insufficientFunds) biweeklyDataMap[prefix].optimizedAtrasados += Math.abs(e?.amt);
+      if (e.insufficientFunds && e?.amt < 0) biweeklyDataMap[prefix].deficit += Math.abs(e?.amt);
       biweeklyDataMap[prefix].balance = e.balance;
       biweeklyDataMap[prefix].savingsAccumulated = e.savingsAccumulated || 0;
     }
@@ -297,19 +293,19 @@ const getWeekStart = (dateStr: string) => {
       if (!biweeklyDataMap[origBiweekPrefix]) {
         biweeklyDataMap[origBiweekPrefix] = {
           label: origBiweekPrefix.substring(5),
-          income: 0, expense: 0, optimizedAdelantados: 0, optimizedAtrasados: 0, deficit: 0, debt: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: [],
+          income: 0, expense: 0, optimizedAdelantados: 0, optimizedAtrasados: 0, deficit: 0, debt: 0, rescates: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: [],
         };
       }
-      if (e.amt > 0 && (e.type === 'income')) biweeklyDataMap[origBiweekPrefix].plannedIncome = (biweeklyDataMap[origBiweekPrefix].plannedIncome || 0) + e.amt;
-      if (e.amt < 0 && (e.type === 'expense' || e.type === 'debt')) biweeklyDataMap[origBiweekPrefix].plannedEgresos = (biweeklyDataMap[origBiweekPrefix].plannedEgresos || 0) + Math.abs(e.amt);
+      if (e?.amt > 0 && (e.type === 'income')) biweeklyDataMap[origBiweekPrefix].plannedIncome = (biweeklyDataMap[origBiweekPrefix].plannedIncome || 0) + e?.amt;
+      if (e?.amt < 0 && (e.type === 'expense' || e.type === 'debt')) biweeklyDataMap[origBiweekPrefix].plannedEgresos = (biweeklyDataMap[origBiweekPrefix].plannedEgresos || 0) + Math.abs(e?.amt);
     }
   });
   Object.values(biweeklyDataMap).forEach(d => { d.totalEgresos = d.expense + d.debt; d.netAvailable = d.income - d.totalEgresos; d.plannedNetFlow = (d.plannedIncome || 0) - (d.plannedEgresos || 0); });
   const biweeklyData = Object.values(biweeklyDataMap);
 
   // Weekly Aggregation Data
-  const weeklyDataMap: Record<string, { label: string; income: number; expense: number; debt: number; savingsAccumulated?: number; totalEgresos?: number; netAvailable?: number; items: any[]; balance?: number; optimizedAdelantados?: number; optimizedAtrasados?: number; deficit?: number; plannedIncome?: number; plannedEgresos?: number; plannedNetFlow?: number; }> = {};
-  plan.forEach(e => {
+  const weeklyDataMap: Record<string, { label: string; income: number; expense: number; debt: number; rescates?: number; savingsAccumulated?: number; totalEgresos?: number; netAvailable?: number; items: any[]; balance?: number; optimizedAdelantados?: number; optimizedAtrasados?: number; deficit?: number; plannedIncome?: number; plannedEgresos?: number; plannedNetFlow?: number; }> = {};
+  plan.forEach(e => { if(!e) return;
     if (e.date >= profile.settings.planStart && e.date <= profile.settings.planEnd) {
       const weekPrefix = getWeekStart(e.date);
       if (!weeklyDataMap[weekPrefix]) {
@@ -319,8 +315,7 @@ const getWeekStart = (dateStr: string) => {
           expense: 0,
           optimizedAdelantados: 0,
           optimizedAtrasados: 0,
-          deficit: 0,
-          debt: 0,
+          deficit: 0, debt: 0, rescates: 0,
           totalEgresos: 0,
           netAvailable: 0,
           plannedIncome: 0,
@@ -328,13 +323,14 @@ const getWeekStart = (dateStr: string) => {
           items: [],
         };
       }
-      if (e.amt > 0 && (e.type === 'income')) weeklyDataMap[weekPrefix].income += e.amt;
-      if (e.amt < 0 && e.type === 'expense') weeklyDataMap[weekPrefix].expense += Math.abs(e.amt);
-      if (e.amt < 0 && (e.type === 'debt' )) weeklyDataMap[weekPrefix].debt += Math.abs(e.amt);
+      if (e?.amt > 0 && (e.type === 'income')) weeklyDataMap[weekPrefix].income += e?.amt;
+      if (e.type === 'rescate_ahorros') weeklyDataMap[weekPrefix].rescates = (weeklyDataMap[weekPrefix].rescates || 0) + e?.amt;
+      if (e?.amt < 0 && e.type === 'expense') weeklyDataMap[weekPrefix].expense += Math.abs(e?.amt);
+      if (e?.amt < 0 && (e.type === 'debt' )) weeklyDataMap[weekPrefix].debt += Math.abs(e?.amt);
       weeklyDataMap[weekPrefix].items.push(e);
-      if (e.pulledEarly) weeklyDataMap[weekPrefix].optimizedAdelantados += Math.abs(e.amt);
-      if (e.isDelayed && !e.insufficientFunds) weeklyDataMap[weekPrefix].optimizedAtrasados += Math.abs(e.amt);
-      if (e.insufficientFunds && e.amt < 0) weeklyDataMap[weekPrefix].deficit += Math.abs(e.amt);
+      if (e.pulledEarly) weeklyDataMap[weekPrefix].optimizedAdelantados += Math.abs(e?.amt);
+      if (e.isDelayed && !e.insufficientFunds) weeklyDataMap[weekPrefix].optimizedAtrasados += Math.abs(e?.amt);
+      if (e.insufficientFunds && e?.amt < 0) weeklyDataMap[weekPrefix].deficit += Math.abs(e?.amt);
       weeklyDataMap[weekPrefix].balance = e.balance; // Keep last balance of the week
       weeklyDataMap[weekPrefix].savingsAccumulated = e.savingsAccumulated || 0;
     }
@@ -343,18 +339,18 @@ const getWeekStart = (dateStr: string) => {
       if (!weeklyDataMap[origWeekPrefix]) {
         weeklyDataMap[origWeekPrefix] = {
           label: origWeekPrefix.substring(5,10),
-          income: 0, expense: 0, optimizedAdelantados: 0, optimizedAtrasados: 0, deficit: 0, debt: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: [],
+          income: 0, expense: 0, optimizedAdelantados: 0, optimizedAtrasados: 0, deficit: 0, debt: 0, rescates: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: [],
         };
       }
-      if (e.amt > 0 && (e.type === 'income')) weeklyDataMap[origWeekPrefix].plannedIncome = (weeklyDataMap[origWeekPrefix].plannedIncome || 0) + e.amt;
-      if (e.amt < 0 && (e.type === 'expense' || e.type === 'debt')) weeklyDataMap[origWeekPrefix].plannedEgresos = (weeklyDataMap[origWeekPrefix].plannedEgresos || 0) + Math.abs(e.amt);
+      if (e?.amt > 0 && (e.type === 'income')) weeklyDataMap[origWeekPrefix].plannedIncome = (weeklyDataMap[origWeekPrefix].plannedIncome || 0) + e?.amt;
+      if (e?.amt < 0 && (e.type === 'expense' || e.type === 'debt')) weeklyDataMap[origWeekPrefix].plannedEgresos = (weeklyDataMap[origWeekPrefix].plannedEgresos || 0) + Math.abs(e?.amt);
     }
   });
   Object.values(weeklyDataMap).forEach(d => { d.totalEgresos = d.expense + d.debt; d.netAvailable = d.income - d.totalEgresos; d.plannedNetFlow = (d.plannedIncome || 0) - (d.plannedEgresos || 0); });
   const weeklyData = Object.values(weeklyDataMap);
 
-  const monthlyDataMap: Record<string, { label: string; income: number; expense: number; debt: number; savingsAccumulated?: number; totalEgresos?: number; netAvailable?: number; items: any[]; balance?: number; optimizedAdelantados?: number; optimizedAtrasados?: number; deficit?: number; plannedIncome?: number; plannedEgresos?: number; plannedNetFlow?: number; }> = {};
-  plan.forEach(e => {
+  const monthlyDataMap: Record<string, { label: string; income: number; expense: number; debt: number; rescates?: number; savingsAccumulated?: number; totalEgresos?: number; netAvailable?: number; items: any[]; balance?: number; optimizedAdelantados?: number; optimizedAtrasados?: number; deficit?: number; plannedIncome?: number; plannedEgresos?: number; plannedNetFlow?: number; }> = {};
+  plan.forEach(e => { if(!e) return;
     if (e.date >= profile.settings.planStart && e.date <= profile.settings.planEnd) {
       const monthPrefix = e.date.substring(0, 7); // YYYY-MM
       if (!monthlyDataMap[monthPrefix]) {
@@ -364,8 +360,7 @@ const getWeekStart = (dateStr: string) => {
           expense: 0,
           optimizedAdelantados: 0,
           optimizedAtrasados: 0,
-          deficit: 0,
-          debt: 0,
+          deficit: 0, debt: 0, rescates: 0,
           totalEgresos: 0,
           netAvailable: 0,
           plannedIncome: 0,
@@ -373,13 +368,14 @@ const getWeekStart = (dateStr: string) => {
           items: [],
         };
       }
-      if (e.amt > 0 && (e.type === 'income')) monthlyDataMap[monthPrefix].income += e.amt;
-      if (e.amt < 0 && e.type === 'expense') monthlyDataMap[monthPrefix].expense += Math.abs(e.amt);
-      if (e.amt < 0 && (e.type === 'debt' )) monthlyDataMap[monthPrefix].debt += Math.abs(e.amt);
+      if (e?.amt > 0 && (e.type === 'income')) monthlyDataMap[monthPrefix].income += e?.amt;
+      if (e.type === 'rescate_ahorros') monthlyDataMap[monthPrefix].rescates = (monthlyDataMap[monthPrefix].rescates || 0) + e?.amt;
+      if (e?.amt < 0 && e.type === 'expense') monthlyDataMap[monthPrefix].expense += Math.abs(e?.amt);
+      if (e?.amt < 0 && (e.type === 'debt' )) monthlyDataMap[monthPrefix].debt += Math.abs(e?.amt);
       monthlyDataMap[monthPrefix].items.push(e);
-      if (e.pulledEarly) monthlyDataMap[monthPrefix].optimizedAdelantados += Math.abs(e.amt);
-      if (e.isDelayed && !e.insufficientFunds) monthlyDataMap[monthPrefix].optimizedAtrasados += Math.abs(e.amt);
-      if (e.insufficientFunds && e.amt < 0) monthlyDataMap[monthPrefix].deficit += Math.abs(e.amt);
+      if (e.pulledEarly) monthlyDataMap[monthPrefix].optimizedAdelantados += Math.abs(e?.amt);
+      if (e.isDelayed && !e.insufficientFunds) monthlyDataMap[monthPrefix].optimizedAtrasados += Math.abs(e?.amt);
+      if (e.insufficientFunds && e?.amt < 0) monthlyDataMap[monthPrefix].deficit += Math.abs(e?.amt);
       monthlyDataMap[monthPrefix].balance = e.balance;
       monthlyDataMap[monthPrefix].savingsAccumulated = e.savingsAccumulated || 0;
     }
@@ -388,11 +384,11 @@ const getWeekStart = (dateStr: string) => {
       if (!monthlyDataMap[origMonthPrefix]) {
         monthlyDataMap[origMonthPrefix] = {
           label: origMonthPrefix,
-          income: 0, expense: 0, optimizedAdelantados: 0, optimizedAtrasados: 0, deficit: 0, debt: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: [],
+          income: 0, expense: 0, optimizedAdelantados: 0, optimizedAtrasados: 0, deficit: 0, debt: 0, rescates: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: [],
         };
       }
-      if (e.amt > 0 && (e.type === 'income')) monthlyDataMap[origMonthPrefix].plannedIncome = (monthlyDataMap[origMonthPrefix].plannedIncome || 0) + e.amt;
-      if (e.amt < 0 && (e.type === 'expense' || e.type === 'debt')) monthlyDataMap[origMonthPrefix].plannedEgresos = (monthlyDataMap[origMonthPrefix].plannedEgresos || 0) + Math.abs(e.amt);
+      if (e?.amt > 0 && (e.type === 'income')) monthlyDataMap[origMonthPrefix].plannedIncome = (monthlyDataMap[origMonthPrefix].plannedIncome || 0) + e?.amt;
+      if (e?.amt < 0 && (e.type === 'expense' || e.type === 'debt')) monthlyDataMap[origMonthPrefix].plannedEgresos = (monthlyDataMap[origMonthPrefix].plannedEgresos || 0) + Math.abs(e?.amt);
     }
   });
   Object.values(monthlyDataMap).forEach(d => { d.totalEgresos = d.expense + d.debt; d.netAvailable = d.income - d.totalEgresos; d.plannedNetFlow = (d.plannedIncome || 0) - (d.plannedEgresos || 0); });
@@ -406,6 +402,7 @@ const getWeekStart = (dateStr: string) => {
       netFlow: net,
       income: m.income,
       expense: m.expense + m.debt,
+      rescates: m.rescates,
       items: m.items,
       balance: m.balance,
       savingsAccumulated: m.savingsAccumulated,
@@ -414,8 +411,8 @@ const getWeekStart = (dateStr: string) => {
 
   // Pie chart categories distribution
   const pieCategories: Record<string, number> = {};
-  plan.forEach(e => {
-    if (e.amt < 0) {
+  plan.forEach(e => { if(!e) return;
+    if (e?.amt < 0) {
       if (e.type === 'debt' && e.done) return;
       let cat = 'Deudas';
       if (e.type === 'expense') {
@@ -425,7 +422,7 @@ const getWeekStart = (dateStr: string) => {
       } else if (e.type === 'debt') {
         cat = e.ref?.name || 'Deudas';
       }
-      pieCategories[cat] = (pieCategories[cat] || 0) + Math.abs(e.amt);
+      pieCategories[cat] = (pieCategories[cat] || 0) + Math.abs(e?.amt);
     }
   });
 
@@ -533,7 +530,7 @@ const getWeekStart = (dateStr: string) => {
         
         {/* Deficit Alert Banner */}
         {(() => {
-          const criticalDeficits = plan.filter(e => e.balance < 0 && e.amt < 0 && !e.done);
+          const criticalDeficits = plan.filter(e => e.balance < 0 && chartDataMap[e.date]?.balance < 0 && e?.amt < 0 && !e.done);
           if (criticalDeficits.length === 0) return null;
           
           const uniqueDeficits = Array.from(new Map(criticalDeficits.map(item => [item.ref?.id, item])).values());
@@ -558,10 +555,15 @@ const getWeekStart = (dateStr: string) => {
                   <div className="flex flex-wrap gap-2 mt-2">
                     {uniqueDeficits.map((opt: any, idx: number) => (
                       <div key={idx} 
-                           onClick={() => onOpenDetails && onOpenDetails(opt.type, opt.ref?.id, opt.originalDate, opt.date)}
-                           className="bg-white dark:bg-slate-900 px-3 py-2 rounded-xl border border-rose-100 dark:border-rose-800/30 flex items-center gap-2 cursor-pointer hover:bg-rose-50 dark:hover:bg-rose-900/40 transition-colors">
-                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{opt.label}</span>
-                        <span className="text-xs font-black text-rose-600">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Math.abs(opt.amt))}</span>
+                           onClick={() => onOpenDetails && opt.type !== 'opening_balance' && onOpenDetails(opt.type, opt.ref?.id, opt.originalDate, opt.date)}
+                           className="bg-white dark:bg-slate-900 px-3 py-2 rounded-xl border border-rose-100 dark:border-rose-800/30 flex flex-col gap-1 cursor-pointer hover:bg-rose-50 dark:hover:bg-rose-900/40 transition-colors">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{opt.label}</span>
+                          <span className="text-xs font-black text-rose-600">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Math.abs(opt?.amt || 0))}</span>
+                        </div>
+                        <span className="text-[10px] text-rose-500 font-semibold text-right">
+                           Quiebre: {opt.date} (Bal: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(opt.balance)})
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -681,24 +683,21 @@ const getWeekStart = (dateStr: string) => {
               {(() => {
                 const activeData = chartMode === 5 ? chartData : chartMode === 4 ? weeklyData : chartMode === 3 ? biweeklyData : (chartMode === 2 || chartMode === 1) ? monthlyData : chartData;
                 return (
-                  <ComposedChart data={activeData as any} onClick={(e) => { if (e && (e as any).activePayload && (e as any).activePayload[0]) setPeriodDetails((e as any).activePayload[0].payload); }}>
+                  <ComposedChart data={activeData.map((d: any) => ({ ...d, preIncomeBalance: (d.balance || 0) - (d.income || 0), totalEgresos: (d.expense || 0) + (d.debt || 0) })) as any} onClick={(e) => { if (e && (e as any).activePayload && (e as any).activePayload[0]) setPeriodDetails((e as any).activePayload[0].payload); }}>
                     <XAxis dataKey="label" stroke="#94a3b8" fontSize={10} />
                     <YAxis yAxisId="left" stroke="#94a3b8" fontSize={10} tickFormatter={val => `$${val >= 1000 ? (val / 1000).toFixed(0) + 'k' : val}`} />
                     <Tooltip content={<CustomTooltip />} wrapperStyle={{ pointerEvents: 'none' }} />
                     <Legend onClick={(e) => toggleLine(e.dataKey as string)} wrapperStyle={{ fontSize: '11px', paddingTop: '4px', cursor: 'pointer' }} />
                     <ReferenceLine y={0} stroke="#94a3b8" strokeDasharray="3 3" yAxisId="left" />
                     
+                    <Bar hide={hiddenLines["deficit"]} dataKey="deficit" stackId="opt" yAxisId="left" fill="#991b1b" name="Déficit (Alerta)" barSize={12} radius={[4,4,0,0]} />
+                    <Bar hide={hiddenLines["rescates"]} dataKey="rescates" stackId="opt" yAxisId="left" fill="#0ea5e9" name="Rescate de Ahorros" barSize={12} radius={[4,4,0,0]} />
+                    <Bar hide={hiddenLines["optimizedAdelantados"]} dataKey="optimizedAdelantados" stackId="opt" yAxisId="left" fill="#059669" name="Optimizados (Adelantados)" barSize={12} radius={[4,4,0,0]} />
+                    <Bar hide={hiddenLines["optimizedAtrasados"]} dataKey="optimizedAtrasados" stackId="opt" yAxisId="left" fill="#d97706" name="Optimizados (Atrasados)" barSize={12} radius={[4,4,0,0]} />
+                    
                     <Line hide={hiddenLines["income"]} type="monotone" dataKey="income" yAxisId="left" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
                     <Line hide={hiddenLines["totalEgresos"]} type="monotone" dataKey="totalEgresos" yAxisId="left" name="Egresos (Gastos+Deudas)" stroke="#f43f5e" strokeWidth={2} dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
-                    
-                    <Line hide={hiddenLines["expense"]} type="monotone" dataKey="expense" yAxisId="left" name="Gastos" stroke="#ef4444" strokeWidth={2} strokeDasharray="2 2" dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
-                    <Line hide={hiddenLines["debt"]} type="monotone" dataKey="debt" yAxisId="left" name="Deudas" stroke="#f59e0b" strokeWidth={2} strokeDasharray="2 2" dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
-                    
-                    <Bar hide={hiddenLines["deficit"]} dataKey="deficit" stackId="opt" yAxisId="left" fill="#ef4444" name="Déficit (Alerta)" barSize={10} radius={[4,4,0,0]} />
-                    <Bar hide={hiddenLines["optimizedAdelantados"]} dataKey="optimizedAdelantados" stackId="opt" yAxisId="left" fill="#10b981" name="Optimizados (Adelantados)" barSize={10} radius={[4,4,0,0]} />
-                    <Bar hide={hiddenLines["optimizedAtrasados"]} dataKey="optimizedAtrasados" stackId="opt" yAxisId="left" fill="#fbbf24" name="Optimizados (Atrasados)" barSize={10} radius={[4,4,0,0]} />
-                    
-                    <Line hide={hiddenLines["balance"]} type="monotone" dataKey="balance" yAxisId="left" name="Saldo (Liquidez Disponible)" stroke="#8b5cf6" strokeWidth={3} dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
+                    <Line hide={hiddenLines["balance"]} type="monotone" dataKey="balance" yAxisId="left" name="Liquidez Final del Día" stroke="#3b82f6" strokeWidth={2} strokeDasharray="3 3" dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
                   </ComposedChart>
                 );
               })()}
@@ -711,11 +710,11 @@ const getWeekStart = (dateStr: string) => {
               {(() => {
                 const activeData = chartMode === 5 ? chartData : chartMode === 4 ? weeklyData : chartMode === 3 ? biweeklyData : (chartMode === 2 || chartMode === 1) ? monthlyData : chartData;
                 return (
-                  <ComposedChart data={activeData as any}>
+                  <ComposedChart data={activeData as any} onClick={(e) => { if (e && (e as any).activePayload && (e as any).activePayload[0]) setPeriodDetails((e as any).activePayload[0].payload); }}>
                     <XAxis dataKey="label" stroke="#94a3b8" fontSize={10} />
                     <YAxis stroke="#0ea5e9" fontSize={10} tickFormatter={val => `$${val >= 1000 ? (val / 1000).toFixed(0) + 'k' : val}`} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Line type="monotone" dataKey="savingsAccumulated" name="Ahorros" stroke="#0ea5e9" strokeWidth={2} dot={false} />
+                    <Tooltip content={<CustomTooltip />} wrapperStyle={{ pointerEvents: 'none' }} />
+                    <Line type="monotone" dataKey="savingsAccumulated" name="Ahorros" stroke="#0ea5e9" strokeWidth={2} dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
                   </ComposedChart>
                 );
               })()}
@@ -746,7 +745,7 @@ const getWeekStart = (dateStr: string) => {
               return (
                 <div
                   key={idx}
-                  onClick={() => onOpenDetails(u.type, u.ref.id, u.originalDate, u.date)}
+                  onClick={() => { if (u.type !== 'opening_balance') onOpenDetails(u.type, u.ref.id, u.originalDate, u.date); }}
                   style={(!isOverdue && u.ref?.effectiveColor) ? {
                     borderLeftColor: u.ref.effectiveColor,
                     borderLeftWidth: '4px'
@@ -780,9 +779,7 @@ const getWeekStart = (dateStr: string) => {
                     >
                       {formatCurrency(Math.abs(u.amt))}
                     </p>
-                    <p className="text-[10px] text-slate-400">
-                      Saldo: {formatCurrency(u.balance)}
-                    </p>
+                    {/* Saldo oculto */}
                   </div>
                 </div>
               );
@@ -834,7 +831,7 @@ const getWeekStart = (dateStr: string) => {
                     value={tempPlanStart}
                     onChange={(e) => {
                       setTempPlanStart(e.target.value);
-                      setTempOpeningBalance(0);
+                      setTempOpeningBalanceStr('0');
                     }}
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
                   />
@@ -848,12 +845,13 @@ const getWeekStart = (dateStr: string) => {
                     <input
                       type="number"
                       step="0.01"
-                      value={tempOpeningBalance === 0 ? '' : tempOpeningBalance}
-                      onChange={(e) => setTempOpeningBalance(parseFloat(e.target.value) || 0)}
+                      value={tempOpeningBalanceStr}
+                      onChange={(e) => setTempOpeningBalanceStr(e.target.value)}
                       placeholder="0.00"
                       className="w-full pl-8 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
                     />
                   </div>
+                  <p className="text-[10px] text-slate-400 mt-1.5 ml-1">Déjalo vacío (0) para que el sistema calcule el monto necesario para cubrir gastos previos a tu primer ingreso.</p>
                 </div>
               </div>
             </div>
@@ -869,7 +867,7 @@ const getWeekStart = (dateStr: string) => {
                 onClick={() => {
                   updateProfileData(draft => {
                     draft.settings.planStart = tempPlanStart;
-                    draft.settings.openingBalance = tempOpeningBalance;
+                    draft.settings.openingBalance = parseFloat(tempOpeningBalanceStr) || 0;
                     
                     // Clear past compensations just in case
                     if (draft.overrides) {
@@ -1032,7 +1030,7 @@ const getWeekStart = (dateStr: string) => {
                 {periodDetails.items && periodDetails.items.length > 0 ? (
                   <div className="space-y-2">
                     {periodDetails.items.filter((i: any) => i.type !== 'opening_balance').map((item: any, i: number) => (
-                      <div key={i} onClick={() => { setPeriodDetails(null); onOpenDetails(item.type, item.ref.id, item.originalDate, item.date); }} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer transition-colors">
+                      <div key={i} onClick={() => { if (item.type !== 'opening_balance') { setPeriodDetails(null); onOpenDetails(item.type, item.ref.id, item.originalDate, item.date); } }} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer transition-colors">
                         <div className="flex items-center gap-3">
                           <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
                             item.amt > 0 ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/50 dark:text-emerald-400' :

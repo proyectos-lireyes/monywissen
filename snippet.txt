@@ -1,0 +1,25 @@
+  // Auto-calculate Required Initial Balance
+  let expensesBeforeFirstIncome = 0;
+  let autoCalculatedStart = false;
+  
+  if (settings.openingBalance !== undefined && settings.openingBalance !== null && settings.openingBalance !== 0) {
+    balance = settings.openingBalance;
+  } else {
+    autoCalculatedStart = true;
+    
+    // Find the date of the first income based on final dates (which are the keys in map)
+    let firstIncomeFinalDate = endD;
+    for (const d of allDatesList) {
+      if ((map[d] || []).some(e => (e?.amt || 0) > 0 && e?.type !== 'compensation')) {
+        firstIncomeFinalDate = d;
+        break;
+      }
+    }
+    
+    // Sum all expenses whose original date is before the first income's final date
+    expensesBeforeFirstIncome = futureEvents
+      .filter(e => e?.originalDate < firstIncomeFinalDate && (e?.amt || 0) < 0 && e?.type !== 'savings')
+      .reduce((sum, e) => sum + Math.abs(e.amt), 0);
+
+    balance = expensesBeforeFirstIncome + (settings.minBalance || 0);
+  }

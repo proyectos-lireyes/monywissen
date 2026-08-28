@@ -95,7 +95,9 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
   const calculatedPmt = React.useMemo(() => {
     const bal = parseFloat(String(balance)) || 0;
-    const principal = Math.max(0, bal);
+    const amort = parseFloat(String(amortized)) || 0;
+    // Amortization (down payment) reduces the principal to be financed
+    const principal = Math.max(0, bal - amort);
     const inst = parseInt(String(installments), 10) || 1;
     let pmt = principal / inst;
     const hasInt = debtType === 'loan_interest' || debtType === 'card' || (profile.settings.customDebts && profile.settings.customDebts.find(d => d.id === debtType)?.hasInterest);
@@ -344,7 +346,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           let itemFreq = item.freq;
           if (item.type !== 'card' && item.type !== 'fixed' && item.type !== 'loan_interest') {
              const cDef = profile.settings.customDebts?.find(d => d.id === item.type);
-             if (cDef) itemFreq = cDef.freq as any;
+             if (cDef && !itemFreq) itemFreq = cDef.freq as any;
           }
           const finalFreqState = itemFreq || 'monthly';
           const isItemTdc = item.type === 'card' || item.type.startsWith('tdc_');
@@ -980,6 +982,18 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                               })()}
                            </div>
                         )}
+                        {parseInt(String(installments) || '1') > 0 && parseFloat(String(balance) || '0') > 0 && expectedCuotas && expectedCuotas.length > 0 && (
+                          <div className="mt-2 max-h-32 overflow-y-auto space-y-1 pr-1">
+                            {expectedCuotas.map(c => (
+                              <div key={c.key} className="flex justify-between items-center px-2 py-1.5 bg-white dark:bg-slate-900 rounded-lg text-[10px] border border-slate-200 dark:border-slate-700">
+                                 <span className="text-slate-600 dark:text-slate-400 font-medium">Cuota {c.index}: {new Date(c.date + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                                 <span className={c.requiredPay === 0 ? "text-emerald-500 font-bold" : "text-slate-900 dark:text-slate-100 font-bold"}>
+                                   {c.requiredPay === 0 ? 'Pagado' : formatCurrencyExt(c.requiredPay, currency)}
+                                 </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="space-y-3">
@@ -1026,6 +1040,8 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                                 <option value="15-30">15 y 30</option>
                                 <option value="14-28">14 y 28</option>
                                 <option value="13-27">13 y 27</option>
+                                <option value="exact_14">Cada 14 días (Cashea)</option>
+                                <option value="exact_15">Cada 15 días</option>
                               </select>
                             ) : freq === 'triweekly' ? (
                               <select
@@ -1095,6 +1111,18 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                                  );
                               })()}
                            </div>
+                        )}
+                        {parseInt(String(installments) || '1') > 0 && parseFloat(String(balance) || '0') > 0 && expectedCuotas && expectedCuotas.length > 0 && (
+                          <div className="mt-2 max-h-32 overflow-y-auto space-y-1 pr-1">
+                            {expectedCuotas.map(c => (
+                              <div key={c.key} className="flex justify-between items-center px-2 py-1.5 bg-white dark:bg-slate-900 rounded-lg text-[10px] border border-slate-200 dark:border-slate-700">
+                                 <span className="text-slate-600 dark:text-slate-400 font-medium">Cuota {c.index}: {new Date(c.date + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                                 <span className={c.requiredPay === 0 ? "text-emerald-500 font-bold" : "text-slate-900 dark:text-slate-100 font-bold"}>
+                                   {c.requiredPay === 0 ? 'Pagado' : formatCurrencyExt(c.requiredPay, currency)}
+                                 </span>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
                     )}
@@ -1273,7 +1301,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                   {expectedCuotas.map((cuota, i) => {
                     const isEditing = editingPayment?.recKey === cuota.key;
                     return (
-                      <div key={cuota.key} className={`flex flex-col p-2 rounded-xl border ${cuota.isPaid ? 'bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800/50' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700'}`}>
+                      <div key={`${cuota.key}_${i}`} className={`flex flex-col p-2 rounded-xl border ${cuota.isPaid ? 'bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800/50' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700'}`}>
                         {isEditing ? (
                           <div className="space-y-2">
                             {editingPayment.isPaidState !== false && (

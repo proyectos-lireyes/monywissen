@@ -1,0 +1,116 @@
+--- src/utils/financialEngine.ts
++++ src/utils/financialEngine.ts
+@@ -747,15 +747,38 @@
+     let missedSavings = dayEvents.filter(e => e.amt < 0 && !e.done && e.type === 'savings' && d < todayStr());
+     
+     const applied: any[] = [];
++
++    const applyEvent = (e: any) => {
++        balance += e.amt;
++        
++        if (e.type === 'savings' && e.amt < 0) {
++           savingsAccumulated += Math.abs(e.amt);
++        }
++
++        applied.push({ ...e, date: d, runningBalance: balance });
++
++        if (balance < targetMin && savingsAccumulated > 0) {
++            const autowithdrawKey = `income_autowithdraw_${d}_${e.ref?.id || ''}`;
++            const isDiscarded = overrides[autowithdrawKey] && overrides[autowithdrawKey].discarded;
++            if (!isDiscarded) {
++                const deficit = targetMin - balance;
++                const amtToWithdraw = Math.min(deficit, savingsAccumulated);
++                balance += amtToWithdraw;
++                savingsAccumulated -= amtToWithdraw;
++                applied.push({
++                   date: d,
++                   label: 'Rescate de Ahorros',
++                   type: 'rescate_ahorros',
++                   amt: amtToWithdraw,
++                   ref: { id: `autowithdraw_${d}`, name: 'Rescate de Ahorros', effectiveColor: '#0ea5e9' },
++                   originalDate: d,
++                   done: overrides[autowithdrawKey] ? !!overrides[autowithdrawKey].done : false,
++                   runningBalance: balance,
++                   isDelayed: false,
++                   insufficientFunds: false,
++                   savingsAccumulated,
++                });
++            }
++        }
++    };
+     
+-    for (const e of incomes) {
+-        balance += e.amt;
+-        applied.push({ ...e, date: d, runningBalance: balance });
+-    }
+-    for (const e of strictOut) {
+-        balance += e.amt;
+-        applied.push({ ...e, date: d, runningBalance: balance });
+-    }
++    for (const e of incomes) applyEvent(e);
++    for (const e of strictOut) applyEvent(e);
+     for (const e of missedSavings) {
+         applied.push({ ...e, date: d, amt: 0, label: `${e.label} (Omitido)`, runningBalance: balance, isDiscarded: true });
+     }
+@@ -798,8 +821,7 @@
+                  e.isDelayed = true;
+              }
+              e.optimizedFrom = e.originalDate;
+-             balance += e.amt;
+-             applied.push({ ...e, date: d, runningBalance: balance });
++             applyEvent(e);
+           } else {
+              // If we can't pay it, it waits. Only mark it delayed if its original date has passed or is today.
+              if (isDue) {
+@@ -813,32 +835,6 @@
+        delayedItems = newDelayed;
+     }
+     
+-    // First, process savings accumulations so they are available for rescue
+-    applied.forEach(e => {
+-      if (e.type === 'savings' && e.amt < 0) {
+-        savingsAccumulated += Math.abs(e.amt);
+-      }
+-    });
+-
+-    // Auto-withdraw from savings if strict items broke the cushion
+-    let rescueEvent = null;
+-    if (balance < targetMin && savingsAccumulated > 0) {
+-      const autowithdrawKey = `income_autowithdraw_${d}_${d}`;
+-      const isDiscarded = overrides[autowithdrawKey] && overrides[autowithdrawKey].discarded;
+-         
+-      if (!isDiscarded) {
+-          const deficit = targetMin - balance;
+-          const amountToWithdraw = Math.min(deficit, savingsAccumulated);
+-          balance += amountToWithdraw;
+-          savingsAccumulated -= amountToWithdraw;
+-             
+-          rescueEvent = {
+-            date: d,
+-            label: 'Rescate de Ahorros',
+-            type: 'income',
+-            amt: amountToWithdraw,
+-            ref: { id: `autowithdraw_${d}`, name: 'Rescate de Ahorros', effectiveColor: '#0ea5e9' },
+-            originalDate: d,
+-            done: overrides[autowithdrawKey] ? !!overrides[autowithdrawKey].done : false,
+-            balance,
+-            isDelayed: false,
+-            insufficientFunds: false,
+-            savingsAccumulated,
+-          };
+-      }
+-    }
+-
+     // Finalize applied events WITH running balance
+     applied.forEach(e => {
+@@ -849,10 +845,6 @@
+         savingsAccumulated,
+       });
+     });
+-
+-    if (rescueEvent) {
+-      plan.push(rescueEvent);
+-    }
+ 
+     if (d === endD && delayedItems.length > 0) {
+       delayedItems.forEach(e => {

@@ -1,0 +1,14 @@
+--- src/utils/financialEngine.ts
++++ src/utils/financialEngine.ts
+@@ -839,6 +839,12 @@
+              // If it's in the future, we just leave it alone so it gets processed naturally.
+           }
+        }
++       delayedItems = newDelayed;
++    }
++    
++    // Finalize applied events WITH running balance
++    applied.forEach(e => {
+       const stepBalance = e.runningBalance !== undefined ? e.runningBalance : balance;
+       plan.push({
+         ...e,

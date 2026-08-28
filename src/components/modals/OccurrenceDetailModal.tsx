@@ -50,6 +50,14 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
         itemTitle = targetItem.name;
         baseAmount = parseFloat(targetItem.amount || 0);
         itemCurrency = targetItem.currency || 'USD_BCV';
+      } else if (refId?.startsWith('autowithdraw_')) {
+        const plan = calculateProjections(profile, exchangeRates);
+        const occurrence = plan.find(p => p.ref.id === refId && p.type === 'income' && p.originalDate === originalDate);
+        if (occurrence) {
+           itemTitle = occurrence.label || 'Rescate de Ahorros';
+           baseAmount = Math.abs(occurrence.plannedAmt || occurrence.amt || 0);
+           itemCurrency = 'USD_BCV';
+        }
       }
     } else if (type === 'expense') {
       targetItem = (profile.expenses || []).find(e => e.id === refId);
@@ -80,14 +88,6 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
            itemCurrency = 'USD_BCV';
         }
       }
-    } else if (type === 'income' && refId?.startsWith('autowithdraw_')) {
-      const plan = calculateProjections(profile, exchangeRates);
-      const occurrence = plan.find(p => p.ref.id === refId && p.type === 'income' && p.originalDate === originalDate);
-      if (occurrence) {
-         itemTitle = occurrence.label || 'Rescate de Ahorros';
-         baseAmount = Math.abs(occurrence.plannedAmt || occurrence.amt || 0);
-         itemCurrency = 'USD_BCV';
-      }
     } else if (type === 'compensation') {
       const plan = calculateProjections(profile, exchangeRates);
       const occurrence = plan.find(p => p.type === 'compensation' && p.originalDate === originalDate);
@@ -96,6 +96,16 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
          baseAmount = Math.abs(occurrence.plannedAmt || occurrence.amt || 0);
          itemCurrency = 'USD_BCV';
       }
+    }
+  }
+
+  if (!baseAmount && !itemTitle) {
+    const plan = calculateProjections(profile, exchangeRates);
+    const occurrence = plan.find(p => p.type === type && p.ref?.id === refId && p.originalDate === originalDate);
+    if (occurrence) {
+       itemTitle = occurrence.label;
+       baseAmount = Math.abs(occurrence.plannedAmt || occurrence.amt || 0);
+       itemCurrency = 'USD_BCV';
     }
   }
 
@@ -114,6 +124,15 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
   );
 
   const remainingUsd = Math.max(0, plannedUsdAmount - partialsSum);
+
+  useEffect(() => {
+    if (isOpen && originalDate) {
+      setActualDate(planDate || originalDate);
+      setPostponeDate(planDate || originalDate);
+      setShowCustomPay(false);
+      setShowPostponeInput(false);
+    }
+  }, [isOpen, originalDate, planDate]);
 
   // Initialize input amount based on selected currency
   useEffect(() => {

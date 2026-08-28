@@ -84,6 +84,10 @@ export const MonySharedView: React.FC = () => {
   const [groupExpenseAmount, setGroupExpenseAmount] = useState('');
   const [groupExpenseCurrency, setGroupExpenseCurrency] = useState<'USD_BCV' | 'EUR_BCV' | 'USDT' | 'BS'>('USD_BCV');
   const [groupExpensePaidBy, setGroupExpensePaidBy] = useState('');
+  
+  const [genericConfirm, setGenericConfirm] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  const [genericPrompt, setGenericPrompt] = useState<{ title: string; defaultValue?: string; placeholder?: string; onConfirm: (val: string) => void } | null>(null);
+  const [promptInputValue, setPromptInputValue] = useState('');
 
   // Contact Creation & QR Modal state
   const [showAddContactModal, setShowAddContactModal] = useState(false);
@@ -256,17 +260,95 @@ export const MonySharedView: React.FC = () => {
   };
 
   const handleAddParticipantToGroup = (groupIdx: number) => {
-    const name = prompt('Nombre o Correo de la persona a agregar a este grupo:');
-    if (!name || !name.trim()) return;
-    const trimmed = name.trim();
-    updateProfileData(draft => {
-      if (draft.sharedAccounts && draft.sharedAccounts[groupIdx]) {
-        if (!draft.sharedAccounts[groupIdx].participants.includes(trimmed)) {
-          draft.sharedAccounts[groupIdx].participants.push(trimmed);
-        }
+    setGenericPrompt({
+      title: 'Nombre o Correo de la persona a agregar a este grupo:',
+      placeholder: 'Ej. Juan, maria@email.com',
+      onConfirm: (name) => {
+        if (!name || !name.trim()) return;
+        const trimmed = name.trim();
+        updateProfileData(draft => {
+          if (draft.sharedAccounts && draft.sharedAccounts[groupIdx]) {
+            if (!draft.sharedAccounts[groupIdx].participants.includes(trimmed)) {
+              draft.sharedAccounts[groupIdx].participants.push(trimmed);
+            }
+          }
+        });
+        showToast(`"${trimmed}" agregado al grupo`, '👤');
       }
     });
-    showToast(`"${trimmed}" agregado al grupo`, '👤');
+  };
+
+  const handleEditParticipantInGroup = (groupIdx: number, oldName: string) => {
+    setGenericPrompt({
+      title: 'Editar nombre del integrante:',
+      defaultValue: oldName,
+      onConfirm: (newName) => {
+        if (!newName || !newName.trim() || newName.trim() === oldName) return;
+        const trimmed = newName.trim();
+        updateProfileData(draft => {
+          if (draft.sharedAccounts && draft.sharedAccounts[groupIdx]) {
+            const group = draft.sharedAccounts[groupIdx];
+            const pIndex = group.participants.indexOf(oldName);
+            if (pIndex !== -1) {
+              group.participants[pIndex] = trimmed;
+              if (group.participantStatus && group.participantStatus[oldName]) {
+                group.participantStatus[trimmed] = group.participantStatus[oldName];
+                delete group.participantStatus[oldName];
+              }
+              if (group.expenses) {
+                group.expenses.forEach((e: any) => {
+                  if (e.paidBy === oldName) e.paidBy = trimmed;
+                });
+              }
+            }
+          }
+        });
+        showToast(`Nombre actualizado a "${trimmed}"`, '✏️');
+      }
+    });
+  };
+
+
+  const handleDeleteGroup = (groupIdx: number) => {
+    setGenericConfirm({
+      message: '¿Estás seguro de que deseas eliminar este grupo? Toda la información de gastos se perderá para todos los integrantes.',
+      onConfirm: () => {
+        updateProfileData(draft => {
+          if (draft.sharedAccounts && draft.sharedAccounts[groupIdx]) {
+            draft.sharedAccounts.splice(groupIdx, 1);
+          }
+        });
+        setSelectedGroupIdx(null);
+        showToast('Grupo eliminado exitosamente', '🗑️');
+      }
+    });
+  };
+
+  const handleRemoveParticipantFromGroup = (groupIdx: number, participantName: string) => {
+    const myAlias = profile.settings.myAlias || 'Yo';
+    if (participantName === myAlias) {
+      showToast('No puedes eliminarte a ti mismo del grupo.', '⚠️');
+      return;
+    }
+    
+    setGenericConfirm({
+      message: `¿Eliminar a ${participantName} del grupo? Se borrarán también los gastos que haya registrado.`,
+      onConfirm: () => {
+        updateProfileData(draft => {
+          if (draft.sharedAccounts && draft.sharedAccounts[groupIdx]) {
+            const group = draft.sharedAccounts[groupIdx];
+            group.participants = group.participants.filter((p: string) => p !== participantName);
+            if (group.expenses) {
+              group.expenses = group.expenses.filter((e: any) => e.paidBy !== participantName);
+            }
+            if (group.participantStatus && group.participantStatus[participantName]) {
+              delete group.participantStatus[participantName];
+            }
+          }
+        });
+        showToast(`"${participantName}" eliminado del grupo`, '🗑️');
+      }
+    });
   };
 
   const openAddGroupExpenseModal = (groupIdx: number) => {
@@ -554,35 +636,48 @@ export const MonySharedView: React.FC = () => {
   };
 
   const handleRegisterPayment = (loanId: string, currentPending: number) => {
-    const amtStr = prompt(`Monto a abonar (Pendiente: ${formatCurrency(currentPending)}):`);
-    const amount = parseFloat(amtStr || '0');
-    if (!amount || amount <= 0 || amount > currentPending) return;
-
-    updateProfileData(draft => {
-      if (!draft.p2p) return;
-      const loan = draft.p2p.find(l => l.id === loanId);
-      if (loan) {
-        loan.pendingBalance = (loan.pendingBalance ?? loan.amount) - amount;
-        if (loan.pendingBalance <= 0) {
-          loan.status = 'closed';
-        }
+    setGenericPrompt({
+      title: `Monto a abonar (Pendiente: ${formatCurrency(currentPending)}):`,
+      placeholder: 'Ej. 20',
+      onConfirm: (amtStr) => {
+        const amount = parseFloat(amtStr || '0');
+        if (!amount || amount <= 0 || amount > currentPending) return;
+        
+        updateProfileData(draft => {
+          if (!draft.p2p) return;
+          const loan = draft.p2p.find(l => l.id === loanId);
+          if (loan) {
+            loan.pendingBalance = (loan.pendingBalance ?? loan.amount) - amount;
+            if (loan.pendingBalance <= 0) {
+              loan.status = 'closed';
+            }
+          }
+        });
+        showToast('Abono registrado', '✅');
       }
     });
-    showToast('Abono registrado', '✅');
   };
 
   const handleAddContact = () => {
-    const alias = prompt('Alias o nombre del contacto:');
-    if (!alias) return;
-    const email = prompt('Correo del contacto:');
-    if (!email) return;
-
-    updateProfileData(draft => {
-      draft.settings.contacts = draft.settings.contacts || [];
-      draft.settings.contacts.push({ alias, email });
+    setGenericPrompt({
+      title: 'Alias o nombre del contacto:',
+      onConfirm: (alias) => {
+        if (!alias) return;
+        setTimeout(() => {
+          setGenericPrompt({
+            title: `Correo de "${alias}":`,
+            onConfirm: (email) => {
+              if (!email) return;
+              updateProfileData(draft => {
+                draft.settings.contacts = draft.settings.contacts || [];
+                draft.settings.contacts.push({ alias, email });
+              });
+              showToast(`Contacto "${alias}" guardado`, '🪪');
+            }
+          });
+        }, 100);
+      }
     });
-
-    showToast(`Contacto "${alias}" guardado`, '🪪');
   };
 
   const handleFindOnNetwork = () => {
@@ -772,9 +867,14 @@ export const MonySharedView: React.FC = () => {
                       >
                         ❮ Volver a Grupos
                       </button>
-                      <h3 className="text-sm font-black text-slate-900 dark:text-slate-100">
-                        Grupo: {group.name}
-                      </h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-black text-slate-900 dark:text-slate-100">
+                          {group.name}
+                        </h3>
+                        <button onClick={() => handleDeleteGroup(selectedGroupIdx)} className="p-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 dark:bg-rose-900/30 dark:hover:bg-rose-900/50 transition-colors" title="Eliminar Grupo">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                       <button
                         onClick={() => openAddGroupExpenseModal(selectedGroupIdx)}
                         className="px-3 py-1.5 bg-blue-600 text-white rounded-xl text-xs font-semibold shadow-xs hover:bg-blue-700 transition-colors"
@@ -831,12 +931,25 @@ export const MonySharedView: React.FC = () => {
                             statusIcon = ' ❌';
                             statusClass = ' border-rose-300 dark:border-rose-700/50';
                           }
+                          
+                          const myAlias = profile.settings.myAlias || 'Yo';
+                          const isMe = p === myAlias;
 
                           return (
-                            <span key={pIdx} className={`px-2.5 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1 ${statusClass}`}>
-                              👤 {p}
+                            <div key={pIdx} className={`px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 ${statusClass}`}>
+                              <span>👤 {p}</span>
                               <span className="text-[10px]">{statusIcon}</span>
-                            </span>
+                              {!isMe && (
+                                <div className="flex items-center gap-0.5 border-l border-slate-200 dark:border-slate-700 pl-1.5 ml-0.5">
+                                  <button onClick={() => handleEditParticipantInGroup(selectedGroupIdx, p)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-500 rounded transition-colors">
+                                    <Pencil className="w-3 h-3" />
+                                  </button>
+                                  <button onClick={() => handleRemoveParticipantFromGroup(selectedGroupIdx, p)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors">
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           );
                         })}
                       </div>
@@ -2066,6 +2179,77 @@ export const MonySharedView: React.FC = () => {
           onClose={() => setShowQRCamera(false)}
           onScanSuccess={handleQRScanSuccess}
         />
+      )}
+
+      {/* Generic Confirm Dialog */}
+      {genericConfirm && (
+        <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full shadow-2xl space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              ⚠️ Confirmar Acción
+            </h3>
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              {genericConfirm.message}
+            </p>
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => setGenericConfirm(null)}
+                className="flex-1 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold hover:bg-slate-200 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  genericConfirm.onConfirm();
+                  setGenericConfirm(null);
+                }}
+                className="flex-1 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Generic Prompt Dialog */}
+      {genericPrompt && (
+        <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full shadow-2xl space-y-4">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+              {genericPrompt.title}
+            </h3>
+            <input
+              type="text"
+              autoFocus
+              id="genericPromptInput"
+              defaultValue={genericPrompt.defaultValue || ''}
+              placeholder={genericPrompt.placeholder || ''}
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100"
+            />
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => {
+                  setGenericPrompt(null);
+                }}
+                className="flex-1 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold hover:bg-slate-200 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  const el = document.getElementById('genericPromptInput');
+                  const val = el ? el.value : '';
+                  genericPrompt.onConfirm(val);
+                  setGenericPrompt(null);
+                }}
+                className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+              >
+                Aceptar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -114,7 +114,7 @@ const AppContent: React.FC = () => {
       
       // Resumen de Saldo
       const plan = calculateProjections(profile, exchangeRates);
-      const minBalance = plan.reduce((min, p) => p.balance < min ? p.balance : min, profile.settings.openingBalance || 0);
+      const minBalance = plan.reduce((min, p) => p.balance < min ? p.balance : min, plan.length > 0 ? plan[0].balance : (profile.settings.openingBalance || 0));
       const lastBalance = plan.length > 0 ? plan[plan.length - 1].balance : profile.settings.openingBalance || 0;
       
       doc.setFontSize(14);
@@ -126,7 +126,7 @@ const AppContent: React.FC = () => {
         head: [['Saldo Inicial', 'Saldo Final Proyectado', 'Saldo Mínimo Proyectado']],
         body: [
           [
-            formatCurrency(profile.settings.openingBalance || 0),
+            formatCurrency(plan.length > 0 ? plan[0].balance : (profile.settings.openingBalance || 0)),
             formatCurrency(lastBalance),
             formatCurrency(minBalance)
           ]
