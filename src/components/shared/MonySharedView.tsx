@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { getUserProfileByEmail } from '../../utils/firebase';
 import { calculateSharedSettlement, formatCurrency, formatDateStr, todayStr } from '../../utils/financialEngine';
 import { QRCodeImage } from '../common/QRCodeImage';
 import { QRScanner } from '../common/QRScanner';
@@ -55,6 +56,7 @@ export const MonySharedView: React.FC = () => {
 
   // Selected Contact Detail Modal state
   const [selectedContactDetails, setSelectedContactDetails] = useState<Contact | null>(null);
+  const [avatarViewerState, setAvatarViewerState] = useState<{isOpen: boolean, url: string | null, title: string, canEdit: boolean, onUpload?: (b64: string) => void, onDelete?: () => void}>({isOpen: false, url: null, title: '', canEdit: false});
 
   // Abono Modal state
   const [abonoLoanId, setAbonoLoanId] = useState<string | null>(null);
@@ -95,6 +97,7 @@ export const MonySharedView: React.FC = () => {
   const [showQRScanModal, setShowQRScanModal] = useState(false);
   const [showQRCamera, setShowQRCamera] = useState(false);
   const [qrScanInput, setQrScanInput] = useState('');
+  const [contactAvatars, setContactAvatars] = useState<Record<string, string>>({});
   const [contactAliasInput, setContactAliasInput] = useState('');
   const [contactEmailInput, setContactEmailInput] = useState('');
   const [contactPhoneInput, setContactPhoneInput] = useState('');
@@ -934,9 +937,11 @@ export const MonySharedView: React.FC = () => {
                           
                           const myAlias = profile.settings.myAlias || 'Yo';
                           const isMe = p === myAlias;
-
+                          const ctData = isMe ? profile : profile.settings.contacts?.find(c => c.alias === p);
+                          const pAvatar = ctData?.avatar;
                           return (
                             <div key={pIdx} className={`px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 ${statusClass}`}>
+                              {pAvatar && <img src={pAvatar} alt={p} className="w-4 h-4 rounded-full object-cover inline-block" />}
                               <span>👤 {p}</span>
                               <span className="text-[10px]">{statusIcon}</span>
                               {!isMe && (
@@ -1200,8 +1205,8 @@ export const MonySharedView: React.FC = () => {
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-black text-xs flex items-center justify-center border border-indigo-200 dark:border-indigo-800 overflow-hidden shrink-0">
-                      {c.avatar ? (
-                        <img src={c.avatar} alt={c.alias} className="w-full h-full object-cover" />
+                      {(c.avatar || contactAvatars[c.email]) ? (
+                        <img src={c.avatar || contactAvatars[c.email]} alt={c.alias} className="w-full h-full object-cover" />
                       ) : (
                         c.alias.slice(0, 2).toUpperCase()
                       )}
@@ -2238,7 +2243,7 @@ export const MonySharedView: React.FC = () => {
               </button>
               <button
                 onClick={() => {
-                  const el = document.getElementById('genericPromptInput');
+                  const el = document.getElementById('genericPromptInput') as HTMLInputElement;
                   const val = el ? el.value : '';
                   genericPrompt.onConfirm(val);
                   setGenericPrompt(null);

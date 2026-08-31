@@ -24,7 +24,7 @@ function getDefaultSeed(): AppStateData {
           planEnd: new Date(Date.now() + 86400000 * 60).toISOString().slice(0, 10),
           minBalance: 50,
           delayDays: 7,
-          openingBalance: 0,
+          openingBalance: undefined,
           freeSpend: 0,
           notifTime: '08:00',
           defaultChart: 0,

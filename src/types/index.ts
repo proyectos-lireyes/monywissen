@@ -11,7 +11,7 @@ export interface UserSettings {
   planEnd: string;   // YYYY-MM-DD
   minBalance: number;
   delayDays: number;
-  openingBalance: number;
+  openingBalance?: number;
   freeSpend: number;
   autoSaveThreshold?: number;
   myEmail?: string;
@@ -249,6 +249,8 @@ export interface AuthUser {
 }
 
 export interface PlanOccurrence {
+  isGhost?: boolean;
+  rescates?: number;
   date: string;
   label: string;
   type: string;

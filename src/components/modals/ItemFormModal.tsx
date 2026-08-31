@@ -245,6 +245,9 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       if (editingPayment.isPaidState === false) {
         current.actualDate = editingPayment.date;
         current.userPostponed = true;
+        current.plannedAmt = usdVal;
+        current.rawPayAmount = rawAmt;
+        current.payCurrency = editingPayment.currency;
       } else {
         if (editingPayment.partialIdx !== undefined) {
             if (current.partials && current.partials[editingPayment.partialIdx]) {

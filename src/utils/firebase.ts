@@ -285,3 +285,25 @@ export async function registerWithEmailFirebase(email: string, password: string,
     throw error;
   }
 }
+
+export async function getUserProfileByEmail(email: string) {
+  try {
+    const userRef = doc(db, 'users', email.toLowerCase().trim());
+    const docSnap = await getDoc(userRef);
+    if (docSnap.exists()) {
+      return docSnap.data();
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function updateUserAvatar(email: string, avatarDataUrl: string | null) {
+  try {
+    const userRef = doc(db, 'users', email.toLowerCase().trim());
+    await setDoc(userRef, { avatar: avatarDataUrl }, { merge: true });
+  } catch (e) {
+    console.error(e);
+  }
+}

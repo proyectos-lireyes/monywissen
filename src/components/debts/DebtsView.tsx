@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { Confetti } from '../shared/Confetti';
 import { formatCurrency, getRemainingDebtAmount, getDebtTotalPaid } from '../../utils/financialEngine';
 import { Plus, Building2, Edit2, ShieldAlert, Sparkles, Download, Layers, Trash2 } from 'lucide-react';
 
@@ -354,12 +355,15 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
               {/* Debt Cards */}
               {activeDebts.map(item => {
                 const realIndex = debts.findIndex(d => d.id === item.id);
-                const remaining = getRemainingDebtAmount(item, overrides, exchangeRates);
-                const original = remaining + getDebtTotalPaid(item, overrides, exchangeRates);
+                
+                const plan = calculateAmortizationPlan(item, overrides, profile.settings.customDebts || [], undefined, exchangeRates);
+                const remaining = plan.reduce((acc, p) => acc + (p.requiredPay || 0), 0);
                 const paid = getDebtTotalPaid(item, overrides, exchangeRates);
+                const original = remaining + paid;
                 const progressPct = original > 0 ? Math.min(100, Math.round((paid / original) * 100)) : 0;
-                const installmentsCount = item.installments || 1;
-                const monthlyInstallment = item.amount || item.minPay || 0;
+                const isCleared = progressPct === 100;
+                const installmentsCount = plan.length;
+                const monthlyInstallment = plan.length > 0 ? plan[0].expectedAmount : (item.amount || item.minPay || 0);
 
                 return (
                   <div

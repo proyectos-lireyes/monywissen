@@ -112,7 +112,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalDebt = (profile.debts || []).reduce((acc, d) => acc + convertAmount(getRemainingDebtAmount(d, profile.overrides, exchangeRates), d.currency), 0);
 
   // Prepare Recharts Data
-  const chartDataMap: Record<string, { date: string; label: string; balance: number; income: number; expense: number; debt: number; totalEgresos: number; netAvailable: number; items: any[]; optimizedAdelantados?: number; optimizedAtrasados?: number; deficit?: number; plannedIncome: number; plannedEgresos: number; plannedNetFlow?: number; }> = {};
+  const chartDataMap: Record<string, { date: string; label: string; balance: number; income: number; expense: number; debt: number; totalEgresos: number; netAvailable: number; items: any[]; optimizedAdelantados?: number; optimizedAtrasados?: number; deficit?: number; plannedIncome: number; plannedEgresos: number; plannedNetFlow?: number;
+  rescates?: number; }> = {};
 
   // Initialize all dates in range
   const allDates = datesBetween(profile.settings.planStart, profile.settings.planEnd);

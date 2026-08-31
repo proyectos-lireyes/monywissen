@@ -18,6 +18,7 @@ import { OccurrenceDetailModal } from './components/modals/OccurrenceDetailModal
 import { ProfileModal } from './components/modals/ProfileModal';
 import { AuthModal } from './components/auth/AuthModal';
 import { OnboardingModal } from './components/modals/OnboardingModal';
+import { InitialBalanceModal } from './components/modals/InitialBalanceModal';
 import { LoginScreen } from './components/auth/LoginScreen';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -279,6 +280,7 @@ const AppContent: React.FC = () => {
 
       {/* Onboarding Modal */}
       <OnboardingModal />
+      <InitialBalanceModal />
     </div>
   );
 };

@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { AvatarViewerModal } from '../modals/AvatarViewerModal';
+import { updateUserAvatar } from '../../utils/firebase';
 import { Menu, Printer, Bell, ArrowRightLeft, X, ExternalLink, ShieldAlert, Clock, Handshake, Download } from 'lucide-react';
 import { CurrencyModal } from '../modals/CurrencyModal';
 import { AppUpdaterModal } from '../updater/AppUpdaterModal';
@@ -18,6 +20,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 }) => {
   const { activeView, profile, currentProfileName, setActiveView, exchangeRates, state, updateState } = useApp();
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
+  const [avatarViewerOpen, setAvatarViewerOpen] = useState(false);
   const [showNotifMenu, setShowNotifMenu] = useState(false);
   const [showUpdaterModal, setShowUpdaterModal] = useState(false);
 
@@ -236,7 +239,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           {/* User Profile Avatar */}
           <div className="relative">
             <button
-              onClick={onOpenProfile}
+              onClick={() => setAvatarViewerOpen(true)}
               className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 border border-blue-300 font-bold text-xs flex items-center justify-center overflow-hidden hover:scale-105 transition-transform"
               title={state.authUser ? `Perfil (${state.authUser.email})` : 'Gestionar Perfil'}
             >
@@ -254,7 +257,22 @@ export const TopBar: React.FC<TopBarProps> = ({
             )}
           </div>
         </div>
-      </header>
+            <AvatarViewerModal 
+        isOpen={avatarViewerOpen}
+        onClose={() => setAvatarViewerOpen(false)}
+        imageUrl={profile.avatar || null}
+        title={currentProfileName}
+        canEdit={true}
+        onImageUpload={(b64) => {
+          updateProfileData(draft => { draft.avatar = b64; });
+          if (state.authUser?.email) updateUserAvatar(state.authUser.email, b64);
+        }}
+        onImageDelete={() => {
+          updateProfileData(draft => { delete draft.avatar; });
+          if (state.authUser?.email) updateUserAvatar(state.authUser.email, null);
+        }}
+      />
+    </header>
 
       {/* Currency & Exchange Rates Modal */}
       <CurrencyModal

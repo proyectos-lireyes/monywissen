@@ -291,6 +291,9 @@ export function calculateAmortizationPlan(
     const ov = overrides[key] || {};
     
     let expectedAmount = pay;
+    if (ov.plannedAmt !== undefined) {
+      expectedAmount = getAmtInDebtCurrency(debt, parseFloat(String(ov.plannedAmt)), ov.rawPayAmount, ov.payCurrency, exchangeRates);
+    }
     let isPaid = false;
     let paidAmt = 0;
     let isCoveredByExplicit = false;
@@ -657,50 +660,79 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
   let futureEvents: any[] = [];
   
   const allDatesList = datesBetween(startD, endD);
-  for (const d of allDatesList) {
-     futureEvents.push(...(map[d] || []));
-  }
-
-  // Auto-calculate Required Initial Balance
+  
   let autoCalculatedStart = false;
-   
+  // If openingBalance is exactly 0 or undefined/null, we run the deficit calculator
   if (settings.openingBalance !== undefined && settings.openingBalance !== null && settings.openingBalance !== 0) {
     balance = settings.openingBalance;
   } else {
-    autoCalculatedStart = true;
-       
+    balance = 0;
+    
+    // Find the first income date
+    let firstIncomeDate = null;
+    for (const d of allDatesList) {
+        const dayEvents = map[d] || [];
+        if (dayEvents.some(e => (e?.amt || 0) > 0 && e?.type === 'income')) {
+            firstIncomeDate = d;
+            break;
+        }
+    }
+    
+    // Calculate deficit before first income (or up to 45 days if no income)
     let simBalance = 0;
     let minSimBalance = 0;
+    let daysSearched = 0;
     
     for (const d of allDatesList) {
-      const dayEvents = map[d] || [];
-      let dayIncome = 0;
-      let dayExpense = 0;
-      
-      for (const e of dayEvents) {
-        if ((e?.amt || 0) > 0 && e?.type !== 'compensation') {
-           dayIncome += e.amt;
-        } else if ((e?.amt || 0) < 0 && e?.type !== 'savings') {
-           dayExpense += e.amt;
+        if (daysSearched > 45) break;
+        if (firstIncomeDate && d > firstIncomeDate) break; // only look BEFORE or ON first income
+        
+        daysSearched++;
+        const dayEvents = map[d] || [];
+        let dayExpense = 0;
+        let dayIncome = 0;
+        
+        for (const e of dayEvents) {
+            if ((e?.amt || 0) < 0 && e?.type !== 'savings') {
+                dayExpense += e.amt;
+            } else if ((e?.amt || 0) > 0) {
+                dayIncome += e.amt;
+            }
         }
-      }
-      
-      // Apply expenses first in this simulation to find the absolute lowest point
-      simBalance += dayExpense;
-      if (simBalance < minSimBalance) {
-        minSimBalance = simBalance;
-      }
-      
-      // Then apply income
-      simBalance += dayIncome;
-      
-      // If we received income today, we stop calculating the deficit
-      if (dayIncome > 0) {
-        break;
-      }
+        
+        simBalance += dayExpense;
+        if (simBalance < minSimBalance) minSimBalance = simBalance;
+        simBalance += dayIncome;
+        if (dayIncome > 0) break; 
     }
+    
+    const requiredInitial = Math.abs(minSimBalance) + (settings.minBalance || 0);
+    
+    // Inject required initial fund as a pending income if it's > 0
+    if (requiredInitial > 0) {
+        const key = `income_required_starting_fund_${startD}`;
+        const ov = overrides[key] || {};
+        
+        if (!ov.discarded) {
+            const isDone = !!ov.done;
+            const amtToInject = isDone && ov.amt !== undefined ? parseFloat(String(ov.amt)) : requiredInitial;
+            
+            if (!map[startD]) map[startD] = [];
+            map[startD].unshift({
+                label: 'Fondo Requerido para Iniciar',
+                type: 'income',
+                amt: amtToInject,
+                ref: { id: 'required_starting_fund', name: 'Fondo Requerido', effectiveColor: '#f59e0b' },
+                originalDate: startD,
+                done: isDone,
+                isGhost: false
+            });
+        }
+    }
+  }
 
-    balance = Math.abs(minSimBalance) + (settings.minBalance || 0);
+  for (const d of allDatesList) {
+     futureEvents.push(...(map[d] || []));
   }
   
   const targetMin = settings.minBalance || 0;
@@ -730,10 +762,20 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
        const isDone = (overrides[autosaveKey] && overrides[autosaveKey].done) || (overrides[missedKey] && overrides[missedKey].done);
        
        if (!isDiscarded) {
-           const excess = balance - targetMin;
+           // Calculate pending delayed expenses that we are about to pay today
+           const pendingDelayed = delayedItems.reduce((acc, item) => acc + (item?.amt || 0), 0); // amt is negative
            
-           if (d < todayStr() && !isDone) {
-               balance = targetMin;
+           // Also include flexible expenses that are scheduled for exactly today
+           const todayFlexibleOut = futureEvents.filter(e => (e?.targetDate || e?.originalDate) === d && !e?.pulledEarly && (e?.amt || 0) < 0 && !e?.done && !(e?.ref?.strictDate && e?.type !== 'savings') && !(e?.type === 'savings' && d < todayStr()));
+           const todayPending = todayFlexibleOut.reduce((acc, item) => acc + (item?.amt || 0), 0);
+
+           let excess = balance - targetMin + pendingDelayed + todayPending; // Reserve money for the pending delayed and today's flexible expenses
+           if (excess < 0) excess = 0;
+           
+           if (excess === 0 && d >= todayStr()) {
+               // Do nothing if there's no real excess (we need it for the delayed bills)
+           } else if (d < todayStr() && !isDone) {
+               balance -= excess;
                plan.push({
                  date: d,
                  label: 'Ajuste: Excedente gastado (No ahorrado)',
@@ -747,7 +789,7 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
                  savingsAccumulated,
                });
            } else {
-               balance = targetMin;
+               balance -= excess;
                savingsAccumulated += excess;
                plan.push({
                  date: d,

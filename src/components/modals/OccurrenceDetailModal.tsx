@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
-import { formatCurrency, formatDateStr, todayStr, calculateProjections } from '../../utils/financialEngine';
+import { formatCurrency, formatDateStr, todayStr, calculateProjections, calculateAmortizationPlan } from '../../utils/financialEngine';
+import confetti from 'canvas-confetti';
 import { X, CheckCircle2, RotateCcw, Calendar as CalendarIcon, ArrowRightLeft, CreditCard, Pencil, Trash2, Check } from 'lucide-react';
 
 interface OccurrenceDetailModalProps {
@@ -21,7 +22,10 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
   onClose,
 }) => {
   const { profile, updateProfileData, showToast, convertAmount, exchangeRates } = useApp();
-  const [postponeDate, setPostponeDate] = useState(todayStr());
+    const [isCelebrating, setIsCelebrating] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [showConfetti, setShowConfetti] = useState(false);
+const [postponeDate, setPostponeDate] = useState(todayStr());
   const [showPostponeInput, setShowPostponeInput] = useState(false);
   const [partialAmt, setPartialAmt] = useState('');
   const [partialCurrency, setPartialCurrency] = useState('USD_BCV');
@@ -42,75 +46,63 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
   let itemTitle = 'Movimiento Planificado';
   let baseAmount = 0;
   let itemCurrency = 'USD_BCV';
+  let plannedUsdAmount = 0;
 
   if (profile && type && refId) {
-    if (type === 'income') {
-      targetItem = (profile.incomes || []).find(i => i.id === refId);
-      if (targetItem) {
-        itemTitle = targetItem.name;
-        baseAmount = parseFloat(targetItem.amount || 0);
-        itemCurrency = targetItem.currency || 'USD_BCV';
-      } else if (refId?.startsWith('autowithdraw_')) {
-        const plan = calculateProjections(profile, exchangeRates);
-        const occurrence = plan.find(p => p.ref.id === refId && p.type === 'income' && p.originalDate === originalDate);
-        if (occurrence) {
-           itemTitle = occurrence.label || 'Rescate de Ahorros';
-           baseAmount = Math.abs(occurrence.plannedAmt || occurrence.amt || 0);
-           itemCurrency = 'USD_BCV';
-        }
-      }
-    } else if (type === 'expense') {
-      targetItem = (profile.expenses || []).find(e => e.id === refId);
-      if (targetItem) {
-        itemTitle = targetItem.name;
-        baseAmount = parseFloat(targetItem.amount || 0);
-        itemCurrency = targetItem.currency || 'USD_BCV';
-      }
-    } else if (type === 'debt' || type === 'debt_cut' ) {
-      targetItem = (profile.debts || []).find(d => d.id === refId);
-      if (targetItem) {
-        itemTitle = targetItem.name;
-        baseAmount = parseFloat(targetItem.minPay || targetItem.amount || targetItem.balance || 0);
-        itemCurrency = targetItem.currency || 'USD_BCV';
-      }
-    } else if (type === 'savings') {
-      targetItem = (profile.savingsList || []).find(s => s.id === refId);
-      if (targetItem) {
-        itemTitle = `Ahorro: ${targetItem.person}`;
-        baseAmount = parseFloat(targetItem.amount || 0);
-        itemCurrency = targetItem.currency || 'USD_BCV';
-      } else if (refId?.startsWith('autosave_')) {
-        const plan = calculateProjections(profile, exchangeRates);
-        const occurrence = plan.find(p => p.ref.id === refId && p.type === 'savings' && p.originalDate === originalDate);
-        if (occurrence) {
-           itemTitle = occurrence.label || 'Ahorro Automático';
-           baseAmount = Math.abs(occurrence.plannedAmt || occurrence.amt || 0);
-           itemCurrency = 'USD_BCV';
-        }
-      }
-    } else if (type === 'compensation') {
-      const plan = calculateProjections(profile, exchangeRates);
-      const occurrence = plan.find(p => p.type === 'compensation' && p.originalDate === originalDate);
-      if (occurrence) {
-         itemTitle = occurrence.label;
-         baseAmount = Math.abs(occurrence.plannedAmt || occurrence.amt || 0);
-         itemCurrency = 'USD_BCV';
-      }
-    }
-  }
-
-  if (!baseAmount && !itemTitle) {
     const plan = calculateProjections(profile, exchangeRates);
-    const occurrence = plan.find(p => p.type === type && p.ref?.id === refId && p.originalDate === originalDate);
+    let occurrence = plan.find(p => p.type === type && p.ref?.id === refId && p.originalDate === originalDate);
+    
+    // Find raw target item for reference
+    if (type === 'income') targetItem = (profile.incomes || []).find(i => i.id === refId);
+    else if (type === 'expense') targetItem = (profile.expenses || []).find(e => e.id === refId);
+    else if (type === 'debt' || type === 'debt_cut') targetItem = (profile.debts || []).find(d => d.id === refId);
+    else if (type === 'savings') targetItem = (profile.savingsList || []).find(s => s.id === refId);
+
+    if (!occurrence && type === 'debt' && targetItem) {
+      const expectedCuotas = calculateAmortizationPlan(targetItem, profile.overrides || {}, profile.settings?.customDebts || [], undefined, exchangeRates);
+      const cuota = expectedCuotas.find(c => c.date === originalDate);
+      if (cuota) {
+        const cuotaAmtNative = cuota.requiredPay > 0 ? cuota.requiredPay : cuota.expectedAmount;
+        plannedUsdAmount = cuotaAmtNative * (exchangeRates[targetItem.currency] || 1); // convert to USD assuming convAmt logic
+        if (targetItem.currency === 'USD_BCV' || !targetItem.currency) {
+           plannedUsdAmount = cuotaAmtNative;
+        } else {
+           plannedUsdAmount = cuotaAmtNative * (exchangeRates[targetItem.currency] || 1); // No wait, convAmt divides? No, convAmt multiplies for USD? Wait, convAmt is amt * rate. Yes.
+           // Actually, let's just use convertAmount correctly.
+           plannedUsdAmount = convertAmount(cuotaAmtNative, targetItem.currency);
+        }
+        itemTitle = targetItem.name;
+        occurrence = { plannedAmt: plannedUsdAmount, label: itemTitle } as any;
+      }
+    }
+
     if (occurrence) {
-       itemTitle = occurrence.label;
-       baseAmount = Math.abs(occurrence.plannedAmt || occurrence.amt || 0);
-       itemCurrency = 'USD_BCV';
+      itemTitle = occurrence.label;
+      plannedUsdAmount = occurrence.plannedAmt !== undefined ? occurrence.plannedAmt : Math.abs(occurrence.amt || 0);
+      
+      if (targetItem && targetItem.currency) {
+         itemCurrency = targetItem.currency;
+         if (itemCurrency !== 'USD_BCV') {
+            const rate = exchangeRates[itemCurrency] || 1;
+            baseAmount = plannedUsdAmount / rate;
+         } else {
+            baseAmount = plannedUsdAmount;
+         }
+      } else {
+         baseAmount = plannedUsdAmount;
+      }
+    } else if (targetItem) {
+      // Fallback if not found in plan
+      itemTitle = targetItem.name || 'Movimiento';
+      itemCurrency = targetItem.currency || 'USD_BCV';
+      if (type === 'debt' || type === 'debt_cut') {
+        baseAmount = parseFloat(targetItem.minPay || targetItem.amount || targetItem.balance || 0);
+      } else {
+        baseAmount = parseFloat(targetItem.amount || 0);
+      }
+      plannedUsdAmount = convertAmount(baseAmount, itemCurrency);
     }
   }
-
-  // Calculate base USD amount
-  const plannedUsdAmount = convertAmount(baseAmount, itemCurrency);
 
   const key = `${type}_${refId}_${originalDate}`;
   const overrides = profile.overrides || {};
@@ -155,9 +147,8 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
   // Exchange rate display string
   const bsPerUsd = exchangeRates['BS'] ? (1 / exchangeRates['BS']).toFixed(2) : '43.00';
 
-  const handleMarkDone = () => {
+      const finishMarkDone = () => {
     const finalAmountUsd = showCustomPay ? convertedPayUsd : remainingUsd;
-
     updateProfileData(draft => {
       draft.overrides = draft.overrides || {};
       draft.overrides[key] = {
@@ -169,14 +160,49 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
         rawPayAmount: numericInput,
       };
     });
+    const currLabel = payCurrency === 'BS' ? 'Bs' : (payCurrency === 'EUR_BCV' ? '€' : '$');
+    showToast(`Pagado (${currLabel} ${numericInput.toLocaleString()}) → $${finalAmountUsd.toFixed(2)} USD`, '✅');
+    setTimeout(() => onClose(), 1500); // Wait for confetti to finish before closing
+  };
 
+  const handleMarkDone = () => {
+    if (type === 'debt') {
+      setIsCelebrating(true);
+      let p = 0;
+      const interval = setInterval(() => {
+        p += 4;
+        setProgress(p > 100 ? 100 : p);
+        if (p >= 100) {
+          clearInterval(interval);
+          setShowConfetti(true);
+          confetti({
+            particleCount: 150,
+            spread: 70,
+            origin: { y: 0.6 }
+          });
+          finishMarkDone();
+        }
+      }, 30);
+      return;
+    }
+    const finalAmountUsd = showCustomPay ? convertedPayUsd : remainingUsd;
+    updateProfileData(draft => {
+      draft.overrides = draft.overrides || {};
+      draft.overrides[key] = {
+        ...draft.overrides[key],
+        done: true,
+        actualDate: actualDate,
+        amt: finalAmountUsd,
+        payCurrency,
+        rawPayAmount: numericInput,
+      };
+    });
     const currLabel = payCurrency === 'BS' ? 'Bs' : (payCurrency === 'EUR_BCV' ? '€' : '$');
     showToast(`Pagado (${currLabel} ${numericInput.toLocaleString()}) → $${finalAmountUsd.toFixed(2)} USD`, '✅');
     onClose();
   };
 
   const handleDiscard = () => {
-    
     updateProfileData(draft => {
       draft.overrides = draft.overrides || {};
       draft.overrides[key] = {
@@ -282,7 +308,42 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
     onClose();
   };
 
-  return (
+  
+  if (isCelebrating) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 max-w-sm w-full text-center space-y-6 shadow-2xl relative overflow-hidden">
+          {showConfetti && (
+             <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+               <div className="animate-ping absolute w-32 h-32 bg-emerald-400 rounded-full opacity-0"></div>
+               <div className="animate-pulse absolute w-48 h-48 bg-emerald-500 rounded-full opacity-20"></div>
+             </div>
+          )}
+          
+          <div className="space-y-2 relative z-10">
+             <h2 className="text-2xl font-black text-slate-900 dark:text-slate-100">
+               {showConfetti ? '¡Pago Registrado!' : 'Procesando Pago...'}
+             </h2>
+             <p className="text-sm text-slate-500">
+               {showConfetti ? '¡Una deuda menos (o una cuota menos) en tu lista!' : 'Registrando en tu historial financiero'}
+             </p>
+          </div>
+
+          <div className="relative h-4 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden w-full z-10">
+            <div 
+              className="absolute top-0 left-0 h-full bg-emerald-500 transition-all duration-75"
+              style={{ width: `${progress}%` }}
+            ></div>
+          </div>
+          
+          <div className="relative z-10 text-emerald-600 font-black text-xl">
+            {progress}%
+          </div>
+        </div>
+      </div>
+    );
+  }
+return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800 shrink-0">
@@ -618,4 +679,3 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
     </div>
   );
 };
-
