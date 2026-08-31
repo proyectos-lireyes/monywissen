@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Confetti } from '../shared/Confetti';
-import { formatCurrency, getRemainingDebtAmount, getDebtTotalPaid } from '../../utils/financialEngine';
+import { formatCurrency, getRemainingDebtAmount, getDebtTotalPaid, calculateAmortizationPlan } from '../../utils/financialEngine';
 import { Plus, Building2, Edit2, ShieldAlert, Sparkles, Download, Layers, Trash2 } from 'lucide-react';
 
 interface DebtsViewProps {

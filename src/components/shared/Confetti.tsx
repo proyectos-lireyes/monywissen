@@ -22,8 +22,8 @@ export const Confetti: React.FC<{ active: boolean }> = ({ active }) => {
           }}
           animate={{ 
             opacity: 0,
-            x: \`calc(50% + \${(Math.random() - 0.5) * 300}px)\`,
-            y: \`calc(50% + \${(Math.random() - 0.5) * 300}px)\`,
+            x: `calc(50% + ${(Math.random() - 0.5) * 300}px)`,
+            y: `calc(50% + ${(Math.random() - 0.5) * 300}px)`,
             scale: Math.random() * 1.5 + 0.5,
             rotate: Math.random() * 360
           }}

@@ -54,15 +54,15 @@ export const DrawerNav: React.FC<DrawerNavProps> = ({ isOpen, onClose, onExportP
     
     let baseUsd = 0;
     if (activeCurr === 'USD') baseUsd = num;
-    else if (activeCurr === 'USDT') baseUsd = num * safeRate('USDT');
-    else if (activeCurr === 'BS') baseUsd = num * safeRate('BS');
-    else if (activeCurr === 'EUR') baseUsd = num * safeRate('EUR_BCV');
+    else if (activeCurr === 'USDT') baseUsd = num / safeRate('USDT');
+    else if (activeCurr === 'BS') baseUsd = num / safeRate('BS');
+    else if (activeCurr === 'EUR') baseUsd = num / safeRate('EUR_BCV');
     
     let val = 0;
     if (curr === 'USD') val = baseUsd;
-    else if (curr === 'USDT') val = baseUsd / safeRate('USDT');
-    else if (curr === 'BS') val = baseUsd / safeRate('BS');
-    else if (curr === 'EUR') val = baseUsd / safeRate('EUR_BCV');
+    else if (curr === 'USDT') val = baseUsd * safeRate('USDT');
+    else if (curr === 'BS') val = baseUsd * safeRate('BS');
+    else if (curr === 'EUR') val = baseUsd * safeRate('EUR_BCV');
     
     return Number(val.toFixed(2)).toString();
   };
@@ -81,7 +81,7 @@ export const DrawerNav: React.FC<DrawerNavProps> = ({ isOpen, onClose, onExportP
       )}
 
       <aside
-        className={`fixed top-0 left-0 h-full w-[300px] bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 z-50 transform transition-transform duration-300 ease-in-out flex flex-col shadow-2xl ${
+        className={`fixed top-0 left-0 h-full w-[300px] bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 z-50 transform transition-transform duration-300 ease-in-out flex flex-col pt-[env(safe-area-inset-top)] shadow-2xl ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >

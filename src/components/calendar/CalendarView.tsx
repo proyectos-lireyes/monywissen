@@ -350,7 +350,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
             />
           </div>
 
-          <div className="space-y-2.5">
+          <div className="space-y-1.5 sm:space-y-2.5">
             {(() => {
               const filteredPlan = plan
                 .filter(e => {
@@ -392,7 +392,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                       borderLeftWidth: '4px'
                     } : {}}
                     title={e.isGhost ? `Movido al ${formatDateStr(e.date)}` : undefined}
-                    className={`p-3.5 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${!e.isGhost && e.type !== 'opening_balance' ? 'cursor-pointer hover:opacity-80' : e.isGhost ? 'cursor-help opacity-50' : 'opacity-90'} ${
+                    className={`p-2.5 sm:p-3 rounded-xl border transition-all flex flex-col gap-1.5 ${!e.isGhost && e.type !== 'opening_balance' ? 'cursor-pointer hover:opacity-80' : e.isGhost ? 'cursor-help opacity-50' : 'opacity-90'} ${
                       e.isGhost 
                         ? 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'
                         : e.done
@@ -402,67 +402,61 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                         : (!e.ref?.effectiveColor ? 'bg-slate-50/60 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800 hover:border-slate-300' : 'bg-slate-50 dark:bg-slate-900 shadow-sm')
                     }`}
                   >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <p className={`text-xs font-black flex items-center gap-2 ${e.isGhost ? 'text-slate-500 line-through' : 'text-slate-900 dark:text-slate-100'}`}>
-                          {e.label} {e.isGhost && <span className="text-[9px] font-normal no-underline ml-1">(Plan original)</span>}
+                    <div className="flex items-start sm:items-center justify-between gap-2">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-2 overflow-hidden">
+                        <p className={`text-xs font-black flex items-center gap-2 truncate ${e.isGhost ? 'text-slate-500 line-through' : 'text-slate-900 dark:text-slate-100'}`}>
+                          <span className="truncate">{e.label}</span> {e.isGhost && <span className="text-[9px] font-normal no-underline ml-1 shrink-0">(Plan original)</span>}
                           
                           {!e.isGhost && !e.done && e.pulledEarly && (
-                            <span className="text-[9px] bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider flex items-center gap-1" title={`Adelantado desde el ${e.optimizedFrom}`}>⚡ Adelantado</span>
+                            <span className="text-[9px] bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0" title={`Adelantado desde el ${e.optimizedFrom}`}>⚡</span>
                           )}
                           {!e.done && e.isDelayed && !e.insufficientFunds && (
-                            <span className="text-[9px] bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider flex items-center gap-1" title={`Retrasado desde el ${e.optimizedFrom}`}>⚠️ Pospuesto</span>
+                            <span className="text-[9px] bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0" title={`Retrasado desde el ${e.optimizedFrom}`}>⚠️</span>
                           )}
                           {!e.done && e.insufficientFunds && e.amt < 0 && (
-                            <span className="text-[9px] bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider flex items-center gap-1" title="Quiebre / Fondos insuficientes">🚨 Quiebre</span>
+                            <span className="text-[9px] bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0" title="Quiebre / Fondos insuficientes">🚨</span>
                           )}
-
                           {!e.done && e.date < today && (
-                            <span className="text-[9px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded-md uppercase tracking-wider">Atrasado</span>
+                            <span className="text-[9px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded-md uppercase tracking-wider shrink-0">Atrasado</span>
                           )}
                         </p>
-                        {e.done && (
-                          <span className="text-[9px] px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200 rounded-md font-extrabold flex items-center gap-1">
-                            <CheckCircle2 className="w-2.5 h-2.5" /> Listo / Pagado
-                          </span>
-                        )}
+                        <p className="text-[10px] text-slate-500 font-medium shrink-0">
+                          {formatDateStr(e.date)} {e.type && `• ${e.type === 'opening_balance' ? 'Ajuste' : e.type === 'rescate_ahorros' ? 'Rescate' : e.type === 'income' ? 'Ingreso' : e.type === 'expense' ? 'Gasto' : e.type === 'savings' ? 'Ahorro' : 'Deuda'}`}
+                        </p>
                       </div>
-
-                      <p className="text-[10px] text-slate-500 font-medium">
-                        🗓️ {formatDateStr(e.date)}
-                        {e.type && ` • ${e.type === 'opening_balance' ? 'Ajuste de Sistema' : e.type === 'rescate_ahorros' ? 'Rescate de Ahorros' : e.type === 'income' ? 'Ingreso' : e.type === 'expense' ? 'Gasto' : e.type === 'savings' ? 'Ahorro' : 'Deuda/Financiamiento'}`}
-                      </p>
-
-                      {/* Display AVAILABLE BALANCE PRIOR TO INCOME */}
-                      {isIncome && e.type !== 'opening_balance' && preIncomeBalance !== null && (
-                        <div className="p-1.5 bg-emerald-100/60 dark:bg-emerald-900/40 rounded-xl border border-emerald-200/80 dark:border-emerald-800/50 inline-block">
-                          <p className="text-[10px] font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1">
-                            💡 <span>Disponible previo al ingreso:</span>
-                            <span className="font-black text-xs text-emerald-700 dark:text-emerald-300">
-                              {formatCurrency(preIncomeBalance)}
-                            </span>
-                          </p>
-                        </div>
-                      )}
-                      
-                      {/* Warning for INSUFFICIENT FUNDS */}
-                      {!e.done && e.insufficientFunds && !isIncome && (
-                        <div className="mt-1 p-2 bg-rose-50 dark:bg-rose-950/40 rounded-lg border border-rose-200 dark:border-rose-900/50">
-                          <p className="text-[10px] font-bold text-rose-700 dark:text-rose-400 leading-tight mb-1">
-                            {e.balance < 0 ? '⚠️ Saldo insuficiente para este pago.' : '⚠️ Este pago rompe tu colchón de seguridad.'}
-                          </p>
-                          <p className="text-[9px] font-medium text-rose-600/80 dark:text-rose-500/80">
-                            Toca aquí para Moverlo o Descartarlo.
-                          </p>
-                        </div>
+                      {e.done && (
+                        <span className="text-[9px] px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200 rounded-md font-extrabold flex items-center gap-1 shrink-0">
+                          <CheckCircle2 className="w-2.5 h-2.5" /> <span className="hidden sm:inline">Listo</span>
+                        </span>
                       )}
                     </div>
+                    
+                    {/* Display AVAILABLE BALANCE PRIOR TO INCOME */}
+                    {isIncome && e.type !== 'opening_balance' && preIncomeBalance !== null && (
+                      <div className="p-1 px-2 bg-emerald-100/60 dark:bg-emerald-900/40 rounded-lg border border-emerald-200/80 dark:border-emerald-800/50 inline-block self-start">
+                        <p className="text-[10px] font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1">
+                          💡 <span>Disp. previo:</span>
+                          <span className="font-black text-xs text-emerald-700 dark:text-emerald-300">
+                            {formatCurrency(preIncomeBalance)}
+                          </span>
+                        </p>
+                      </div>
+                    )}
+                    
+                    {/* Warning for INSUFFICIENT FUNDS */}
+                    {!e.done && e.insufficientFunds && !isIncome && (
+                      <div className="p-1.5 bg-rose-50 dark:bg-rose-950/40 rounded-lg border border-rose-200 dark:border-rose-900/50 self-start">
+                        <p className="text-[10px] font-bold text-rose-700 dark:text-rose-400 leading-tight">
+                          {e.balance < 0 ? '⚠️ Saldo insuficiente' : '⚠️ Rompe tu colchón'}
+                        </p>
+                      </div>
+                    )}
 
-                    <div className="text-right flex sm:flex-col justify-between sm:justify-center items-end border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-200/50 dark:border-slate-700/50">
-                      <p className={`text-xs font-black ${isIncome ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-slate-100'}`}>
+                    <div className="flex items-center justify-between mt-0.5">
+                      <p className={`text-sm font-black ${isIncome ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-slate-100'}`}>
                         {isIncome ? '+' : '-'}{formatCurrency(Math.abs(e.amt))}
                       </p>
-                      <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                      <p className="text-[10px] text-slate-500 font-medium">
                         Saldo: <span className={e.balance < 0 ? 'text-rose-600 font-bold' : 'text-slate-700 dark:text-slate-300 font-bold'}>{formatCurrency(e.balance)}</span>
                       </p>
                     </div>

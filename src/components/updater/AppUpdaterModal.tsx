@@ -20,11 +20,15 @@ export const AppUpdaterModal: React.FC<AppUpdaterModalProps> = ({
   const { isDownloading, progress, downloadSpeed, downloadedMB, totalMB, isCompleted, latestVersion, downloadUrl } = updateState;
 
   const handleInstall = () => {
-    showToast('Abriendo instalador de APK de Android...', '📲');
-    const a = document.createElement('a');
-    a.href = downloadUrl;
-    a.download = `Monywissen-${latestVersion}.apk`;
-    a.click();
+    showToast('Descargando APK de Android...', '📲');
+    if ((window as any).Capacitor && (window as any).Capacitor.isNativePlatform()) {
+      window.open(downloadUrl, '_system');
+    } else {
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `Monywissen-${latestVersion}.apk`;
+      a.click();
+    }
   };
 
   const handleGoToSettings = () => {
