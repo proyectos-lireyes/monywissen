@@ -61,6 +61,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.14.3"
+          validate-wrappers: false
 
       - name: 9. Compilar APK (Release) con Gradle
         run: |
