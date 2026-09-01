@@ -2,6 +2,8 @@ import React from 'react';
 import { Download, RefreshCw, CheckCircle2, Sparkles, X, ArrowDownCircle, Settings } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
+declare const __APP_VERSION__: string;
+
 interface AppUpdaterModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -11,7 +13,7 @@ interface AppUpdaterModalProps {
 export const AppUpdaterModal: React.FC<AppUpdaterModalProps> = ({
   isOpen,
   onClose,
-  currentVersion = 'v1.4.2',
+  currentVersion = typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : 'v1.0.0',
 }) => {
   const { updateState, startBackgroundUpdateDownload, setActiveView, showToast } = useApp();
 

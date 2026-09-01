@@ -229,11 +229,6 @@ const CustomTooltip = ({ active, payload, label }: any) => {
           <span className="font-bold">Ahorros Totales:</span>
           <span className="font-bold">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.savingsAccumulated || 0)}</span>
         </div>
-        
-        <div className="mt-3 bg-blue-50 dark:bg-blue-900/30 border border-blue-100 dark:border-blue-800 p-2 rounded-lg text-center">
-          <p className="text-[11px] text-blue-600 dark:text-blue-400 font-bold">👆 Haz clic en la gráfica</p>
-          <p className="text-[9px] text-blue-500/80 dark:text-blue-400/80 mt-0.5 leading-tight">(Haz clic en el punto azul, no en este recuadro)</p>
-        </div>
       </div>
     );
   }

@@ -23,6 +23,14 @@ jobs:
           node-version: "lts/*"
           cache: "npm"
 
+      - name: 2.5 Auto-Versionado Inteligente
+        run: |
+          BASE_VERSION=$(node -p "require('./package.json').version")
+          MAJOR_MINOR=$(echo $BASE_VERSION | cut -d. -f1,2)
+          NEW_VERSION="$MAJOR_MINOR.${{ github.run_number }}"
+          echo "Aplicando versión automática: $NEW_VERSION"
+          npm version $NEW_VERSION --no-git-tag-version
+
       - name: 3. Instalar Dependencias
         run: npm ci || npm install
 
@@ -87,22 +95,26 @@ jobs:
           path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
 
-      - name: 12. Renombrar APK y Preparar Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/}
-          # Keep a versioned name but also copy to a static name for latest URL
-          cp android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/monywissen-$VERSION.apk
-          mv android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/monywissen-latest.apk
+      - name: 12. Obtener Versión
+        id: get_version
+        run: echo "VERSION=v$(node -p "require('./package.json').version")" >> $GITHUB_ENV
 
-      - name: 13. Crear Release en GitHub (Si es una etiqueta de versión)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: 13. Renombrar APK y Preparar Release
+        run: |
+          mv android/app/build/outputs/apk/release/app-release.apk android/app/build/outputs/apk/release/monywissen-${{ env.VERSION }}.apk
+
+      - name: 14. Crear Release en GitHub (Actualización Continua)
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.VERSION }}
+          name: Monywissen ${{ env.VERSION }}
+          make_latest: true
           files: |
             android/app/build/outputs/apk/release/monywissen-*.apk
           body: |
-            🎉 Nueva versión de Monywissen compilada automáticamente (Release).
+            🎉 Nueva versión de Monywissen compilada automáticamente.
             Descarga el archivo APK e instálalo en tu dispositivo Android.
+            
+            *(Esta versión se actualiza automáticamente con cada cambio en el código).*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

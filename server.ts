@@ -18,8 +18,8 @@ async function startServer() {
   app.get("/api/exchange-rates", async (req, res) => {
     try {
       const [usdRes, eurRes] = await Promise.all([
-        fetch('https://ve.dolarapi.com/v1/dolares/oficial').then(r => r.json()),
-        fetch('https://ve.dolarapi.com/v1/euros/oficial').then(r => r.json())
+        fetch('https://ve.dolarapi.com/v1/dolares').then(r => r.json()),
+        fetch('https://ve.dolarapi.com/v1/euros').then(r => r.json())
       ]);
       res.json({ usd: usdRes, eur: eurRes });
     } catch (err) {

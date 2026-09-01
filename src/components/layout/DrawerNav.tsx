@@ -15,6 +15,8 @@ import {
   Printer
 } from 'lucide-react';
 
+declare const __APP_VERSION__: string;
+
 interface DrawerNavProps {
   isOpen: boolean;
   onClose: () => void;
@@ -22,7 +24,7 @@ interface DrawerNavProps {
 }
 
 export const DrawerNav: React.FC<DrawerNavProps> = ({ isOpen, onClose, onExportPDF }) => {
-  const { activeView, setActiveView, exchangeRates, updateState } = useApp();
+  const { activeView, setActiveView, exchangeRates, updateState, exchangeRatesMeta } = useApp();
   
   const [activeCurr, setActiveCurr] = useState<string>('USD');
   const [rawInput, setRawInput] = useState<string>('1');
@@ -54,17 +56,17 @@ export const DrawerNav: React.FC<DrawerNavProps> = ({ isOpen, onClose, onExportP
     
     let baseUsd = 0;
     if (activeCurr === 'USD') baseUsd = num;
-    else if (activeCurr === 'USDT') baseUsd = num / safeRate('USDT');
-    else if (activeCurr === 'BS') baseUsd = num / safeRate('BS');
-    else if (activeCurr === 'EUR') baseUsd = num / safeRate('EUR_BCV');
+    else if (activeCurr === 'USDT') baseUsd = num * safeRate('USDT');
+    else if (activeCurr === 'BS') baseUsd = num * safeRate('BS');
+    else if (activeCurr === 'EUR') baseUsd = num * safeRate('EUR_BCV');
     
     let val = 0;
     if (curr === 'USD') val = baseUsd;
-    else if (curr === 'USDT') val = baseUsd * safeRate('USDT');
-    else if (curr === 'BS') val = baseUsd * safeRate('BS');
-    else if (curr === 'EUR') val = baseUsd * safeRate('EUR_BCV');
+    else if (curr === 'USDT') val = baseUsd / safeRate('USDT');
+    else if (curr === 'BS') val = baseUsd / safeRate('BS');
+    else if (curr === 'EUR') val = baseUsd / safeRate('EUR_BCV');
     
-    return Number(val.toFixed(2)).toString();
+    return Number(val.toFixed(4)).toString();
   };
 
   const clearCalc = () => setRawInput('');
@@ -211,9 +213,20 @@ export const DrawerNav: React.FC<DrawerNavProps> = ({ isOpen, onClose, onExportP
                 </div>
               </div>
             </div>
-            <p className="text-[9px] text-center text-slate-400 font-medium pt-1">
-              Última actualización: Hoy, 08:00 AM
-            </p>
+            {exchangeRatesMeta ? (
+              <div className="flex flex-col items-center justify-center pt-2 space-y-0.5">
+                <p className="text-[9px] text-slate-500 font-medium">
+                  Tasa oficial (BCV) al: <span className="font-bold">{new Date(exchangeRatesMeta.publishedAt).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                </p>
+                <p className="text-[8px] text-slate-400">
+                  Actualizado en app: {new Date(exchangeRatesMeta.updatedAt).toLocaleString('es-VE', { timeStyle: 'short' })}
+                </p>
+              </div>
+            ) : (
+              <p className="text-[9px] text-center text-slate-400 font-medium pt-1">
+                Obteniendo tasas de cambio...
+              </p>
+            )}
           </div>
         </div>
 
@@ -228,7 +241,7 @@ export const DrawerNav: React.FC<DrawerNavProps> = ({ isOpen, onClose, onExportP
             </button>
           ) : (
             <span className="text-[11px] text-slate-400 font-semibold">
-              Monywissen v1.2.5
+              Monywissen v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.0'}
             </span>
           )}
         </div>

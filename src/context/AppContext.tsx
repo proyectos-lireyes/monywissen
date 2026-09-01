@@ -12,6 +12,8 @@ import { verifyJWT } from '../utils/security';
 import { backupStateToFirebase, subscribeToFirebaseState } from '../utils/firebase';
 import { checkAndTriggerDailyReminder } from '../utils/notifications';
 
+declare const __APP_VERSION__: string;
+
 const STORAGE_KEY = 'finplan_profiles_v3';
 
 function getDefaultSeed(): AppStateData {
@@ -105,6 +107,7 @@ interface AppContextType {
   undoLastTransaction: () => void;
   canUndo: boolean;
   exchangeRates: Record<string, number>;
+  exchangeRatesMeta?: { publishedAt: string; updatedAt: string; bcvUsd: number; bcvEur: number };
   convertAmount: (amount: number, fromCurrency?: string) => number;
   updateState: AppUpdateState;
   startBackgroundUpdateDownload: () => void;
@@ -139,6 +142,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     'BS': 0.02, // 1 / 50 as fallback
   });
 
+  const [exchangeRatesMeta, setExchangeRatesMeta] = useState<{ publishedAt: string; updatedAt: string; bcvUsd: number; bcvEur: number } | undefined>(undefined);
+
   // App APK Background Update State
   const [updateState, setUpdateState] = useState<AppUpdateState>({
     isDownloading: false,
@@ -146,10 +151,39 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     downloadSpeed: '0 MB/s',
     downloadedMB: 0,
     totalMB: 18.4,
-    isCompleted: false,
-    latestVersion: 'v2.0.0',
+    isCompleted: true, // We default to completed = true so it doesn't show "Update available" until we actually know there is one
+    latestVersion: typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : 'v1.0.0',
     downloadUrl: 'https://github.com/proyectos-lireyes/monywissen/releases/latest/download/monywissen-latest.apk',
   });
+
+  useEffect(() => {
+    const checkUpdate = async () => {
+      try {
+        const res = await fetch('https://api.github.com/repos/proyectos-lireyes/monywissen/releases/latest');
+        if (res.ok) {
+          const data = await res.json();
+          const currentVer = typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : 'v1.0.0';
+          const latestTag = data.tag_name;
+          
+          // If GitHub has a newer tag, update state to show the update!
+          if (latestTag && latestTag !== currentVer) {
+            // Find APK asset
+            const apkAsset = data.assets?.find((a: any) => a.name.endsWith('.apk'));
+            setUpdateState(prev => ({
+              ...prev,
+              latestVersion: latestTag,
+              isCompleted: false, // Update is available
+              totalMB: apkAsset ? Number((apkAsset.size / (1024 * 1024)).toFixed(1)) : 18.4,
+              downloadUrl: apkAsset ? apkAsset.browser_download_url : data.html_url
+            }));
+          }
+        }
+      } catch (err) {
+        console.error("Error checking for updates:", err);
+      }
+    };
+    checkUpdate();
+  }, []);
 
   const startBackgroundUpdateDownload = () => {
     if (updateState.isDownloading || updateState.isCompleted) return;
@@ -191,25 +225,37 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     const fetchRates = async () => {
       try {
-        const res = await fetch('/api/exchange-rates');
-        if (!res.ok) throw new Error('API error');
-        const data = await res.json();
+        const [usdRes, eurRes] = await Promise.all([
+          fetch('https://ve.dolarapi.com/v1/dolares').then(r => r.json()),
+          fetch('https://ve.dolarapi.com/v1/euros').then(r => r.json())
+        ]);
         
-        // USD_BCV is the base 1 in our system because everything is translated to USD BCV
-        // but wait, if the API gives us VES per USD...
-        // For instance, data.usd.promedio = 43 VES.
-        // So 1 USD = 43 VES.
-        // If an amount is in BS, to convert to USD BCV, we divide by usdRes.promedio.
-        // Let's store the raw VES values
-        const usdRate = data.usd.promedio || 40;
-        const eurRate = data.eur.promedio || 45;
+        // Find oficial and paralelo objects
+        const usdOficial = Array.isArray(usdRes) ? usdRes.find(d => d.fuente === 'oficial') : usdRes;
+        const usdParalelo = Array.isArray(usdRes) ? usdRes.find(d => d.fuente === 'paralelo') : null;
+        
+        const eurOficial = Array.isArray(eurRes) ? eurRes.find(d => d.fuente === 'oficial') : eurRes;
+        
+        const usdRate = usdOficial?.promedio || 40;
+        const usdParaleloRate = usdParalelo?.promedio || usdRate;
+        const eurRate = eurOficial?.promedio || 45;
 
         setExchangeRates({
           'USD_BCV': 1,
-          'USDT': 1, // Assume 1:1 roughly for the app, or fetch if available
-          'EUR_BCV': eurRate / usdRate, // If 1 Euro = 45 VES and 1 USD = 40 VES, then 1 Euro = 45/40 = 1.125 USD
-          'BS': 1 / usdRate, // 1 VES = 1/40 USD
+          'USD_PARALELO': usdParaleloRate / usdRate, // relative to BCV
+          'USDT': usdParaleloRate / usdRate, // USDT maps to Dolar Paralelo
+          'EUR_BCV': eurRate / usdRate, 
+          'BS': 1 / usdRate, 
         });
+
+        if (usdOficial && usdOficial.fechaActualizacion) {
+          setExchangeRatesMeta({
+            publishedAt: usdOficial.fechaActualizacion,
+            updatedAt: new Date().toISOString(),
+            bcvUsd: usdOficial.promedio,
+            bcvEur: eurOficial?.promedio || eurRate
+          });
+        }
       } catch (err) {
         console.error('Failed to fetch exchange rates', err);
       }
@@ -533,6 +579,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         undoLastTransaction,
         canUndo: !!undoBuffer,
         exchangeRates,
+        exchangeRatesMeta,
         convertAmount,
         updateState,
         startBackgroundUpdateDownload,

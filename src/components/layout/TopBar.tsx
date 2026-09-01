@@ -18,7 +18,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenProfile,
   onExportPDF,
 }) => {
-  const { activeView, profile, currentProfileName, setActiveView, exchangeRates, state, updateState } = useApp();
+  const { activeView, profile, currentProfileName, setActiveView, exchangeRates, state, updateState, updateProfileData } = useApp();
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
   const [avatarViewerOpen, setAvatarViewerOpen] = useState(false);
   const [showNotifMenu, setShowNotifMenu] = useState(false);
@@ -68,7 +68,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   return (
     <>
-      <header className="sticky top-0 z-40 bg-white border-b border-slate-200 dark:bg-slate-900 dark:border-slate-800 px-4 py-3 shadow-sm flex items-center justify-between">
+      <header className="sticky top-0 z-40 bg-white border-b border-slate-200 dark:bg-slate-900 dark:border-slate-800 px-4 pt-safe pb-3 shadow-sm flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
             onClick={onToggleDrawer}
