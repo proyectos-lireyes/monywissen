@@ -162,17 +162,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const res = await fetch('https://api.github.com/repos/proyectos-lireyes/monywissen/releases/latest');
         if (res.ok) {
           const data = await res.json();
-          const currentVer = typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : 'v1.0.0';
-          const latestTag = data.tag_name;
+          const rawCurrent = typeof __APP_VERSION__ !== 'undefined' ? String(__APP_VERSION__) : '1.0.0';
+          const currentVer = rawCurrent.replace(/^v/, '');
+          const latestTag = data.tag_name ? data.tag_name.replace(/^v/, '') : '';
           
-          // If GitHub has a newer tag, update state to show the update!
-          if (latestTag && latestTag !== currentVer) {
-            // Find APK asset
+          if (latestTag && latestTag !== currentVer && latestTag !== 'latest') {
             const apkAsset = data.assets?.find((a: any) => a.name.endsWith('.apk'));
             setUpdateState(prev => ({
               ...prev,
-              latestVersion: latestTag,
-              isCompleted: false, // Update is available
+              latestVersion: `v${latestTag}`,
+              isCompleted: false,
               totalMB: apkAsset ? Number((apkAsset.size / (1024 * 1024)).toFixed(1)) : 18.4,
               downloadUrl: apkAsset ? apkAsset.browser_download_url : data.html_url
             }));
@@ -185,42 +184,83 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     checkUpdate();
   }, []);
 
-  const startBackgroundUpdateDownload = () => {
+  const startBackgroundUpdateDownload = async () => {
     if (updateState.isDownloading || updateState.isCompleted) return;
+
+    if (!(window as any).Capacitor || !(window as any).Capacitor.isNativePlatform()) {
+      showToast('Abriendo enlace de descarga...', '⏬');
+      window.location.href = updateState.downloadUrl;
+      return;
+    }
+
     setUpdateState(prev => ({ ...prev, isDownloading: true, progress: 0, isCompleted: false }));
-    showToast(`Descarga APK de ${updateState.latestVersion} iniciada en segundo plano`, '⏬');
+    showToast(`Descarga APK de ${updateState.latestVersion} iniciada`, '⏬');
+
+    try {
+      const { Filesystem, Directory } = await import('@capacitor/filesystem');
+      const fileName = `monywissen-${updateState.latestVersion}.apk`;
+      
+      let listener: any = null;
+      let lastTime = Date.now();
+      let lastBytes = 0;
+
+      listener = await Filesystem.addListener('progress', (status) => {
+        const progressNum = Math.round((status.bytes / status.contentLength) * 100);
+        const downloadedMB = parseFloat((status.bytes / (1024 * 1024)).toFixed(1));
+        
+        const now = Date.now();
+        const timeDiff = (now - lastTime) / 1000;
+        let speedStr = '0 MB/s';
+        if (timeDiff > 0.5) {
+           const bytesDiff = status.bytes - lastBytes;
+           const speedMBps = (bytesDiff / (1024 * 1024)) / timeDiff;
+           speedStr = `${speedMBps.toFixed(1)} MB/s`;
+           lastTime = now;
+           lastBytes = status.bytes;
+        }
+
+        setUpdateState(prev => {
+          // preserve the speed string if we didn't calculate a new one
+          const currentSpeed = speedStr === '0 MB/s' && prev.downloadSpeed !== '0 MB/s' ? prev.downloadSpeed : speedStr;
+          return {
+            ...prev,
+            progress: progressNum,
+            downloadedMB,
+            downloadSpeed: currentSpeed
+          };
+        });
+      });
+
+      const result = await Filesystem.downloadFile({
+        url: updateState.downloadUrl,
+        path: fileName,
+        directory: Directory.Data,
+        progress: true
+      });
+
+      if (listener) listener.remove();
+
+      showToast(`¡Descarga completada! Instálalo ahora.`, '🎉');
+      setUpdateState(prev => ({
+        ...prev,
+        progress: 100,
+        isDownloading: false,
+        isCompleted: true,
+        downloadedMB: prev.totalMB,
+        downloadSpeed: '0 MB/s',
+        downloadUrl: result.path || updateState.downloadUrl // Update with local path
+      }));
+
+    } catch (e: any) {
+      console.error('Download error:', e);
+      showToast('Error al descargar APK', '❌');
+      setUpdateState(prev => ({ ...prev, isDownloading: false }));
+    }
   };
 
   useEffect(() => {
-    let interval: any;
-    if (updateState.isDownloading && updateState.progress < 100) {
-      interval = setInterval(() => {
-        setUpdateState(prev => {
-          const next = prev.progress + Math.floor(Math.random() * 8) + 5;
-          if (next >= 100) {
-            clearInterval(interval);
-            showToast(`¡Descarga APK de ${prev.latestVersion} completada! Ve a Ajustes para instalar`, '🎉');
-            return {
-              ...prev,
-              progress: 100,
-              isDownloading: false,
-              isCompleted: true,
-              downloadedMB: prev.totalMB,
-              downloadSpeed: '0 MB/s',
-            };
-          }
-          const currentMB = parseFloat(((next / 100) * prev.totalMB).toFixed(1));
-          return {
-            ...prev,
-            progress: next,
-            downloadedMB: currentMB,
-            downloadSpeed: `${(Math.random() * 1.5 + 2.1).toFixed(1)} MB/s`,
-          };
-        });
-      }, 350);
-    }
-    return () => clearInterval(interval);
-  }, [updateState.isDownloading, updateState.progress]);
+    // Only used for checking update now. Interval removed.
+  }, []);
 
   useEffect(() => {
     const fetchRates = async () => {

@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
+import { Capacitor } from '@capacitor/core';
+import { StatusBar, Style } from '@capacitor/status-bar';
 import { TopBar } from './components/layout/TopBar';
 import { DrawerNav } from './components/layout/DrawerNav';
 import { BottomNav } from './components/layout/BottomNav';
@@ -30,7 +32,21 @@ const AppContent: React.FC = () => {
   const [profileOpen, setProfileOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
 
-  React.useEffect(() => {
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      const updateStatusBar = () => {
+        const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches || document.documentElement.classList.contains('dark');
+        StatusBar.setStyle({ style: isDark ? Style.Dark : Style.Light }).catch(console.warn);
+        StatusBar.setBackgroundColor({ color: isDark ? '#020617' : '#f1f5f9' }).catch(console.warn);
+      };
+      updateStatusBar();
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      mediaQuery.addEventListener('change', updateStatusBar);
+      return () => mediaQuery.removeEventListener('change', updateStatusBar);
+    }
+  }, []);
+
+  useEffect(() => {
     if ('launchQueue' in window) {
       (window as any).launchQueue.setConsumer(async (launchParams: any) => {
         if (!launchParams.files || launchParams.files.length === 0) {

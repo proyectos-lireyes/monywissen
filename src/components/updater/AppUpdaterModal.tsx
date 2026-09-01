@@ -21,15 +21,22 @@ export const AppUpdaterModal: React.FC<AppUpdaterModalProps> = ({
 
   const { isDownloading, progress, downloadSpeed, downloadedMB, totalMB, isCompleted, latestVersion, downloadUrl } = updateState;
 
-  const handleInstall = () => {
-    showToast('Descargando APK de Android...', '📲');
+  const handleInstall = async () => {
     if ((window as any).Capacitor && (window as any).Capacitor.isNativePlatform()) {
-      window.open(downloadUrl, '_system');
+      try {
+        const { FileOpener } = await import('@capawesome-team/capacitor-file-opener');
+        await FileOpener.openFile({
+          path: downloadUrl, // Which is now the local path after download
+          mimeType: 'application/vnd.android.package-archive',
+        });
+      } catch (e: any) {
+        console.error('Error opening APK:', e);
+        showToast('No se pudo abrir el instalador', '❌');
+        window.open(downloadUrl, '_system');
+      }
     } else {
-      const a = document.createElement('a');
-      a.href = downloadUrl;
-      a.download = `Monywissen-${latestVersion}.apk`;
-      a.click();
+      // Create a direct link navigation to avoid cross-origin download block
+      window.location.href = downloadUrl;
     }
   };
 
