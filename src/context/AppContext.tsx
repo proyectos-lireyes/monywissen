@@ -330,8 +330,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [state]);
 
-  // Removed aggressive real-time listener to prevent wiping local data unexpectedly
-  // The user will use explicit Restore actions from Settings.
+  useEffect(() => {
+    if (state.authUser && state.authUser.email) {
+      const unsubscribe = subscribeToFirebaseState(state.authUser.email, (payload) => {
+        if (payload) {
+          setState(prev => {
+            const prevStr = JSON.stringify({ ...prev, authToken: undefined, authUser: undefined });
+            const payloadStr = JSON.stringify({ ...payload, authToken: undefined, authUser: undefined });
+            if (prevStr === payloadStr) return prev;
+            
+            return {
+              ...payload,
+              authToken: prev.authToken,
+              authUser: prev.authUser
+            };
+          });
+        }
+      });
+      return () => unsubscribe();
+    }
+  }, [state.authUser]);
 
   const showToast = (message: string, icon: string = '✅') => {
     const id = Math.random().toString(36).substring(2, 9);
