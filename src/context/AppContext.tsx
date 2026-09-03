@@ -75,6 +75,7 @@ function sanitizeProfile(raw: any): UserProfile {
 }
 
 export interface AppUpdateState {
+  hasUpdate: boolean;
   isDownloading: boolean;
   progress: number;
   downloadSpeed: string;
@@ -145,15 +146,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [exchangeRatesMeta, setExchangeRatesMeta] = useState<{ publishedAt: string; updatedAt: string; bcvUsd: number; bcvEur: number } | undefined>(undefined);
 
   // App APK Background Update State
+  const isSyncReady = React.useRef(false);
   const [updateState, setUpdateState] = useState<AppUpdateState>({
+    hasUpdate: false,
     isDownloading: false,
     progress: 0,
     downloadSpeed: '0 MB/s',
     downloadedMB: 0,
     totalMB: 18.4,
-    isCompleted: true, // We default to completed = true so it doesn't show "Update available" until we actually know there is one
+    isCompleted: false,
     latestVersion: typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : 'v1.0.0',
-    downloadUrl: 'https://github.com/proyectos-lireyes/monywissen/releases/latest/download/monywissen-latest.apk',
+    downloadUrl: '',
   });
 
   useEffect(() => {
@@ -170,11 +173,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             const apkAsset = data.assets?.find((a: any) => a.name.endsWith('.apk'));
             setUpdateState(prev => ({
               ...prev,
+              hasUpdate: true,
               latestVersion: `v${latestTag}`,
               isCompleted: false,
               totalMB: apkAsset ? Number((apkAsset.size / (1024 * 1024)).toFixed(1)) : 18.4,
               downloadUrl: apkAsset ? apkAsset.browser_download_url : data.html_url
             }));
+          } else {
+            setUpdateState(prev => ({ ...prev, hasUpdate: false, isCompleted: false }));
           }
         }
       } catch (err) {
@@ -315,7 +321,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       
       // Auto-sync to Firebase if logged in
-      if (state.authUser && state.authUser.email) {
+      if (state.authUser && state.authUser.email && isSyncReady.current) {
          // Create a minimal clone without tokens for backup
          const stateToBackup = JSON.parse(JSON.stringify(state));
          delete stateToBackup.authToken;
@@ -332,8 +338,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   useEffect(() => {
     if (state.authUser && state.authUser.email) {
-      const unsubscribe = subscribeToFirebaseState(state.authUser.email, (payload) => {
-        if (payload) {
+      isSyncReady.current = false;
+      const unsubscribe = subscribeToFirebaseState(state.authUser.email, (payload, exists) => {
+        if (exists && payload) {
           setState(prev => {
             const prevStr = JSON.stringify({ ...prev, authToken: undefined, authUser: undefined });
             const payloadStr = JSON.stringify({ ...payload, authToken: undefined, authUser: undefined });
@@ -346,6 +353,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             };
           });
         }
+        isSyncReady.current = true;
       });
       return () => unsubscribe();
     }

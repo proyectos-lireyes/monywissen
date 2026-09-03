@@ -166,7 +166,19 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
   };
 
   const handleMarkDone = () => {
+    let isFinalPayment = false;
     if (type === 'debt') {
+      const targetItem = (profile.debts || []).find(d => d.id === refId);
+      if (targetItem) {
+        const expectedCuotas = calculateAmortizationPlan(targetItem, profile.overrides || {}, profile.settings?.customDebts || [], undefined, exchangeRates);
+        const unpaidCuotas = expectedCuotas.filter(c => !c.isPaid);
+        if (unpaidCuotas.length <= 1) {
+            isFinalPayment = true;
+        }
+      }
+    }
+
+    if (type === 'debt' && isFinalPayment) {
       setIsCelebrating(true);
       let p = 0;
       const interval = setInterval(() => {
@@ -366,8 +378,18 @@ return (
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div>
               <span className="text-slate-400 font-bold uppercase block text-[10px]">Monto Planificado</span>
-              <p className="font-black text-slate-900 dark:text-slate-100 text-sm">
-                {formatCurrency(plannedUsdAmount)}
+              <p className="font-black text-slate-900 dark:text-slate-100 text-sm flex items-center gap-1.5 flex-wrap">
+                <span>{formatCurrency(plannedUsdAmount)}</span>
+                {((profile.settings?.paymentCurrency || 'BS') !== (profile.settings?.displayCurrency || 'USD')) && (
+                  <span className="text-[10px] opacity-70">
+                    (~{
+                      (profile.settings?.paymentCurrency || 'BS') === 'BS' ? `Bs ${(plannedUsdAmount / (exchangeRates['BS'] || 0.02325)).toFixed(2)}` :
+                      (profile.settings?.paymentCurrency || 'BS') === 'EUR' ? `€${(plannedUsdAmount / (exchangeRates['EUR_BCV'] || 1.05)).toFixed(2)}` :
+                      (profile.settings?.paymentCurrency || 'BS') === 'USDT' ? `${(plannedUsdAmount / (exchangeRates['USDT'] || 1)).toFixed(2)} USDT` :
+                      formatCurrency(plannedUsdAmount)
+                    })
+                  </span>
+                )}
               </p>
               {itemCurrency === 'BS' && (
                 <p className="text-[10px] text-slate-500 font-semibold">
@@ -397,8 +419,18 @@ return (
             <span className="font-bold text-blue-900 dark:text-blue-200">
               {partialsSum > 0 ? 'Saldo Restante Owed:' : 'Total a Pagar:'}
             </span>
-            <span className="font-black text-blue-700 dark:text-blue-300 text-sm">
-              {formatCurrency(remainingUsd)}
+            <span className="font-black text-blue-700 dark:text-blue-300 text-sm flex items-center gap-1.5 flex-wrap justify-end">
+              <span>{formatCurrency(remainingUsd)}</span>
+              {((profile.settings?.paymentCurrency || 'BS') !== (profile.settings?.displayCurrency || 'USD')) && (
+                <span className="text-xs opacity-70">
+                  (~{
+                    (profile.settings?.paymentCurrency || 'BS') === 'BS' ? `Bs ${(remainingUsd / (exchangeRates['BS'] || 0.02325)).toFixed(2)}` :
+                    (profile.settings?.paymentCurrency || 'BS') === 'EUR' ? `€${(remainingUsd / (exchangeRates['EUR_BCV'] || 1.05)).toFixed(2)}` :
+                    (profile.settings?.paymentCurrency || 'BS') === 'USDT' ? `${(remainingUsd / (exchangeRates['USDT'] || 1)).toFixed(2)} USDT` :
+                    formatCurrency(remainingUsd)
+                  })
+                </span>
+              )}
             </span>
           </div>
         </div>
@@ -512,7 +544,7 @@ return (
                   onClick={handleMarkDone}
                   className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition-colors"
                 >
-                  <CheckCircle2 className="w-4 h-4" /> Marcar Completo ({formatCurrency(remainingUsd)})
+                  <CheckCircle2 className="w-4 h-4" /> Marcar Completo ({formatCurrency(remainingUsd)}{((profile.settings?.paymentCurrency || 'BS') !== (profile.settings?.displayCurrency || 'USD')) && ` ~ ${(profile.settings?.paymentCurrency || 'BS') === 'BS' ? `Bs ${(remainingUsd / (exchangeRates['BS'] || 0.02325)).toFixed(2)}` : (profile.settings?.paymentCurrency || 'BS') === 'EUR' ? `€${(remainingUsd / (exchangeRates['EUR_BCV'] || 1.05)).toFixed(2)}` : (profile.settings?.paymentCurrency || 'BS') === 'USDT' ? `${(remainingUsd / (exchangeRates['USDT'] || 1)).toFixed(2)} USDT` : ''}`})
                 </button>
 
                 <button

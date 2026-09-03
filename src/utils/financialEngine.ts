@@ -256,7 +256,7 @@ export function calculateAmortizationPlan(
 
   const totalPaid = getDebtTotalPaid(debt, overrides, exchangeRates);
   
-  let unallocatedPaid = 0; // Amortization is now a down payment, not a sequential payment over the installments
+  let unallocatedPaid = totalPaid; // We use totalPaid to sequentially cover any cuotas that don't have explicit payments (e.g. orphaned payments)
   let remainingPrincipal = lifetimeTotal - totalPaid;
 
   let curr = new Date((debt.start || todayStr()) + 'T12:00:00');
@@ -308,7 +308,8 @@ export function calculateAmortizationPlan(
       const amtUsd = ov.amt !== undefined ? parseFloat(String(ov.amt)) : undefined;
       const finalAmt = amtUsd !== undefined ? getAmtInDebtCurrency(debt, amtUsd, ov.rawPayAmount, ov.payCurrency, exchangeRates) : Math.max(0, pay - partialsSum);
       paidAmt = finalAmt + partialsSum;
-      expectedAmount = Math.max(pay, paidAmt); 
+      expectedAmount = Math.max(pay, paidAmt);
+      unallocatedPaid -= paidAmt;
     } else {
       if (unallocatedPaid > 0) {
         const canCover = Math.min(pay, unallocatedPaid);
@@ -357,9 +358,7 @@ export function calculateAmortizationPlan(
       requiredPay
     });
 
-    if (ov.userPostponed && ov.actualDate) {
-      curr = new Date(ov.actualDate + 'T12:00:00');
-    }
+    // curr remains unchanged by user postponed date to keep schedule keys stable
 
     advanceDateFreq(curr, freq, dueDay);
     i++;
@@ -459,7 +458,7 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
     });
 
     let finalPaymentAmt = remainingAmt;
-    if (done && overrides[key].amt !== undefined) {
+    if (done && overrides[key] && overrides[key].amt !== undefined) {
       finalPaymentAmt = parseFloat(String(overrides[key].amt));
     }
 
@@ -763,7 +762,7 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
        
        if (!isDiscarded) {
            // Calculate pending delayed expenses that we are about to pay today
-           const pendingDelayed = delayedItems.reduce((acc, item) => acc + (item?.amt || 0), 0); // amt is negative
+           const pendingDelayed = delayedItems.reduce((acc, item) => acc + ((item?.amt || 0) < 0 ? item.amt : 0), 0); // only reserve for expenses
            
            // Also include flexible expenses that are scheduled for exactly today
            const todayFlexibleOut = futureEvents.filter(e => (e?.targetDate || e?.originalDate) === d && !e?.pulledEarly && (e?.amt || 0) < 0 && !e?.done && !(e?.ref?.strictDate && e?.type !== 'savings') && !(e?.type === 'savings' && d < todayStr()));
@@ -829,20 +828,23 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
         const eventIndex = applied.length;
         applied.push({ ...e, date: d });
 
+        let rescuedAmt = 0;
         if (balance < targetMin && savingsAccumulated > 0) {
             const autowithdrawKey = `rescate_ahorros_autowithdraw_${d}_${d}`;
             const isDiscarded = overrides[autowithdrawKey] && overrides[autowithdrawKey].discarded;
             if (!isDiscarded) {
                 const deficit = targetMin - balance;
                 const amtToWithdraw = Math.min(deficit, savingsAccumulated);
+                rescuedAmt = amtToWithdraw;
                 balance += amtToWithdraw;
                 savingsAccumulated -= amtToWithdraw;
+
                 applied.push({
                    date: d,
                    label: 'Rescate de Ahorros',
                    type: 'rescate_ahorros',
                    amt: amtToWithdraw,
-                   ref: { id: `autowithdraw_${d}`, name: 'Rescate de Ahorros', effectiveColor: '#0ea5e9' },
+                   ref: { id: `autowithdraw_${d}_${applied.length}`, name: 'Rescate de Ahorros', effectiveColor: '#0ea5e9' },
                    originalDate: d,
                    done: overrides[autowithdrawKey] ? !!overrides[autowithdrawKey].done : false,
                    runningBalance: balance,
@@ -852,7 +854,7 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
                 });
             }
         }
-        applied[eventIndex].runningBalance = balance;
+        applied[eventIndex].runningBalance = balance - (typeof rescuedAmt !== 'undefined' ? rescuedAmt : 0);
     };
 
     for (const e of incomes) applyEvent(e);
@@ -864,14 +866,13 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
     // Add today's flexible expenses to the pending backlog
     delayedItems.push(...flexibleOut);
     
-    const isProcessingDay = incomes.length > 0 || d === startD;
+    let candidates = [...delayedItems];
     
-    // 2. Process Flexible Expenses ONLY on Income Days (or Start Date)
+    const isProcessingDay = incomes.length > 0;
     if (isProcessingDay) {
        const nextIncome = futureEvents.find(e => e?.originalDate > d && (e?.amt || 0) > 0 && e?.type === 'income');
        const nextIncomeDate = nextIncome ? nextIncome?.originalDate : null;
        
-       // Gather all upcoming flexible expenses up to (but not including) the next income date
        const upcoming = futureEvents.filter(e => 
            e?.originalDate > d && 
            (nextIncomeDate ? e?.originalDate < nextIncomeDate : true) && 
@@ -880,26 +881,32 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
            !e?.ref?.strictDate &&
            !e?.pulledEarly
        );
-       
-       // Combine pending backlog and upcoming items
-       let candidates = [...delayedItems, ...upcoming];
-       candidates.sort((a, b) => a.originalDate.localeCompare(b.originalDate) || Math.abs(a.amt) - Math.abs(b.amt));
-       
-       let newDelayed: any[] = [];
-       
-       for (const e of candidates) {
-          const isDue = e?.originalDate <= d;
-          
-          if (e?.originalDate > d) {
+       candidates.push(...upcoming);
+    }
+    
+    candidates.sort((a, b) => a.originalDate.localeCompare(b.originalDate) || Math.abs(a.amt || 0) - Math.abs(b.amt || 0));
+    
+    let newDelayed: any[] = [];
+    
+    for (const e of candidates) {
+       // Only apply if we have enough balance to cover it without dipping below targetMin
+       const isIncome = (e.amt || 0) > 0;
+       if (isIncome || balance + (e.amt || 0) >= targetMin) {
+          if (e.originalDate > d) {
              e.pulledEarly = true;
-          } else if (e?.originalDate < d) {
+          } else if (e.originalDate < d) {
              e.isDelayed = true;
           }
-          e.optimizedFrom = e?.originalDate;
+          e.optimizedFrom = e.originalDate;
           applyEvent(e);
+       } else {
+          // If we can't pay it, and it's due (or overdue), keep it in the backlog
+          if (e.originalDate <= d) {
+              newDelayed.push(e);
+          }
        }
-       delayedItems = []; // All candidates applied
     }
+    delayedItems = newDelayed;
     
     // Finalize applied events WITH running balance
     applied.forEach(e => {
@@ -928,7 +935,8 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
     }
   }
 
-  return plan;
+    return plan;
+
 }
 
 

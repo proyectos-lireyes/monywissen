@@ -162,16 +162,18 @@ export async function restoreStateFromFirebase(email: string) {
 }
 
 
-export function subscribeToFirebaseState(email: string, onUpdate: (data: any) => void) {
+export function subscribeToFirebaseState(email: string, onUpdate: (data: any, exists: boolean) => void) {
   if (!email) return () => {};
   const backupRef = doc(db, 'backups', email.toLowerCase().trim());
   return onSnapshot(backupRef, (docSnap) => {
     if (docSnap.exists()) {
       const payload = docSnap.data()?.dataPayload;
       if (payload) {
-        onUpdate(payload);
+        onUpdate(payload, true);
+        return;
       }
     }
+    onUpdate(null, false);
   });
 }
 

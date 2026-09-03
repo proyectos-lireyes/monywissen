@@ -87,11 +87,11 @@ export const AppUpdaterModal: React.FC<AppUpdaterModalProps> = ({
         </div>
 
         {/* Download & Progress Section */}
-        {isDownloading || isCompleted ? (
+        {updateState.hasUpdate && (isDownloading || isCompleted) ? (
           <div className="space-y-3 p-4 bg-indigo-50/50 dark:bg-indigo-950/30 rounded-2xl border border-indigo-100 dark:border-indigo-900/40">
             <div className="flex justify-between items-center text-xs font-bold text-slate-800 dark:text-slate-200">
               <span className="flex items-center gap-1.5">
-                {isCompleted ? (
+                {updateState.hasUpdate && isCompleted ? (
                   <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                 ) : (
                   <RefreshCw className="w-4 h-4 text-indigo-600 animate-spin" />

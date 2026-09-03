@@ -27,6 +27,8 @@ export interface UserSettings {
   paymentMethods?: PaymentMethod[];
   contacts?: Contact[];
   budgets?: Record<string, number>;
+  displayCurrency?: string;
+  paymentCurrency?: string;
 }
 
 export interface CreditCard {

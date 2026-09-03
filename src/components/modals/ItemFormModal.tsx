@@ -218,7 +218,9 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
             current.done = false;
             current.amt = undefined;
             if (!current.partials || current.partials.length === 0) {
-               delete draft.overrides[rec.key];
+               if (!current.userPostponed) {
+                 delete draft.overrides[rec.key];
+               }
             }
          }
       }

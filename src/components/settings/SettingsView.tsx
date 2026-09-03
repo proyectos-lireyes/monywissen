@@ -60,6 +60,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
   const [openingBalanceStr, setOpeningBalanceStr] = useState(String(settings.openingBalance || 0));
   const [freeSpend, setFreeSpend] = useState(settings.freeSpend);
   const [notifTime, setNotifTime] = useState(settings.notifTime || '08:00');
+  const [displayCurrency, setDisplayCurrency] = useState(settings.displayCurrency || 'USD');
+  const [paymentCurrency, setPaymentCurrency] = useState(settings.paymentCurrency || 'BS');
 
   // App Update States
   const [updateUrl, setUpdateUrl] = useState(window.location.origin);
@@ -192,6 +194,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
       draft.settings.freeSpend = freeSpend;
       draft.settings.notifTime = notifTime;
       draft.settings.autoSaveThreshold = autoSaveThreshold;
+      draft.settings.displayCurrency = displayCurrency;
+      draft.settings.paymentCurrency = paymentCurrency;
     });
     showToast('Reglas del sistema guardadas', '⚙️');
   };
@@ -324,6 +328,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                   onChange={e => setDelayDays(parseInt(e.target.value, 10) || 0)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
                 />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500">Moneda a mostrar</label>
+                <select
+                  value={displayCurrency}
+                  onChange={e => setDisplayCurrency(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
+                >
+                  <option value="USD">USD ($)</option>
+                  <option value="BS">BS (Bs)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="USDT">USDT</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500">Moneda para pagar</label>
+                <select
+                  value={paymentCurrency}
+                  onChange={e => setPaymentCurrency(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
+                >
+                  <option value="USD">USD ($)</option>
+                  <option value="BS">BS (Bs)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="USDT">USDT</option>
+                </select>
               </div>
               <div>
                 <label className="text-xs font-bold text-slate-500">Hora de Notificación Diaria</label>
@@ -473,7 +503,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
               )}
 
               {/* Background Download Live Status */}
-              {(updateState.isDownloading || updateState.isCompleted) && (
+              {(updateState.isDownloading || updateState.isCompleted) && updateState.hasUpdate && (
                 <div className="p-3.5 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 rounded-xl space-y-2">
                   <div className="flex items-center justify-between text-xs font-bold text-indigo-900 dark:text-indigo-200">
                     <span className="flex items-center gap-1.5">
@@ -501,7 +531,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                 </div>
               )}
 
-              {updateReady && !updateState.isDownloading && !updateState.isCompleted && (
+              {updateState.hasUpdate && !updateState.isDownloading && !updateState.isCompleted && (
                 <div className="p-3 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900/60 rounded-xl space-y-2 text-xs">
                   <p className="font-extrabold text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-blue-600" /> Novedades de la versión {updateState.latestVersion}:
@@ -526,35 +556,46 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                   {isCheckingUpdate ? 'Comprobando...' : 'Buscar Actualización'}
                 </button>
 
-                {updateState.isCompleted ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      showToast('Iniciando instalación de APK...', '📲');
-                      const a = document.createElement('a');
-                      a.href = updateState.downloadUrl;
-                      a.download = `Monywissen-${updateState.latestVersion}.apk`;
-                      a.click();
-                    }}
-                    className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-sm transition-colors"
-                  >
-                    <Download className="w-3.5 h-3.5" /> Instalar APK {updateState.latestVersion}
-                  </button>
-                ) : updateState.isDownloading ? (
-                  <button
-                    disabled
-                    className="flex-1 py-2.5 bg-indigo-100 dark:bg-indigo-950 text-indigo-400 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-not-allowed"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Descargando ({updateState.progress}%)
-                  </button>
+                {updateState.hasUpdate ? (
+                  updateState.isCompleted ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if ((window as any).Capacitor && (window as any).Capacitor.isNativePlatform()) {
+                           // If somehow it's native but in settings, delegate to AppUpdaterModal or window.open
+                           window.open(updateState.downloadUrl, '_system');
+                        } else {
+                          showToast('Iniciando descarga de APK...', '📲');
+                          const a = document.createElement('a');
+                          a.href = updateState.downloadUrl;
+                          a.download = `Monywissen-${updateState.latestVersion}.apk`;
+                          a.click();
+                        }
+                      }}
+                      className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-sm transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Instalar APK {updateState.latestVersion}
+                    </button>
+                  ) : updateState.isDownloading ? (
+                    <button
+                      disabled
+                      className="flex-1 py-2.5 bg-indigo-100 dark:bg-indigo-950 text-indigo-400 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-not-allowed"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Descargando ({updateState.progress}%)
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={startBackgroundUpdateDownload}
+                      className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Descargar APK {updateState.latestVersion}
+                    </button>
+                  )
                 ) : (
-                  <button
-                    type="button"
-                    onClick={startBackgroundUpdateDownload}
-                    className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors"
-                  >
-                    <Download className="w-3.5 h-3.5" /> Descargar APK {updateState.latestVersion}
-                  </button>
+                   <div className="flex-1 py-2.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border border-emerald-200 dark:border-emerald-800">
+                     <CheckCircle2 className="w-4 h-4" /> App Actualizada
+                   </div>
                 )}
               </div>
 
