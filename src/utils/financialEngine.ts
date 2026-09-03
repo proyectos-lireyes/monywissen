@@ -270,7 +270,7 @@ export function calculateAmortizationPlan(
   let i = 0;
   const maxIterations = 999;
   const seenKeys = new Set<string>();
-
+  let currentShiftDays = 0;
   while (i < maxIterations) {
     if (limitDate && curr > limitDate) break;
 
@@ -344,9 +344,21 @@ export function calculateAmortizationPlan(
     
     if (isCard && i >= inst) break;
 
+    let finalDate = dateStr;
+    if (ov.userPostponed && ov.actualDate) {
+      finalDate = ov.actualDate;
+      const d1 = new Date(dateStr + 'T12:00:00');
+      const d2 = new Date(finalDate + 'T12:00:00');
+      currentShiftDays = Math.round((d2.getTime() - d1.getTime()) / (1000 * 3600 * 24));
+    } else if (currentShiftDays !== 0) {
+      const d1 = new Date(dateStr + 'T12:00:00');
+      d1.setDate(d1.getDate() + currentShiftDays);
+      finalDate = d1.toISOString().slice(0, 10);
+    }
+
     cuotas.push({
       index: i + 1,
-      date: (ov.userPostponed && ov.actualDate) ? ov.actualDate : dateStr,
+      date: finalDate,
       key,
       expectedAmount,
       isPaid,
@@ -403,6 +415,7 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
   const overrides = profile.overrides || {};
 
   const map: Record<string, any[]> = {};
+  const itemShifts: Record<string, number> = {};
   let balance = settings.openingBalance || 0;
 
   const startYear = new Date(startD + 'T12:00:00').getFullYear();
@@ -421,8 +434,21 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
     if (overrides[key] && overrides[key].discarded) return;
 
     let done = overrides[key] ? !!overrides[key].done : (type === 'savings' && ref.status === 'completed');
-    const finalDate = (overrides[key] && overrides[key].actualDate) ? overrides[key].actualDate : dateStr;
-    const userPostponed = overrides[key] ? !!overrides[key].userPostponed : false;
+    
+    let finalDate = dateStr;
+    const ov = overrides[key];
+    const userPostponed = ov ? !!ov.userPostponed : false;
+    
+    if (userPostponed && ov.actualDate) {
+      finalDate = ov.actualDate;
+      const d1 = new Date(dateStr + 'T12:00:00');
+      const d2 = new Date(finalDate + 'T12:00:00');
+      itemShifts[ref.id] = Math.round((d2.getTime() - d1.getTime()) / (1000 * 3600 * 24));
+    } else if (itemShifts[ref.id]) {
+      const d1 = new Date(dateStr + 'T12:00:00');
+      d1.setDate(d1.getDate() + itemShifts[ref.id]);
+      finalDate = d1.toISOString().slice(0, 10);
+    }
     const partials = (overrides[key] && overrides[key].partials) ? overrides[key].partials : [];
 
     let effectiveColor = ref.color;
