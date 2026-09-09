@@ -241,6 +241,7 @@ export interface AppStateData {
   profiles: Record<string, UserProfile>;
   authToken?: string | null;
   authUser?: AuthUser | null;
+  lastUpdatedAt?: number;
 }
 
 export interface AuthUser {

@@ -10,9 +10,33 @@ export function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+export let globalDisplayCurrency = 'USD';
+export let globalExchangeRates: Record<string, number> = {};
+
+export function setGlobalFormattingContext(currency: string, rates: Record<string, number>) {
+    globalDisplayCurrency = currency || 'USD';
+    globalExchangeRates = rates || {};
+}
+
 export function formatCurrency(amount: number): string {
-  const rounded = Math.round((amount || 0) * 100) / 100;
-  return '$' + rounded.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    let convertedAmount = amount;
+    let currencyKey = globalDisplayCurrency;
+    if (currencyKey === 'EUR') currencyKey = 'EUR_BCV';
+
+    if (globalDisplayCurrency !== 'USD' && globalDisplayCurrency !== 'USD_BCV') {
+        const rate = globalExchangeRates[currencyKey];
+        if (rate) {
+            convertedAmount = amount / rate;
+        }
+    }
+
+    let prefix = '$$';
+    if (globalDisplayCurrency === 'BS') prefix = 'Bs ';
+    else if (globalDisplayCurrency === 'EUR') prefix = '€';
+    else if (globalDisplayCurrency === 'USDT') prefix = 'USDT ';
+
+    const rounded = Math.round((convertedAmount || 0) * 100) / 100;
+    return prefix.replace('$$', '$') + rounded.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
 export function formatDateStr(dStr?: string): string {
@@ -345,7 +369,7 @@ export function calculateAmortizationPlan(
     if (isCard && i >= inst) break;
 
     let finalDate = dateStr;
-    if (ov.userPostponed && ov.actualDate) {
+    if (ov && ov.actualDate) {
       finalDate = ov.actualDate;
       const d1 = new Date(dateStr + 'T12:00:00');
       const d2 = new Date(finalDate + 'T12:00:00');
@@ -439,7 +463,7 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
     const ov = overrides[key];
     const userPostponed = ov ? !!ov.userPostponed : false;
     
-    if (userPostponed && ov.actualDate) {
+    if (ov && ov.actualDate) {
       finalDate = ov.actualDate;
       const d1 = new Date(dateStr + 'T12:00:00');
       const d2 = new Date(finalDate + 'T12:00:00');
@@ -691,7 +715,7 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
   if (settings.openingBalance !== undefined && settings.openingBalance !== null && settings.openingBalance !== 0) {
     balance = settings.openingBalance;
   } else {
-    balance = 0;
+    autoCalculatedStart = true; balance = 0;
     
     // Find the first income date
     let firstIncomeDate = null;
@@ -725,13 +749,14 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
             }
         }
         
+        simBalance += dayIncome;
         simBalance += dayExpense;
         if (simBalance < minSimBalance) minSimBalance = simBalance;
-        simBalance += dayIncome;
         if (dayIncome > 0) break; 
     }
     
     const requiredInitial = Math.abs(minSimBalance) + (settings.minBalance || 0);
+   
     
     // Inject required initial fund as a pending income if it's > 0
     if (requiredInitial > 0) {
@@ -775,6 +800,7 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
     savingsAccumulated: 0
   });
 
+  let lastRescuePeriodEnd: string | null = null;
   for (const d of datesBetween(startD, endD)) {
 
 
@@ -842,6 +868,74 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
     let missedSavings = dayEvents.filter(e => (e?.amt || 0) < 0 && !e?.done && e?.type === 'savings' && d < todayStr());
     
     const applied: any[] = [];
+
+    // Period Lookahead for Savings Rescue
+    const nextIncomeObj = futureEvents.find(e => (e?.targetDate || e?.originalDate) > d && (e?.amt || 0) > 0 && e?.type === 'income');
+    const nextIncomeDate = nextIncomeObj ? (nextIncomeObj?.targetDate || nextIncomeObj?.originalDate) : '9999-12-31';
+
+    if (lastRescuePeriodEnd !== nextIncomeDate) {
+        let simBalance = balance;
+        let minSimBalance = simBalance;
+        let simSavings = savingsAccumulated;
+
+        // Apply backlog (immediate debt)
+        for (const e of delayedItems) {
+            simBalance += (e.amt || 0);
+        }
+        if (simBalance < minSimBalance) minSimBalance = simBalance;
+
+        // Simulate days up to the next income (exclusive)
+        let simDates = datesBetween(d, nextIncomeDate === '9999-12-31' ? endD : nextIncomeDate);
+        if (nextIncomeDate !== '9999-12-31') {
+           simDates = simDates.filter(sd => sd < nextIncomeDate);
+        }
+
+        for (const wd of simDates) {
+            const wEvents = futureEvents.filter(e => (e?.targetDate || e?.originalDate) === wd && !e?.pulledEarly);
+            const wIncomes = wEvents.filter(e => (e?.amt || 0) >= 0);
+            const wOut = wEvents.filter(e => (e?.amt || 0) < 0 && !(e?.type === 'savings' && wd < todayStr()));
+
+            for (const e of wIncomes) simBalance += (e.amt || 0);
+            for (const e of wOut) {
+                simBalance += (e.amt || 0);
+                if (e.type === 'savings') simSavings += Math.abs(e.amt || 0);
+            }
+            if (simBalance < minSimBalance) minSimBalance = simBalance;
+        }
+
+        if (minSimBalance < targetMin && savingsAccumulated > 0) {
+            const deficit = targetMin - minSimBalance;
+            const amtToWithdraw = Math.min(deficit, savingsAccumulated);
+
+            if (amtToWithdraw > 0) {
+                const autowithdrawKey = `rescate_ahorros_autowithdraw_${d}_${d}`;
+                const isDiscarded = overrides[autowithdrawKey] && overrides[autowithdrawKey].discarded;
+                if (!isDiscarded) {
+                    // Inject a single rescue transaction for this entire period
+                    
+                    balance += amtToWithdraw;
+                    savingsAccumulated -= amtToWithdraw;
+                    applied.push({
+                        date: d,
+                        label: 'Rescate de Ahorros',
+                        type: 'rescate_ahorros',
+                        amt: amtToWithdraw,
+                        ref: { id: `autowithdraw_${d}`, name: 'Rescate de Ahorros', effectiveColor: '#0ea5e9' },
+                        originalDate: d,
+                        done: overrides[autowithdrawKey] ? !!overrides[autowithdrawKey].done : false,
+                        runningBalance: balance,
+                        isDelayed: false,
+                        insufficientFunds: false,
+                        savingsAccumulated,
+                    });
+    
+                }
+            }
+        }
+        lastRescuePeriodEnd = nextIncomeDate;
+    }
+
+
     
     const applyEvent = (e: any) => {
         if (!e) return;
@@ -854,33 +948,7 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
         const eventIndex = applied.length;
         applied.push({ ...e, date: d });
 
-        let rescuedAmt = 0;
-        if (balance < targetMin && savingsAccumulated > 0) {
-            const autowithdrawKey = `rescate_ahorros_autowithdraw_${d}_${d}`;
-            const isDiscarded = overrides[autowithdrawKey] && overrides[autowithdrawKey].discarded;
-            if (!isDiscarded) {
-                const deficit = targetMin - balance;
-                const amtToWithdraw = Math.min(deficit, savingsAccumulated);
-                rescuedAmt = amtToWithdraw;
-                balance += amtToWithdraw;
-                savingsAccumulated -= amtToWithdraw;
-
-                applied.push({
-                   date: d,
-                   label: 'Rescate de Ahorros',
-                   type: 'rescate_ahorros',
-                   amt: amtToWithdraw,
-                   ref: { id: `autowithdraw_${d}_${applied.length}`, name: 'Rescate de Ahorros', effectiveColor: '#0ea5e9' },
-                   originalDate: d,
-                   done: overrides[autowithdrawKey] ? !!overrides[autowithdrawKey].done : false,
-                   runningBalance: balance,
-                   isDelayed: false,
-                   insufficientFunds: false,
-                   savingsAccumulated,
-                });
-            }
-        }
-        applied[eventIndex].runningBalance = balance - (typeof rescuedAmt !== 'undefined' ? rescuedAmt : 0);
+        applied[eventIndex].runningBalance = balance;
     };
 
     for (const e of incomes) applyEvent(e);
@@ -896,12 +964,11 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
     
     const isProcessingDay = incomes.length > 0;
     if (isProcessingDay) {
-       const nextIncome = futureEvents.find(e => e?.originalDate > d && (e?.amt || 0) > 0 && e?.type === 'income');
-       const nextIncomeDate = nextIncome ? nextIncome?.originalDate : null;
+       const nextIncome = futureEvents.find(e => (e?.targetDate || e?.originalDate) > d && (e?.amt || 0) > 0 && e?.type === 'income');
+       const nextIncomeDate = nextIncome ? (nextIncome?.targetDate || nextIncome?.originalDate) : null;
        
        const upcoming = futureEvents.filter(e => 
-           e?.originalDate > d && 
-           (nextIncomeDate ? e?.originalDate < nextIncomeDate : true) && 
+           (e?.targetDate || e?.originalDate) > d && (nextIncomeDate ? (e?.targetDate || e?.originalDate) < nextIncomeDate : true) && 
            (e?.amt || 0) < 0 && 
            !e?.done && 
            !e?.ref?.strictDate &&
@@ -910,7 +977,7 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
        candidates.push(...upcoming);
     }
     
-    candidates.sort((a, b) => a.originalDate.localeCompare(b.originalDate) || Math.abs(a.amt || 0) - Math.abs(b.amt || 0));
+    candidates.sort((a, b) => (a.targetDate || a.originalDate).localeCompare(b.targetDate || b.originalDate) || Math.abs(a.amt || 0) - Math.abs(b.amt || 0));
     
     let newDelayed: any[] = [];
     
@@ -918,16 +985,16 @@ export function calculateProjections(profile: UserProfile, exchangeRates: Record
        // Only apply if we have enough balance to cover it without dipping below targetMin
        const isIncome = (e.amt || 0) > 0;
        if (isIncome || balance + (e.amt || 0) >= targetMin) {
-          if (e.originalDate > d) {
+          if ((e.targetDate || e.originalDate) > d) {
              e.pulledEarly = true;
-          } else if (e.originalDate < d) {
+          } else if ((e.targetDate || e.originalDate) < d) {
              e.isDelayed = true;
           }
           e.optimizedFrom = e.originalDate;
           applyEvent(e);
        } else {
           // If we can't pay it, and it's due (or overdue), keep it in the backlog
-          if (e.originalDate <= d) {
+          if ((e.targetDate || e.originalDate) <= d) {
               newDelayed.push(e);
           }
        }

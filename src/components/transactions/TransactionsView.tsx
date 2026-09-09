@@ -155,7 +155,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                         item.realType === 'income' ? 'text-emerald-600' : 'text-rose-600'
                       }`}
                     >
-                      {item.realType === 'income' ? '+' : '-'}{formatCurrency(item.amount)} {(item as any).currency && (item as any).currency !== 'USD_BCV' ? (item as any).currency : ''}
+                      {item.realType === 'income' ? '+' : '-'}{item.amount.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 2})} {(item as any).currency && (item as any).currency !== 'USD_BCV' ? (item as any).currency : 'USD'}
                     </span>
                     {(item as any).currency && (item as any).currency !== 'USD_BCV' && (
                        <span className="text-[9px] text-slate-400">

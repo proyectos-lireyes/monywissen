@@ -31,14 +31,21 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
     
     const raw = sym + (Math.round((amt || 0) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
     
-    if (curr && curr !== 'USD_BCV') {
-      const conv = convertAmount(amt, curr);
-      if (conv !== amt) {
-        return `${raw} (${formatCurrency(conv)})`;
-      }
+    const conv = convertAmount(amt, curr || 'USD_BCV');
+    const globalFormatted = formatCurrency(conv);
+    
+    const isDifferentCurrency = 
+      (globalFormatted.includes('Bs') && sym !== 'Bs') ||
+      (globalFormatted.includes('€') && sym !== '€') ||
+      (globalFormatted.includes('USDT') && sym !== 'USDT ') ||
+      (globalFormatted.includes('$') && !globalFormatted.includes('Bs') && sym !== '$');
+
+    if (isDifferentCurrency) {
+        return `${raw} (~ ${globalFormatted})`;
     }
     return raw;
   };
+  
   const [name, setName] = useState('');
   const [color, setColor] = useState('');
   const [amount, setAmount] = useState<number | string>('');

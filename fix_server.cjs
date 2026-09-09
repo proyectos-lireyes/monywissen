@@ -1,17 +1,8 @@
-import express from 'express';
-import path from 'path';
-import fs from 'fs';
-import { createServer as createViteServer } from 'vite';
+const fs = require('fs');
+const p = 'server.ts';
+let txt = fs.readFileSync(p, 'utf8');
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
-
-  // API routes
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
-  });
-
+const newRoutes = `
   app.get("/api/updates", async (req, res) => {
     try {
       const resp = await fetch('https://api.github.com/repos/proyectos-lireyes/monywissen/releases/latest');
@@ -53,24 +44,11 @@ async function startServer() {
       res.status(500).json({ error: "Failed to fetch eur" });
     }
   });
+`;
 
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
+txt = txt.replace(
+  /app\.get\("\/api\/exchange-rates"[\s\S]*?\}\);/m,
+  newRoutes
+);
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-}
-
-startServer();
+fs.writeFileSync(p, txt);

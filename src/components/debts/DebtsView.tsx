@@ -22,14 +22,21 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
     
     const raw = sym + (Math.round((amt || 0) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
     
-    if (curr && curr !== 'USD_BCV') {
-      const conv = convertAmount(amt, curr);
-      if (conv !== amt) {
-        return `${raw} (${formatCurrency(conv)})`;
-      }
+    const conv = convertAmount(amt, curr || 'USD_BCV');
+    const globalFormatted = formatCurrency(conv);
+    
+    const isDifferentCurrency = 
+      (globalFormatted.includes('Bs') && sym !== 'Bs') ||
+      (globalFormatted.includes('€') && sym !== '€') ||
+      (globalFormatted.includes('USDT') && sym !== 'USDT ') ||
+      (globalFormatted.includes('$') && !globalFormatted.includes('Bs') && sym !== '$');
+
+    if (isDifferentCurrency) {
+        return `${raw} (~ ${globalFormatted})`;
     }
     return raw;
   };
+  
   const [subTab, setSubTab] = useState<'active' | 'settled' | 'types' | 'strategy'>('active');
   const [strategyMode, setStrategyMode] = useState<'snowball' | 'avalanche'>('snowball');
   const [sortOption, setSortOption] = useState<'name' | 'total' | 'remaining' | 'paid' | 'type'>('remaining');

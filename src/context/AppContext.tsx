@@ -6,7 +6,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { AppStateData, UserProfile, ToastMessage, AuthUser } from '../types';
-import { todayStr, calculateProjections } from '../utils/financialEngine';
+import { todayStr, calculateProjections, setGlobalFormattingContext } from '../utils/financialEngine';
 import { validateFinancialIntegrity, validateTransactionExecution, IntegrityReport } from '../utils/financialIntegrity';
 import { verifyJWT } from '../utils/security';
 import { backupStateToFirebase, subscribeToFirebaseState } from '../utils/firebase';
@@ -162,7 +162,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     const checkUpdate = async () => {
       try {
-        const res = await fetch('https://api.github.com/repos/proyectos-lireyes/monywissen/releases/latest');
+        const res = await fetch('/api/updates');
         if (res.ok) {
           const data = await res.json();
           const rawCurrent = typeof __APP_VERSION__ !== 'undefined' ? String(__APP_VERSION__) : '1.0.0';
@@ -272,8 +272,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const fetchRates = async () => {
       try {
         const [usdRes, eurRes] = await Promise.all([
-          fetch('https://ve.dolarapi.com/v1/dolares').then(r => r.json()),
-          fetch('https://ve.dolarapi.com/v1/euros').then(r => r.json())
+          fetch('/api/exchange-rates/usd').then(r => r.json()),
+          fetch('/api/exchange-rates/eur').then(r => r.json())
         ]);
         
         // Find oficial and paralelo objects
@@ -346,10 +346,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             const payloadStr = JSON.stringify({ ...payload, authToken: undefined, authUser: undefined });
             if (prevStr === payloadStr) return prev;
             
+            if (payload.lastUpdatedAt && prev.lastUpdatedAt && payload.lastUpdatedAt < prev.lastUpdatedAt) {
+                console.log('Ignorando payload antiguo del servidor');
+                return prev;
+            }
+            
             return {
               ...payload,
               authToken: prev.authToken,
-              authUser: prev.authUser
+              authUser: prev.authUser,
+              lastUpdatedAt: payload.lastUpdatedAt || prev.lastUpdatedAt
             };
           });
         }
@@ -390,6 +396,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [rawProfile]);
 
   const profile = useMemo(() => sanitizeProfile(rawProfile), [rawProfile]);
+
+  // Sync global formatting context for financialEngine so that formatCurrency() knows the display currency
+  useEffect(() => {
+    setGlobalFormattingContext(profile.settings.displayCurrency || 'USD', exchangeRates);
+  }, [profile.settings.displayCurrency, exchangeRates]);
 
 
 
@@ -454,7 +465,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       updater(clonedProfile);
 
       draftProfiles[currentProfileName] = clonedProfile;
-      return { ...prev, profiles: draftProfiles };
+      return { ...prev, profiles: draftProfiles, lastUpdatedAt: Date.now() };
     });
   };
 
@@ -463,7 +474,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setState(prev => {
         const draftProfiles = { ...prev.profiles };
         draftProfiles[currentProfileName] = undoBuffer;
-        return { ...prev, profiles: draftProfiles };
+        return { ...prev, profiles: draftProfiles, lastUpdatedAt: Date.now() };
       });
       setUndoBuffer(null);
       showToast('Última acción deshecha exitosamente', '↩️');

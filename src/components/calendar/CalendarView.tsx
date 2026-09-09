@@ -243,7 +243,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
               const dateStr = `${prefixMonth}-${dayNum.toString().padStart(2, '0')}`;
               const isToday = dateStr === today;
               const actualEvents = plan.filter(e => e.date === dateStr && filterOccurrence(e));
-              const ghostEvents = plan.filter(e => e.originalDate === dateStr && e.date !== dateStr && filterOccurrence(e)).map(e => ({ ...e, isGhost: true }));
+              const ghostEvents: any[] = [];
               const dayEvents = [...actualEvents, ...ghostEvents];
 
               return (
@@ -416,7 +416,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                           {!e.done && e.insufficientFunds && e.amt < 0 && (
                             <span className="text-[9px] bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0" title="Quiebre / Fondos insuficientes">🚨</span>
                           )}
-                          {!e.done && e.date < today && (
+                          {!e.done && e.date < today && e.type !== 'rescate_ahorros' && !e.ref?.id?.startsWith('autosave') && !e.ref?.id?.startsWith('missed_autosave') && (
                             <span className="text-[9px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded-md uppercase tracking-wider shrink-0">Atrasado</span>
                           )}
                         </p>
@@ -545,7 +545,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                         {e.label}
                         {e.pulledEarly && !e.done && <span title="Adelantado automáticamente" className="text-emerald-500 no-underline">⚡</span>}
                         {e.insufficientFunds && e.amt < 0 && !e.done && <span title="Alerta de Quiebre" className="text-rose-500 no-underline">🚨</span>}
-                        {e.isDelayed && !e.insufficientFunds && !e.done && <span title="Retrasado" className="text-amber-500 no-underline">⚠️</span>}
+                        {e.isDelayed && !e.insufficientFunds && !e.done && e.type !== 'rescate_ahorros' && !e.ref?.id?.startsWith('autosave') && <span title="Retrasado" className="text-amber-500 no-underline">⚠️</span>}
                       </p>
                       <p className={`text-[10px] ${e.pulledEarly ? 'text-emerald-600/70 dark:text-emerald-400/60' : e.insufficientFunds && e.amt < 0 ? 'text-rose-600/70 dark:text-rose-400/60' : 'text-slate-400'}`}>{e.type}</p>
                     </div>

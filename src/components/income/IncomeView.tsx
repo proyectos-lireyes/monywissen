@@ -9,7 +9,7 @@ interface IncomeViewProps {
 }
 
 export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit }) => {
-  const { profile } = useApp();
+  const { profile, convertAmount } = useApp();
   const recurrentIncomes = (profile.incomes || []).filter(i => i.freq !== 'one-time');
 
   return (
@@ -63,7 +63,7 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
                         {item.name}
                       </td>
                       <td className="py-3 font-black text-emerald-600">
-                        {formatCurrency(item.amount)}
+                        {formatCurrency(convertAmount(item.amount, (item as any).currency))}
                       </td>
                       <td className="py-3 text-slate-500 capitalize">
                         {item.freq === 'biweekly' ? 'Quincenal' : item.freq}

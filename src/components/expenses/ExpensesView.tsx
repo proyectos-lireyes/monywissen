@@ -9,7 +9,7 @@ interface ExpensesViewProps {
 }
 
 export const ExpensesView: React.FC<ExpensesViewProps> = ({ onOpenCreate, onOpenEdit }) => {
-  const { profile } = useApp();
+  const { profile, convertAmount } = useApp();
   const [tab, setTab] = useState<'active' | 'completed'>('active');
 
   const today = todayStr();
@@ -42,7 +42,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onOpenCreate, onOpen
                   {item.name}
                 </td>
                 <td className="py-3 font-black text-blue-600">
-                  {formatCurrency(item.amount)}
+                  {formatCurrency(convertAmount(item.amount, (item as any).currency))}
                 </td>
                 <td className="py-3 text-slate-500 capitalize">
                   {item.freq === 'biweekly' ? 'Quincenal' : item.freq}
