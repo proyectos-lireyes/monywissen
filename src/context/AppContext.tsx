@@ -4,7 +4,7 @@
  * toast messaging, and financial CRUD operations across all modules.
  */
 
-import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo, useRef } from 'react';
 import { AppStateData, UserProfile, ToastMessage, AuthUser } from '../types';
 import { todayStr, calculateProjections, setGlobalFormattingContext } from '../utils/financialEngine';
 import { validateFinancialIntegrity, validateTransactionExecution, IntegrityReport } from '../utils/financialIntegrity';
@@ -162,7 +162,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     const checkUpdate = async () => {
       try {
-        const res = await fetch('/api/updates');
+        const res = await fetch('https://api.github.com/repos/proyectos-lireyes/monywissen/releases/latest');
         if (res.ok) {
           const data = await res.json();
           const rawCurrent = typeof __APP_VERSION__ !== 'undefined' ? String(__APP_VERSION__) : '1.0.0';
@@ -272,8 +272,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const fetchRates = async () => {
       try {
         const [usdRes, eurRes] = await Promise.all([
-          fetch('/api/exchange-rates/usd').then(r => r.json()),
-          fetch('/api/exchange-rates/eur').then(r => r.json())
+          fetch('https://ve.dolarapi.com/v1/dolares').then(r => r.json()),
+          fetch('https://ve.dolarapi.com/v1/euros').then(r => r.json())
         ]);
         
         // Find oficial and paralelo objects
@@ -316,6 +316,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Sync state to LocalStorage and Firebase
+  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -326,13 +328,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
          const stateToBackup = JSON.parse(JSON.stringify(state));
          delete stateToBackup.authToken;
          
-         // Use setTimeout to debounce slightly, though React handles basic debouncing
-         backupStateToFirebase(state.authUser.email, stateToBackup).catch(err => {
-             console.error('Error syncing to Firebase:', err);
-         });
+         if (syncTimeoutRef.current) {
+           clearTimeout(syncTimeoutRef.current);
+         }
+         
+         // Debounce writes to avoid exhausting Firebase quota (10 seconds)
+         syncTimeoutRef.current = setTimeout(() => {
+           backupStateToFirebase(state.authUser.email, stateToBackup).catch(err => {
+               console.error('Error syncing to Firebase:', err);
+           });
+         }, 5000);
       }
     } catch (e) {
       console.error('Error saving state:', e);
+    }
+    
+    return () => {
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+      }
     }
   }, [state]);
 
