@@ -596,8 +596,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                       type="button"
                       onClick={() => {
                         if ((window as any).Capacitor && (window as any).Capacitor.isNativePlatform()) {
-                           // If somehow it's native but in settings, delegate to AppUpdaterModal or window.open
-                           window.open(updateState.downloadUrl, '_system');
+                           import('@capawesome-team/capacitor-file-opener').then(({ FileOpener }) => {
+                             FileOpener.openFile({
+                               path: updateState.downloadUrl,
+                               mimeType: 'application/vnd.android.package-archive'
+                             }).catch(err => {
+                               console.error('Error abriendo APK', err);
+                               showToast('Error al abrir el instalador', '❌');
+                             });
+                           }).catch(() => {
+                             window.open(updateState.downloadUrl, '_system');
+                           });
                         } else {
                           showToast('Iniciando descarga de APK...', '📲');
                           const a = document.createElement('a');
