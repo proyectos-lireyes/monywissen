@@ -17,7 +17,6 @@ import {
   CheckCircle,
   XCircle,
   UserPlus,
-  Pencil,
   Trash2,
   Image as ImageIcon,
   Paperclip,
@@ -696,39 +695,121 @@ export const MonySharedView: React.FC = () => {
     setIsSearching(true);
     setSearchResults([]);
 
+    const resultsMap: Record<string, any> = {};
+
+    // 1. Search local profiles in storage (great for multi-profile offline testing)
     try {
-      let q;
+      const localProfilesRaw = localStorage.getItem('finplan_profiles_v3');
+      if (localProfilesRaw) {
+        const parsed = JSON.parse(localProfilesRaw);
+        if (parsed && parsed.profiles) {
+          Object.entries(parsed.profiles).forEach(([pName, pData]: [string, any]) => {
+            const pAlias = pData?.settings?.myAlias || pName;
+            const pEmail = pData?.settings?.myEmail || `${pName.toLowerCase().replace(/\s+/g, '')}@mony.app`;
+            const myEmail = (profile.settings.myEmail || '').toLowerCase();
+            const myAlias = (profile.settings.myAlias || '').toLowerCase();
+
+            if (
+              pEmail.toLowerCase() !== myEmail &&
+              pAlias.toLowerCase() !== myAlias &&
+              (pAlias.toLowerCase().includes(term) || pEmail.toLowerCase().includes(term))
+            ) {
+              resultsMap[pEmail.toLowerCase()] = {
+                id: `local_${pName}`,
+                alias: pAlias,
+                email: pEmail,
+                phone: pData?.settings?.myPhone || '',
+                avatar: pData?.settings?.myAvatar || null,
+                paymentMethods: pData?.settings?.paymentMethods || [],
+                source: 'Perfil Local'
+              };
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("Error leyendo perfiles locales:", e);
+    }
+
+    // 2. Search Firestore Cloud Network
+    try {
       if (term.includes('@')) {
-        q = query(collection(db, 'users'), where('email', '==', term));
+        // Direct document lookup by email
+        const directUser = await getUserProfileByEmail(term);
+        if (directUser) {
+          resultsMap[term] = {
+            id: term,
+            alias: directUser.alias || term.split('@')[0],
+            email: term,
+            phone: directUser.phone || '',
+            avatar: directUser.avatar || null,
+            paymentMethods: directUser.paymentMethods || [],
+            source: 'Red MonyShared'
+          };
+        }
+        // Query by email field
+        const q = query(collection(db, 'users'), where('email', '==', term));
+        const snap = await getDocs(q);
+        snap.docs.forEach(docSnap => {
+          const data = docSnap.data() as any;
+          const email = (data.email || docSnap.id).toLowerCase();
+          resultsMap[email] = {
+            id: docSnap.id,
+            alias: data.alias || email.split('@')[0],
+            email: email,
+            phone: data.phone || '',
+            avatar: data.avatar || null,
+            paymentMethods: data.paymentMethods || [],
+            source: 'Red MonyShared'
+          };
+        });
       } else {
         const endTerm = term.slice(0, -1) + String.fromCharCode(term.charCodeAt(term.length - 1) + 1);
-        q = query(
+        const q = query(
           collection(db, 'users'),
           where('alias_lower', '>=', term),
           where('alias_lower', '<', endTerm),
           limit(10)
         );
+        const snap = await getDocs(q);
+        snap.docs.forEach(docSnap => {
+          const data = docSnap.data() as any;
+          const email = (data.email || docSnap.id).toLowerCase();
+          resultsMap[email] = {
+            id: docSnap.id,
+            alias: data.alias || docSnap.id,
+            email: email,
+            phone: data.phone || '',
+            avatar: data.avatar || null,
+            paymentMethods: data.paymentMethods || [],
+            source: 'Red MonyShared'
+          };
+        });
       }
-
-      const snap = await getDocs(q);
-      const results = snap.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) }));
-      setSearchResults(results);
     } catch (error) {
-      console.error("Error en búsqueda Cloud:", error);
-      showToast("Error al conectar con la red", "❌");
-    } finally {
-      setIsSearching(false);
+      console.warn("Nota: Búsqueda Firestore limitada o sin conexión:", error);
     }
+
+    const finalResults = Object.values(resultsMap);
+    setSearchResults(finalResults);
+    setIsSearching(false);
   };
 
   const addFromCloud = (user: any) => {
     updateProfileData(draft => {
       draft.settings.contacts = draft.settings.contacts || [];
-      if (!draft.settings.contacts.find(c => c.email === user.email)) {
-        draft.settings.contacts.push({ alias: user.alias, email: user.email, phone: user.phone || '' });
+      const exists = draft.settings.contacts.find(c => c.email?.toLowerCase() === user.email?.toLowerCase() || c.alias.toLowerCase() === user.alias.toLowerCase());
+      if (!exists) {
+        draft.settings.contacts.push({
+          alias: user.alias,
+          email: user.email,
+          phone: user.phone || '',
+          avatar: user.avatar || undefined,
+          paymentMethods: user.paymentMethods || []
+        });
       }
     });
-    showToast(`Contacto ${user.alias} guardado`, '✅');
+    showToast(`Contacto ${user.alias} guardado en tu agenda`, '✅');
     setShowSearchModal(false);
   };
 
@@ -942,14 +1023,17 @@ export const MonySharedView: React.FC = () => {
                           return (
                             <div key={pIdx} className={`px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 ${statusClass}`}>
                               {pAvatar && <img src={pAvatar} alt={p} className="w-4 h-4 rounded-full object-cover inline-block" />}
-                              <span>👤 {p}</span>
+                              <span
+                                onClick={() => !isMe && handleEditParticipantInGroup(selectedGroupIdx, p)}
+                                className={!isMe ? 'cursor-pointer hover:text-blue-500 hover:underline' : ''}
+                                title={!isMe ? 'Toca para editar alias' : undefined}
+                              >
+                                👤 {p}
+                              </span>
                               <span className="text-[10px]">{statusIcon}</span>
                               {!isMe && (
                                 <div className="flex items-center gap-0.5 border-l border-slate-200 dark:border-slate-700 pl-1.5 ml-0.5">
-                                  <button onClick={() => handleEditParticipantInGroup(selectedGroupIdx, p)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-500 rounded transition-colors">
-                                    <Pencil className="w-3 h-3" />
-                                  </button>
-                                  <button onClick={() => handleRemoveParticipantFromGroup(selectedGroupIdx, p)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors">
+                                  <button onClick={() => handleRemoveParticipantFromGroup(selectedGroupIdx, p)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors cursor-pointer" title="Eliminar participante">
                                     <Trash2 className="w-3 h-3" />
                                   </button>
                                 </div>
@@ -1041,8 +1125,12 @@ export const MonySharedView: React.FC = () => {
                   <div key={loan.id} className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 relative overflow-hidden space-y-2">
                     <div className={`absolute left-0 top-0 bottom-0 w-1 ${isBorrower ? 'bg-rose-500' : 'bg-emerald-500'}`} />
                     <div className="flex justify-between items-start pl-2">
-                      <div>
-                        <p className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                      <div
+                        onClick={() => handleEditLoan(loan)}
+                        className="cursor-pointer group flex-1"
+                        title="Toca para editar préstamo"
+                      >
+                        <p className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 group-hover:text-indigo-600 transition-colors">
                           {loan.status === 'requested' 
                             ? (isBorrower ? 'Solicitaste a ' : 'Te solicitó ')
                             : loan.status === 'sent'
@@ -1127,21 +1215,14 @@ export const MonySharedView: React.FC = () => {
                           {pending > 0 && (
                             <button
                               onClick={() => openAbonoModal(loan.id)}
-                              className="text-[10px] bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 px-2.5 py-1 rounded-lg font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 shadow-xs"
+                              className="text-[10px] bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 px-2.5 py-1 rounded-lg font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600 shadow-xs cursor-pointer"
                             >
                               Abonar
                             </button>
                           )}
                           <button
-                            onClick={() => handleEditLoan(loan)}
-                            className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-lg transition-colors"
-                            title="Editar préstamo"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
                             onClick={() => handleDeleteLoan(loan.id)}
-                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors"
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
                             title="Eliminar préstamo"
                           >
                             <Trash2 className="w-3.5 h-3.5" />

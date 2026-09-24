@@ -3,13 +3,14 @@
  * Modern TypeScript interfaces for financial management, profiles, and shared accounts.
  */
 
-export type FrequencyType = 'one-time' | 'weekly' | 'biweekly' | 'triweekly' | 'monthly';
+export type FrequencyType = 'one-time' | 'weekly' | 'biweekly' | 'triweekly' | 'monthly' | 'bimonthly' | 'quarterly' | 'four-monthly' | 'semiannual' | 'annual';
 export type CurrencyCode = 'USD_BCV' | 'EUR_BCV' | 'USDT' | 'BS';
 
 export interface UserSettings {
   planStart: string; // YYYY-MM-DD
   planEnd: string;   // YYYY-MM-DD
   minBalance: number;
+  minBalanceCurrency?: string;
   delayDays: number;
   openingBalance?: number;
   freeSpend: number;
@@ -21,6 +22,7 @@ export interface UserSettings {
   notificationsEnabled?: boolean;
   notifTime?: string;
   defaultChart?: number; // 0: Lines, 1: Bars, 2: Doughnut
+  enableAutoSavings?: boolean;
   creditCards?: CreditCard[];
   customDebts?: CustomDebtType[];
   savingPlatforms?: SavingsPlatform[];
@@ -46,6 +48,7 @@ export interface CustomDebtType {
   cutDay?: number | string;
   creditLimit?: number | string;
   limitCurrency?: string;
+  currency?: CurrencyCode;
   isCreditCard?: boolean;
   hasInterest: boolean;
   usePlan: boolean;
@@ -77,6 +80,7 @@ export interface IncomeItem {
   day?: number | string; // Day number or biweekly pair '15-30'
   date?: string; // For 'one-time' (legacy) or start date
   start?: string; // Optional start date for recurring
+  hasCustomStart?: boolean; // Whether the start date was explicitly customized
   end?: string; // Optional end date for recurring
   receiptImg?: string;
   desc?: string;
@@ -93,7 +97,9 @@ export interface ExpenseItem {
   day?: number | string;
   date?: string; // For one-time (legacy) or start date
   start?: string; // Optional start date for recurring
+  hasCustomStart?: boolean; // Whether the start date was explicitly customized
   end?: string; // Optional end date
+  incomeId?: string; // ID of the income account that funds this expense
   flex?: boolean;
   desc?: string;
   receiptImg?: string;
@@ -111,6 +117,7 @@ export interface DebtItem {
   color?: string;
   balance: number;
   amortized?: number;
+  initialPaidCuotas?: number;
   cardId?: string;
   strictDate?: boolean;
   cutDay?: number;
@@ -124,8 +131,11 @@ export interface DebtItem {
   apr?: number;
   mora?: number;
   plan?: string;
+  incomeId?: string; // Default income account from which debt is paid
   currency?: CurrencyCode;
   freq?: FrequencyType;
+  done?: boolean;
+  isPaid?: boolean;
 }
 
 export interface SavingsPlatform {
@@ -144,6 +154,7 @@ export interface SavingsItem {
   status: 'pending' | 'partial' | 'completed';
   savType: 'physical' | 'digital';
   platformId?: string | null;
+  incomeId?: string; // Income account from which this saving is drawn
   flex?: boolean;
   receiptImg?: string;
   deliveryImgs?: string[];
@@ -209,13 +220,22 @@ export interface P2PLoan {
 
 export interface OverrideRecord {
   done?: boolean;
+  isPaid?: boolean;
   discarded?: boolean;
   actualDate?: string;
   amt?: number;
+  isCustomAmt?: boolean;
+  incomeId?: string; // Specific income account from which this was paid
   userPostponed?: boolean;
+  noAffectBalance?: boolean;
+  externalPay?: boolean;
+  paidPrior?: boolean;
+  payCurrency?: string;
+  rawPayAmount?: number;
   partials?: Array<{
     date: string;
     amt: number;
+    incomeId?: string;
     comment?: string;
   }>;
 }
@@ -255,32 +275,91 @@ export interface PlanOccurrence {
   isGhost?: boolean;
   rescates?: number;
   date: string;
+  targetDate?: string;
   label: string;
   type: string;
   amt: number; // positive for income, negative for expenses/debts
+  incomeId?: string; // Originating or assigned income account ID
+  noAffectBalance?: boolean;
   ref: {
     id: string;
     name: string;
     effectiveColor?: string;
     type?: string;
+    incomeId?: string;
   };
   originalDate: string;
   done: boolean;
+  isPaid?: boolean;
   isPartial?: boolean;
   strictDate?: boolean;
-  optimizedFrom?: string;
   userPostponed?: boolean;
   plannedAmt?: number;
   balance: number;
   isDelayed?: boolean;
-  pulledEarly?: boolean;
+  discarded?: boolean;
   insufficientFunds?: boolean;
+  belowCushion?: boolean;
   criticalDelay?: boolean;
   savingsAccumulated?: number;
+}
+
+export interface IncomeAccountBalance {
+  id: string;
+  name: string;
+  amount: number;
+  freq: FrequencyType;
+  day?: number | string;
+  currency?: CurrencyCode;
+  strictDate?: boolean;
+  totalInflowsToDate: number;
+  totalOutflowsToDate: number;
+  availableToday: number;
+  totalProjectedInflows: number;
+  totalProjectedOutflows: number;
+  projectedBalance: number;
+  assignedItemsCount?: number;
+  nextIncomeDate?: string | null;
+  paidMovements?: Array<{
+    date: string;
+    label: string;
+    type: string;
+    amount: number;
+  }>;
 }
 
 export interface ToastMessage {
   id: string;
   message: string;
   icon?: string;
+}
+
+export interface IncomePeriodCoverage {
+  incomeDate: string;
+  incomeNames: string[];
+  totalIncomeAmount: number;
+  balanceBeforeIncome: number;
+  totalAvailable: number;
+  nextIncomeDate: string | null;
+  nextIncomeName: string | null;
+  daysInPeriod: number;
+  
+  totalGastosFijos: number;
+  totalDeudas: number;
+  totalAhorros: number;
+  totalEgresos: number;
+  
+  isCoveredByIncome: boolean;
+  isCoveredWithBalance: boolean;
+  incomeCoveragePct: number;
+  availableCoveragePct: number;
+  
+  surplusIncome: number;
+  shortfallIncome: number;
+  
+  surplusTotal: number;
+  shortfallTotal: number;
+  
+  outOfMoneyDate: string | null;
+  itemsInPeriod: PlanOccurrence[];
 }

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { AvatarViewerModal } from '../modals/AvatarViewerModal';
-import { updateUserAvatar } from '../../utils/firebase';
+import { updateUserAvatar, saveUserProfileToFirestore } from '../../utils/firebase';
 import { Menu, Printer, Bell, ArrowRightLeft, X, ExternalLink, ShieldAlert, Clock, Handshake, Download } from 'lucide-react';
 import { CurrencyModal } from '../modals/CurrencyModal';
 import { AppUpdaterModal } from '../updater/AppUpdaterModal';
@@ -293,7 +293,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             )}
           </div>
         </div>
-            <AvatarViewerModal 
+    <AvatarViewerModal 
         isOpen={avatarViewerOpen}
         onClose={() => setAvatarViewerOpen(false)}
         imageUrl={profile.avatar || null}
@@ -301,11 +301,29 @@ export const TopBar: React.FC<TopBarProps> = ({
         canEdit={true}
         onImageUpload={(b64) => {
           updateProfileData(draft => { draft.avatar = b64; });
-          if (state.authUser?.email) updateUserAvatar(state.authUser.email, b64);
+          if (state.authUser?.email) {
+            updateUserAvatar(state.authUser.email, b64);
+            saveUserProfileToFirestore(
+              state.authUser.email,
+              profile.settings.myAlias || state.authUser.alias,
+              profile.settings.myPhone || state.authUser.phone || '',
+              b64,
+              profile.settings.paymentMethods || []
+            );
+          }
         }}
         onImageDelete={() => {
           updateProfileData(draft => { delete draft.avatar; });
-          if (state.authUser?.email) updateUserAvatar(state.authUser.email, null);
+          if (state.authUser?.email) {
+            updateUserAvatar(state.authUser.email, null);
+            saveUserProfileToFirestore(
+              state.authUser.email,
+              profile.settings.myAlias || state.authUser.alias,
+              profile.settings.myPhone || state.authUser.phone || '',
+              null,
+              profile.settings.paymentMethods || []
+            );
+          }
         }}
       />
     </header>

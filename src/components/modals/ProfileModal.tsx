@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { updateUserAvatar } from '../../utils/firebase';
-import { UserIcon, Plus, Edit2, Trash2, X, CreditCard, QrCode, LogOut, LogIn, AlertOctagon } from 'lucide-react';
-import { requestAccountDeletion } from '../../utils/firebase';
+import { updateUserAvatar, requestAccountDeletion, saveUserProfileToFirestore } from '../../utils/firebase';
+import { UserIcon, Plus, Trash2, X, CreditCard, QrCode, LogOut, LogIn, AlertOctagon, RotateCcw } from 'lucide-react';
 import { AvatarViewerModal } from './AvatarViewerModal';
 
 interface ProfileModalProps {
@@ -45,6 +44,17 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
       draft.settings.myAlias = alias;
       draft.settings.myPhone = phone;
     });
+
+    if (state.authUser?.email) {
+      saveUserProfileToFirestore(
+        state.authUser.email,
+        alias,
+        phone,
+        profile.avatar || null,
+        profile.settings.paymentMethods || []
+      );
+    }
+
     showToast('Información de usuario guardada', '👤');
   };
 
@@ -57,6 +67,15 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
       updateProfileData(draft => {
         draft.avatar = result;
       });
+      if (state.authUser?.email) {
+        saveUserProfileToFirestore(
+          state.authUser.email,
+          alias,
+          phone,
+          result,
+          profile.settings.paymentMethods || []
+        );
+      }
       showToast('Foto de perfil actualizada', '📷');
     };
     reader.readAsDataURL(file);
@@ -68,18 +87,34 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
       return;
     }
 
+    const newPaymentMethod = {
+      id: `pm_${Date.now()}`,
+      bank: bankForm.bank.trim(),
+      account: bankForm.account.trim(),
+      name: bankForm.name.trim(),
+      idCard: bankForm.idCard.trim(),
+      phone: '',
+      email: '',
+    };
+
+    const updatedPaymentMethods = [
+      ...(profile.settings.paymentMethods || []),
+      newPaymentMethod
+    ];
+
     updateProfileData(draft => {
-      draft.settings.paymentMethods = draft.settings.paymentMethods || [];
-      draft.settings.paymentMethods.push({
-        id: `pm_${Date.now()}`,
-        bank: bankForm.bank.trim(),
-        account: bankForm.account.trim(),
-        name: bankForm.name.trim(),
-        idCard: bankForm.idCard.trim(),
-        phone: '',
-        email: '',
-      });
+      draft.settings.paymentMethods = updatedPaymentMethods;
     });
+
+    if (state.authUser?.email) {
+      saveUserProfileToFirestore(
+        state.authUser.email,
+        alias,
+        phone,
+        profile.avatar || null,
+        updatedPaymentMethods
+      );
+    }
 
     setBankForm({ bank: '', account: '', name: '', idCard: '' });
     setShowAddAccountForm(false);
@@ -87,15 +122,28 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
   };
 
   const handleDeletePaymentMethod = (id: string) => {
+    const updatedPaymentMethods = (profile.settings.paymentMethods || []).filter(pm => pm.id !== id);
+
     updateProfileData(draft => {
-      draft.settings.paymentMethods = (draft.settings.paymentMethods || []).filter(pm => pm.id !== id);
+      draft.settings.paymentMethods = updatedPaymentMethods;
     });
+
+    if (state.authUser?.email) {
+      saveUserProfileToFirestore(
+        state.authUser.email,
+        alias,
+        phone,
+        profile.avatar || null,
+        updatedPaymentMethods
+      );
+    }
+
     showToast('Método de pago eliminado', '🗑️');
   };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl relative overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full h-[80vh] max-h-[80vh] flex flex-col shadow-2xl relative overflow-hidden">
         <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800 shrink-0">
           <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
             Tu Perfil
@@ -120,20 +168,16 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
                 <span className="text-white text-[10px] font-bold">Ver Foto</span>
               </div>
             </button>
-            <div className="flex items-center gap-1.5">
-              <span className="text-lg font-black text-slate-900 dark:text-slate-100">
-                {currentProfileName}
-              </span>
-              <button
-                onClick={() => {
-                  const newName = prompt('Nuevo nombre para el perfil:', currentProfileName);
-                  if (newName) renameProfile(currentProfileName, newName);
-                }}
-                className="p-1 text-slate-400 hover:text-blue-600"
-              >
-                <Edit2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            <button
+              onClick={() => {
+                const newName = prompt('Nuevo nombre para el perfil:', currentProfileName);
+                if (newName) renameProfile(currentProfileName, newName);
+              }}
+              className="text-lg font-black text-slate-900 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+              title="Toca para renombrar perfil"
+            >
+              {currentProfileName}
+            </button>
           </div>
           
           {/* Tabs */}
@@ -234,6 +278,64 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
           
           {/* Profile Switcher & New Profile Creation */}
           <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
+            <div>
+              <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Mantenimiento de Estados</span>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('¿Deseas restablecer TODOS los ingresos a estado PENDIENTE (sin pagar)?')) {
+                      updateProfileData(draft => {
+                        (draft.incomes || []).forEach((inc: any) => {
+                          inc.isPaid = false;
+                          inc.done = false;
+                          if (inc.name) {
+                            inc.name = inc.name.replace(/\s*\([^)]*\)/g, '').replace(/[\✓\√\✔\✅]+/g, '').trim();
+                          }
+                        });
+                        draft.overrides = draft.overrides || {};
+                        Object.keys(draft.overrides).forEach(k => {
+                          if (k.startsWith('income_')) {
+                            delete draft.overrides[k];
+                          }
+                        });
+                      });
+                      showToast('Todos los ingresos restablecidos a pendiente', '🔄');
+                    }
+                  }}
+                  className="w-full py-2 px-3 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 hover:bg-amber-100 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border border-amber-200 dark:border-amber-800/50 transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Restablecer Todos los Ingresos a Pendiente
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('¿Deseas restablecer TODOS los gastos a estado PENDIENTE (sin pagar)?')) {
+                      updateProfileData(draft => {
+                        (draft.expenses || []).forEach((exp: any) => {
+                          exp.isPaid = false;
+                          exp.done = false;
+                          if (exp.name) {
+                            exp.name = exp.name.replace(/\s*\([^)]*\)/g, '').replace(/[\✓\√\✔\✅]+/g, '').trim();
+                          }
+                        });
+                        draft.overrides = draft.overrides || {};
+                        Object.keys(draft.overrides).forEach(k => {
+                          if (k.startsWith('expense_')) {
+                            delete draft.overrides[k];
+                          }
+                        });
+                      });
+                      showToast('Todos los gastos restablecidos a pendiente', '🔄');
+                    }
+                  }}
+                  className="w-full py-2 px-3 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Restablecer Todos los Gastos a Pendiente
+                </button>
+              </div>
+            </div>
+
             <div>
               <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Perfil Activo</span>
               <select
@@ -371,12 +473,30 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
         canEdit={true}
         onImageUpload={(b64) => {
           updateProfileData(draft => { draft.avatar = b64; });
-          if (state.authUser?.email) updateUserAvatar(state.authUser.email, b64);
+          if (state.authUser?.email) {
+            updateUserAvatar(state.authUser.email, b64);
+            saveUserProfileToFirestore(
+              state.authUser.email,
+              alias,
+              phone,
+              b64,
+              profile.settings.paymentMethods || []
+            );
+          }
           showToast('Foto de perfil actualizada', '✅');
         }}
         onImageDelete={() => {
           updateProfileData(draft => { delete draft.avatar; });
-          if (state.authUser?.email) updateUserAvatar(state.authUser.email, null);
+          if (state.authUser?.email) {
+            updateUserAvatar(state.authUser.email, null);
+            saveUserProfileToFirestore(
+              state.authUser.email,
+              alias,
+              phone,
+              null,
+              profile.settings.paymentMethods || []
+            );
+          }
           showToast('Foto de perfil eliminada', '🗑️');
         }}
       />

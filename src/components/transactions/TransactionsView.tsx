@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency, formatDateStr } from '../../utils/financialEngine';
-import { Plus, ArrowLeftRight, Edit2, Undo2, Filter, X } from 'lucide-react';
+import { Plus, ArrowLeftRight, Undo2, Filter, X } from 'lucide-react';
 
 interface TransactionsViewProps {
   onOpenCreate: (type: 'income' | 'expense', forceOneTime?: boolean) => void;
@@ -163,7 +163,6 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                        </span>
                     )}
                   </div>
-                  <Edit2 className="w-3.5 h-3.5 text-slate-400" />
                 </div>
               </div>
             ))}

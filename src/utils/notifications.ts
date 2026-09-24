@@ -39,7 +39,7 @@ export function sendLocalNotification(title: string, body: string, icon = '/icon
 }
 
 /**
- * Checks for due payments today or tomorrow and schedules/triggers the 8:00 AM reminder
+ * Checks for due payments today or tomorrow and schedules/triggers the daily reminder at configured time
  */
 export function checkAndTriggerDailyReminder(
   expenses: ExpenseItem[],
@@ -55,7 +55,7 @@ export function checkAndTriggerDailyReminder(
   const todayDateStr = todayStr();
   const dayOfMonth = today.getDate();
 
-  const [targetHour, targetMin] = notifTimeStr.split(':').map(Number);
+  const [targetHour, targetMin] = (notifTimeStr || '08:00').split(':').map(Number);
   
   // Check if we reached the notification time
   if (currentHour < targetHour || (currentHour === targetHour && currentMinute < targetMin)) {
@@ -72,11 +72,13 @@ export function checkAndTriggerDailyReminder(
   const dueExpensesToday = expenses.filter(e => {
     if (e.freq === 'monthly' && Number(e.day) === dayOfMonth) return true;
     if (e.freq === 'one-time' && e.date === todayDateStr) return true;
+    if (e.start === todayDateStr) return true;
     return false;
   });
 
   const dueDebtsToday = debts.filter(d => {
     if (d.dueDay && Number(d.dueDay) === dayOfMonth) return true;
+    if (d.start === todayDateStr) return true;
     return false;
   });
 
@@ -84,14 +86,14 @@ export function checkAndTriggerDailyReminder(
 
   if (totalDueCount > 0) {
     // Save that we triggered today
-    localStorage.setItem('mony_last_8am_reminder', todayDateStr);
+    localStorage.setItem('mony_last_daily_reminder', todayDateStr);
 
     const message = `Tienes ${totalDueCount} pago(s) pendiente(s) programados para el día de hoy. ¡Revisa tu agenda de Mony!`;
     
     // If permission granted, send notification
     requestNotificationPermission().then(granted => {
       if (granted) {
-        sendLocalNotification('🔔 Recordatorio de Pago Mony (8:00 AM)', message);
+        sendLocalNotification(`🔔 Recordatorio de Pago Mony (${notifTimeStr || '08:00'})`, message);
       }
     });
   }

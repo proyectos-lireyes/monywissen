@@ -6,7 +6,7 @@ import { formatCurrency } from '../../utils/financialEngine';
 import { motion } from 'motion/react';
 
 export const InitialBalanceModal: React.FC = () => {
-  const { profile, updateProfileData, exchangeRates, showToast } = useApp();
+  const { profile, updateProfileData, exchangeRates, showToast, convertAmount } = useApp();
   const [isOpen, setIsOpen] = useState(false);
   const [requiredCapital, setRequiredCapital] = useState(0);
   const [firstIncomeDate, setFirstIncomeDate] = useState<string | null>(null);
@@ -50,7 +50,7 @@ export const InitialBalanceModal: React.FC = () => {
           if (e.type === 'income' && (e.amt || 0) > 0) break;
       }
       
-      const calcReqCap = Math.abs(minBalance) + (profile.settings.minBalance || 0);
+      const calcReqCap = minBalance < 0 ? Math.abs(minBalance) : 0;
       setRequiredCapital(calcReqCap);
       setFirstIncomeDate(firstInc);
       
@@ -85,7 +85,7 @@ export const InitialBalanceModal: React.FC = () => {
       <motion.div 
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col"
+        className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-md h-[80vh] max-h-[80vh] shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col"
       >
         <div className="p-6 text-center space-y-4">
           <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mx-auto mb-2">

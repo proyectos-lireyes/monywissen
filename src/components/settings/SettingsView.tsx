@@ -17,20 +17,26 @@ import {
   LogIn,
   Trash2, RotateCcw,
 } from 'lucide-react';
-import { registerUserInFirebase, backupStateToFirebase, restoreStateFromFirebase, getManualBackups, saveManualBackup } from '../../utils/firebase';
+import { registerUserInFirebase, backupStateToFirebase, restoreStateFromFirebase, getManualBackups, saveManualBackup, saveUserProfileToFirestore } from '../../utils/firebase';
+
+declare const __APP_VERSION__: string;
 
 interface SettingsViewProps {
   onOpenAuth?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
-  const { profile, updateProfileData, showToast, state, importFullState, loginUser, logoutUser, currentProfileName, updateState, startBackgroundUpdateDownload } = useApp();
-  const [subTab, setSubTab] = useState<'rules' | 'backup' | 'about' | 'reset'>('about');
+  const { profile, updateProfileData, showToast, state, importFullState, loginUser, logoutUser, currentProfileName, updateState, startBackgroundUpdateDownload, checkForUpdates, forceUploadLocalToCloud } = useApp();
+  const [subTab, setSubTab] = useState<'rules' | 'backup' | 'about' | 'reset'>('rules');
 
+  const [isForceUploading, setIsForceUploading] = useState(false);
   const [resetOptions, setResetOptions] = useState({ incomes: true, expenses: true, debts: true, savings: true, accounts: true });
   const [showConfirmReset, setShowConfirmReset] = useState(false);
+  const [confirmPendingReset, setConfirmPendingReset] = useState(false);
 
   const handleResetData = () => {
+    const updatedPaymentMethods = resetOptions.accounts ? [] : (profile.settings.paymentMethods || []);
+
     updateProfileData(draft => {
       if (resetOptions.incomes) draft.incomes = [];
       if (resetOptions.expenses) draft.expenses = [];
@@ -45,9 +51,43 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
         draft.settings.openingBalance = 0;
       }
     });
+
+    if (state.authUser?.email) {
+      saveUserProfileToFirestore(
+        state.authUser.email,
+        profile.settings.myAlias || state.authUser.alias,
+        profile.settings.myPhone || state.authUser.phone || '',
+        profile.avatar || null,
+        updatedPaymentMethods
+      );
+    }
+
     showToast('Datos seleccionados eliminados correctamente', '🗑️');
     setShowConfirmReset(false);
     setSubTab('rules');
+  };
+
+  const handleResetAllPaidToPending = () => {
+    updateProfileData(draft => {
+      draft.overrides = {};
+      if (draft.savingsList) {
+        draft.savingsList.forEach(s => {
+          if (s.status === 'completed') s.status = 'active';
+        });
+      }
+      if (draft.settings.customDebts) {
+        draft.settings.customDebts.forEach(d => {
+          d.initialPaidCuotas = 0;
+        });
+      }
+      if (draft.debts) {
+        draft.debts.forEach(d => {
+          d.initialPaidCuotas = 0;
+        });
+      }
+    });
+    setConfirmPendingReset(false);
+    showToast('¡Todos los pagos e ingresos se cambiaron a Pendiente!', '🔄');
   };
 
   const settings = profile.settings;
@@ -55,6 +95,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
   const [planStart, setPlanStart] = useState(settings.planStart);
   const [planEnd, setPlanEnd] = useState(settings.planEnd);
   const [minBalance, setMinBalance] = useState(settings.minBalance);
+  const [minBalanceCurrency, setMinBalanceCurrency] = useState(settings.minBalanceCurrency || settings.displayCurrency || 'USD');
   const [delayDays, setDelayDays] = useState(settings.delayDays);
   const [autoSaveThreshold, setAutoSaveThreshold] = useState(settings.autoSaveThreshold || 0);
   const [openingBalanceStr, setOpeningBalanceStr] = useState(String(settings.openingBalance || 0));
@@ -62,6 +103,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
   const [notifTime, setNotifTime] = useState(settings.notifTime || '08:00');
   const [displayCurrency, setDisplayCurrency] = useState(settings.displayCurrency || 'USD');
   const [paymentCurrency, setPaymentCurrency] = useState(settings.paymentCurrency || 'BS');
+  const [enableAutoSavings, setEnableAutoSavings] = useState(settings.enableAutoSavings ?? false);
+  const [enableCloudSync, setEnableCloudSync] = useState(false);
 
   // App Update States
   const [updateUrl, setUpdateUrl] = useState(window.location.origin);
@@ -123,21 +166,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
 
   
   const handleResetRescates = () => {
-    if (window.confirm("¿Seguro que deseas recalcular y corregir los rescates automáticos?")) {
-      const currentOverrides = { ...profile.overrides };
-      let count = 0;
-      Object.keys(currentOverrides).forEach(key => {
-        if (key.startsWith('rescate_ahorros_') || key.startsWith('income_required_starting_fund_')) {
-          delete currentOverrides[key];
-          count++;
-        }
-      });
-      if (count > 0) {
-        updateProfileData(draft => { draft.overrides = currentOverrides; });
-        showToast(`Se han corregido ${count} rescates en caché. Motor recalculado.`, '⚙️');
-      } else {
-        showToast('Todo estaba en orden, no hubo rescates que corregir.', '👍');
+    const currentOverrides = { ...profile.overrides };
+    let count = 0;
+    Object.keys(currentOverrides).forEach(key => {
+      if (key.startsWith('rescate_ahorros_') || key.startsWith('income_required_starting_fund_')) {
+        delete currentOverrides[key];
+        count++;
       }
+    });
+    if (count > 0) {
+      updateProfileData(draft => { draft.overrides = currentOverrides; });
+      showToast(`Se han corregido ${count} rescates en caché. Motor recalculado.`, '⚙️');
+    } else {
+      showToast('Todo estaba en orden, no hubo rescates que corregir.', '👍');
     }
   };
 
@@ -175,21 +216,41 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
     }
   };
 
+  const handleForceUploadLocal = async () => {
+    setIsForceUploading(true);
+    try {
+      await forceUploadLocalToCloud();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsForceUploading(false);
+    }
+  };
+
   const applyRestore = (payload: any) => {
     importFullState(payload);
     setShowRestoreModal(false);
     showToast('¡Perfil y base de datos restaurados con éxito!', '🎉');
   };
 
-  const handleCheckUpdate = () => {
+  const handleCheckUpdate = async () => {
     setIsCheckingUpdate(true);
     setUpdateMsg('Conectando con el servidor de actualizaciones...');
-    setTimeout(() => {
+    try {
+      const result = await checkForUpdates(showUpdateUrlInput ? updateUrl : undefined);
       setIsCheckingUpdate(false);
-      setUpdateReady(true);
-      setUpdateMsg('¡Nueva versión v1.2.5 disponible! (Multi-moneda BCV + Código QR + Flujo de Caja)');
-      showToast('¡Nueva versión v1.2.5 disponible!', '🚀');
-    }, 1200);
+      setUpdateMsg(result.message);
+      if (result.hasUpdate) {
+        setUpdateReady(true);
+        showToast(`¡Nueva versión ${result.latestVersion} disponible!`, '🚀');
+      } else {
+        showToast(result.message, '✅');
+      }
+    } catch (e) {
+      setIsCheckingUpdate(false);
+      setUpdateMsg('Tu aplicación está en la versión más reciente.');
+      showToast('Tu aplicación está actualizada.', '✅');
+    }
   };
 
   const handleInstallUpdate = () => {
@@ -209,11 +270,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
       draft.settings.planStart = planStart;
       draft.settings.planEnd = planEnd;
       draft.settings.minBalance = minBalance;
+      draft.settings.minBalanceCurrency = minBalanceCurrency;
       draft.settings.delayDays = delayDays;
       draft.settings.openingBalance = parseFloat(openingBalanceStr) || 0;
       draft.settings.freeSpend = freeSpend;
       draft.settings.notifTime = notifTime;
       draft.settings.autoSaveThreshold = autoSaveThreshold;
+      draft.settings.enableAutoSavings = enableAutoSavings;
       draft.settings.displayCurrency = displayCurrency;
       draft.settings.paymentCurrency = paymentCurrency;
     });
@@ -285,7 +348,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                 : 'text-slate-400 hover:text-slate-600'
             }`}
           >
-            💾 Respaldo
+            💾 Respaldo y Restauración
           </button>
           <button
             onClick={() => setSubTab('about')}
@@ -323,23 +386,58 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                 />
               </div>
               <div>
-                <label className="text-xs font-bold text-slate-500">Saldo mínimo (Colchón)</label>
-                <input
-                  type="number"
-                  value={minBalance}
-                  onChange={e => setMinBalance(parseFloat(e.target.value) || 0)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                />
+                <label className="text-xs font-bold text-slate-500">Saldo mínimo (Colchón de Seguridad)</label>
+                <div className="flex gap-2 mt-1">
+                  <input
+                    type="number"
+                    value={minBalance}
+                    onChange={e => setMinBalance(parseFloat(e.target.value) || 0)}
+                    className="flex-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
+                  />
+                  <select
+                    value={minBalanceCurrency}
+                    onChange={e => setMinBalanceCurrency(e.target.value)}
+                    className="w-24 px-2 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="EUR">EUR (€)</option>
+                    <option value="USD">USD ($)</option>
+                    <option value="BS">BS (Bs)</option>
+                    <option value="USDT">USDT</option>
+                  </select>
+                </div>
               </div>
-              <div>
-                <label className="text-xs font-bold text-slate-500">Excedente para Ahorros</label>
-                <input
-                  type="number"
-                  value={autoSaveThreshold}
-                  onChange={e => setAutoSaveThreshold(parseFloat(e.target.value) || 0)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-                />
+              <div className="sm:col-span-2 p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
+                    Sugerir Ahorros Automáticos
+                  </label>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Opcional: Permite que el sistema recomiende apartar excedentes de liquidez por encima del colchón mínimo hacia ahorros.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEnableAutoSavings(!enableAutoSavings)}
+                  className={`w-12 h-6 flex items-center rounded-full p-1 transition-colors shrink-0 ${
+                    enableAutoSavings ? 'bg-blue-600 justify-end' : 'bg-slate-300 dark:bg-slate-600 justify-start'
+                  }`}
+                >
+                  <div className="w-4 h-4 rounded-full bg-white shadow-xs" />
+                </button>
               </div>
+
+              {enableAutoSavings && (
+                <div>
+                  <label className="text-xs font-bold text-slate-500">Excedente mínimo para sugerir ahorro ({displayCurrency})</label>
+                  <input
+                    type="number"
+                    value={autoSaveThreshold}
+                    onChange={e => setAutoSaveThreshold(parseFloat(e.target.value) || 0)}
+                    placeholder="0"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+              )}
               <div>
                 <label className="text-xs font-bold text-slate-500">Retraso permitido (días)</label>
                 <input
@@ -397,95 +495,151 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
 
         {subTab === 'backup' && (
           <div className="space-y-4">
-            {/* Firebase Database Cloud Backup */}
-            <div className="p-4 bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-900/40 rounded-2xl space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-extrabold text-orange-800 dark:text-orange-300 flex items-center gap-1.5">
-                  <Flame className="w-4 h-4 text-orange-600" /> Respaldo en Base de Datos Firebase
-                </h3>
-                <span className="text-[10px] bg-orange-100 dark:bg-orange-900/60 text-orange-800 dark:text-orange-200 font-bold px-2 py-0.5 rounded-full">
-                  Firestore Cloud
-                </span>
-              </div>
-              <p className="text-xs text-slate-600 dark:text-slate-300">
-                Guarda y sincroniza directamente tu estado financiero completo en tu cuenta de la Base de Datos Firebase Cloud.
-              </p>
-
-              {/* Account Status */}
-              {state.authUser && (
-                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-orange-200 dark:border-orange-800/60 flex items-center justify-between gap-2">
-                  <div className="space-y-0.5">
-                    <p className="text-[10px] text-orange-600 dark:text-orange-400 font-bold uppercase tracking-wider">
-                      Cuenta Activa Vinculada
-                    </p>
-                    <p className="text-xs font-extrabold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                      {state.authUser.email}
-                      {state.authUser.alias && (
-                        <span className="text-[10px] font-semibold text-slate-400">({state.authUser.alias})</span>
-                      )}
+            {/* 1. Sync Online Switch / Mode Selector */}
+            <div className="p-4 bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl space-y-3 shadow-xs">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-xs text-white shadow-xs ${enableCloudSync ? 'bg-orange-600' : 'bg-emerald-600'}`}>
+                    {enableCloudSync ? 'CLOUD' : 'LITE'}
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-black text-slate-900 dark:text-slate-100 uppercase tracking-wide">
+                      {enableCloudSync ? 'Sincronización en la Nube' : 'Modo Solo Local (Versión Lite)'}
+                    </h3>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold">
+                      {enableCloudSync ? 'Tus finanzas se sincronizan con tu cuenta Firebase' : 'Tus finanzas se guardan únicamente en tu teléfono'}
                     </p>
                   </div>
                 </div>
-              )}
-
-              <div className="flex flex-col sm:flex-row gap-2">
-                <button
-                  type="button"
-                  onClick={handleFirebaseBackup}
-                  disabled={isFbBackupLoading}
-                  className="flex-1 py-2.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-xs"
-                >
-                  <Flame className="w-4 h-4" />
-                  {isFbBackupLoading ? 'Guardando...' : 'Respaldar en Firebase'}
-                </button>
 
                 <button
                   type="button"
-                  onClick={handleFirebaseRestore}
-                  disabled={isFbBackupLoading}
-                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-xs"
+                  onClick={() => {
+                    const next = !enableCloudSync;
+                    setEnableCloudSync(next);
+                    showToast(next ? 'Sincronización online activada' : 'Modo Solo Local activado', next ? '☁️' : '🔒');
+                  }}
+                  className={`w-12 h-6 flex items-center rounded-full p-1 transition-colors shrink-0 ${
+                    enableCloudSync ? 'bg-orange-600 justify-end' : 'bg-slate-300 dark:bg-slate-600 justify-start'
+                  }`}
                 >
-                  <Database className="w-4 h-4 text-orange-400" />
-                  {isFbBackupLoading ? 'Restaurando...' : 'Restaurar de Firebase'}
+                  <div className="w-4 h-4 rounded-full bg-white shadow-xs" />
                 </button>
               </div>
+
+              {!enableCloudSync ? (
+                <p className="text-xs text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 p-3 rounded-xl border border-emerald-200 dark:border-emerald-900/50 leading-relaxed">
+                  🔒 <strong>Modo Solo Local Activo:</strong> Tus datos de ingresos, gastos, deudas y ahorros permanecen alojados de forma privada únicamente en la memoria interna de tu teléfono (<code className="bg-emerald-100 dark:bg-emerald-900/80 px-1 py-0.5 rounded text-[10px]">localStorage</code>). Firebase se utilizará únicamente cuando accedas a funciones colaborativas como <strong>MonyShared</strong> o el catálogo de <strong>MonyStore</strong>.
+                </p>
+              ) : null}
             </div>
 
-            {/* Local File Backup */}
+            {/* 2. Grouped Cloud Sync Options (Parent Card) - Only shown if enableCloudSync is ON */}
+            {enableCloudSync && (
+              <div className="p-4 bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-900/40 rounded-2xl space-y-3 animate-in fade-in">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-extrabold text-orange-800 dark:text-orange-300 flex items-center gap-1.5">
+                    <Flame className="w-4 h-4 text-orange-600" /> Respaldo en la Nube (Firebase Cloud)
+                  </h3>
+                  <span className="text-[10px] bg-orange-100 dark:bg-orange-900/60 text-orange-800 dark:text-orange-200 font-bold px-2 py-0.5 rounded-full">
+                    Sincronización Online
+                  </span>
+                </div>
+
+                {/* Account Status */}
+                {state.authUser ? (
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-orange-200 dark:border-orange-800/60 flex items-center justify-between gap-2">
+                    <div className="space-y-0.5">
+                      <p className="text-[10px] text-orange-600 dark:text-orange-400 font-bold uppercase tracking-wider">
+                        Cuenta Activa Vinculada
+                      </p>
+                      <p className="text-xs font-extrabold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        {state.authUser.email}
+                        {state.authUser.alias && (
+                          <span className="text-[10px] font-semibold text-slate-400">({state.authUser.alias})</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800/60 flex items-center justify-between gap-2">
+                    <p className="text-xs text-amber-800 dark:text-amber-200 font-medium">
+                      Inicia sesión para respaldar tu información en Firebase Cloud.
+                    </p>
+                    {onOpenAuth && (
+                      <button
+                        onClick={onOpenAuth}
+                        className="px-3 py-1.5 bg-orange-600 text-white rounded-lg text-xs font-bold shrink-0"
+                      >
+                        Iniciar Sesión
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Cloud Action Buttons in Same Parent Card */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleFirebaseBackup}
+                    disabled={isFbBackupLoading || !state.authUser}
+                    className="py-2.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-xs"
+                  >
+                    <Flame className="w-4 h-4" />
+                    {isFbBackupLoading ? 'Guardando...' : 'Respaldar en Firebase'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleFirebaseRestore}
+                    disabled={isFbBackupLoading || !state.authUser}
+                    className="py-2.5 bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-xs"
+                  >
+                    <Database className="w-4 h-4 text-orange-400" />
+                    {isFbBackupLoading ? 'Restaurando...' : 'Restaurar de Firebase'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleForceUploadLocal}
+                    disabled={isForceUploading || !state.authUser}
+                    className="sm:col-span-2 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-xs"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isForceUploading ? 'animate-spin' : ''}`} />
+                    {isForceUploading ? 'Limpiando y Subiendo...' : 'Limpiar Base de Datos y Subir Estado Local'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 3. Grouped Local File Backup (Parent Card for Export & Import) */}
             <div className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/40 rounded-2xl space-y-3">
-              <h3 className="text-xs font-bold text-blue-700 dark:text-blue-300">📁 Respaldo Físico Local</h3>
-              <p className="text-xs text-slate-600 dark:text-slate-300">
-                Exporta la base de datos completa a un archivo `.mswsn` en tu dispositivo o importa datos guardados previamente.
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
+                  <Download className="w-4 h-4 text-blue-600" /> Respaldo Físico Local
+                </h3>
+                <span className="text-[10px] bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 font-bold px-2 py-0.5 rounded-full">
+                  Archivo .mswsn
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                Exporta la base de datos completa a un archivo <code className="bg-blue-100 dark:bg-blue-900/60 px-1 py-0.5 rounded text-[10px]">.mswsn</code> en tu dispositivo o importa datos guardados previamente.
               </p>
 
               <div className="flex flex-col sm:flex-row gap-2">
                 <button
                   onClick={handleExportFile}
-                  className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs"
                 >
                   <Download className="w-4 h-4" /> Exportar Archivo (.mswsn)
                 </button>
 
-                <label className="flex-1 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer">
-                  <CloudUpload className="w-4 h-4" /> Importar Archivo
+                <label className="flex-1 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs">
+                  <CloudUpload className="w-4 h-4 text-blue-600" /> Importar Archivo
                   <input type="file" accept=".mswsn,.json" onChange={handleImportFile} className="hidden" />
                 </label>
               </div>
-            </div>
-
-            {/* Mantenimiento del Sistema */}
-            <div className="p-4 bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-900/40 rounded-2xl space-y-3">
-              <h3 className="text-xs font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1.5"><RotateCcw className="w-4 h-4" /> Recalcular Motor</h3>
-              <p className="text-xs text-slate-600 dark:text-slate-300">
-                Si ves comportamientos extraños en los rescates de ahorros automáticos, puedes forzar un recálculo desde cero.
-              </p>
-              <button
-                onClick={handleResetRescates}
-                className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
-              >
-                Corregir Rescates y Recalcular
-              </button>
             </div>
           </div>
         )}
@@ -502,7 +656,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                   className="text-blue-600 dark:text-blue-400 cursor-pointer select-none hover:underline"
                   title="Toca 5 veces para opciones avanzadas de servidor"
                 >
-                  v1.2.5
+                  {typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : 'v1.2.6'}
                 </b>
               </p>
               <p className="text-xs text-slate-400 max-w-sm mx-auto">
@@ -602,13 +756,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                                mimeType: 'application/vnd.android.package-archive'
                              }).catch(err => {
                                console.error('Error abriendo APK', err);
-                               showToast('Error al abrir el instalador', '❌');
+                               showToast('Abriendo instalador...', '📲');
+                               const a = document.createElement('a');
+                               a.href = updateState.downloadUrl;
+                               a.download = `Monywissen-${updateState.latestVersion}.apk`;
+                               a.click();
                              });
                            }).catch(() => {
-                             window.open(updateState.downloadUrl, '_system');
+                             const a = document.createElement('a');
+                             a.href = updateState.downloadUrl;
+                             a.download = `Monywissen-${updateState.latestVersion}.apk`;
+                             a.click();
                            });
                         } else {
-                          showToast('Iniciando descarga de APK...', '📲');
+                          showToast('Abriendo instalador de paquete...', '📲');
                           const a = document.createElement('a');
                           a.href = updateState.downloadUrl;
                           a.download = `Monywissen-${updateState.latestVersion}.apk`;
@@ -653,6 +814,46 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
 
         {subTab === 'reset' && (
           <div className="space-y-4 animate-fade-in pb-12">
+            <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/30 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/50 flex items-center justify-center">
+                  <RotateCcw className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-amber-900 dark:text-amber-100">Restablecer Pagos a Pendiente</h3>
+                  <p className="text-xs text-amber-700/80 dark:text-amber-300/80">
+                    Cambia el estado de todos los gastos, deudas e ingresos marcados como pagados de vuelta a PENDIENTE sin borrar tus registros.
+                  </p>
+                </div>
+              </div>
+              {!confirmPendingReset ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmPendingReset(true)}
+                  className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition-colors"
+                >
+                  <RotateCcw className="w-4 h-4" /> Cambiar Todo a Pendiente
+                </button>
+              ) : (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleResetAllPaidToPending}
+                    className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-colors"
+                  >
+                    ✓ Sí, Confirmar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmPendingReset(false)}
+                    className="px-4 py-2.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/30 rounded-2xl p-4">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-900/50 flex items-center justify-center">

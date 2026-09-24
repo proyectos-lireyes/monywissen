@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   formatCurrency,
+  formatAmountWithCurrency,
   formatDateStr,
   todayStr,
   datesBetween,
@@ -24,6 +25,7 @@ import {
   Scale,
   Info,
   Calendar,
+  PiggyBank,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -44,6 +46,54 @@ import {
   ReferenceLine,
 } from 'recharts';
 
+const SPANISH_MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
+const formatMonthLabel = (yyyyMm: string) => {
+  const parts = yyyyMm.split('-');
+  const y = parts[0];
+  const mStr = parts[1] || '01';
+  const mIdx = parseInt(mStr, 10) - 1;
+  const shortYear = y ? `'${y.slice(-2)}` : '';
+  return `${SPANISH_MONTHS[mIdx] || mStr} ${shortYear}`;
+};
+
+const getBiweeklyStart = (dateStr: string) => {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth();
+  const da = d.getUTCDate();
+  const qNum = da <= 15 ? 'Q1' : 'Q2';
+  const qRange = da <= 15 ? '1-15' : '16-fin';
+  const key = `${y}-${(m + 1) < 10 ? '0' + (m + 1) : m + 1}-${qNum}`;
+  const label = `${qRange} ${SPANISH_MONTHS[m]}`;
+  return { key, label };
+};
+
+const getWeekStart = (dateStr: string) => {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() - (day - 1));
+  const m = d.getUTCMonth();
+  const da = d.getUTCDate();
+  const endD = new Date(d);
+  endD.setUTCDate(endD.getUTCDate() + 6);
+  const endDa = endD.getUTCDate();
+  const endM = endD.getUTCMonth();
+  const key = `${d.getUTCFullYear()}-${(m + 1) < 10 ? '0' + (m + 1) : m + 1}-${da < 10 ? '0' + da : da}`;
+  const label = m === endM 
+    ? `${da}-${endDa} ${SPANISH_MONTHS[m]}`
+    : `${da} ${SPANISH_MONTHS[m]}-${endDa} ${SPANISH_MONTHS[endM]}`;
+  return { key, label };
+};
+
+const formatDailyLabel = (dateStr: string) => {
+  const parts = dateStr.split('-');
+  const mStr = parts[1] || '01';
+  const dStr = parts[2] || '01';
+  const mIdx = parseInt(mStr, 10) - 1;
+  return `${dStr} ${SPANISH_MONTHS[mIdx] || mStr}`;
+};
+
 interface DashboardViewProps {
   onOpenCreate: (type: 'income' | 'expense' | 'debt' | 'saving', forceOneTime?: boolean) => void;
   onOpenDetails: (type: string, refId: string, originalDate: string, planDate: string) => void;
@@ -54,10 +104,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenDetails,
 }) => {
   const { profile, updateProfileData, showToast, setActiveView, integrityReport, exchangeRates, convertAmount } = useApp();
-  const [chartMode, setChartMode] = useState<number>(profile.settings.defaultChart || 4); // 0: Composed, 1: Bar, 2: Pie
+  const [chartMode, setChartMode] = useState<number>(() => (profile.settings.defaultChart !== undefined ? profile.settings.defaultChart : 1));
+
+  useEffect(() => {
+    if (profile.settings.defaultChart !== undefined && profile.settings.defaultChart !== chartMode) {
+      setChartMode(profile.settings.defaultChart);
+    }
+  }, [profile.settings.defaultChart]);
+
+  const handleSelectChartMode = (mode: number) => {
+    setChartMode(mode);
+    updateProfileData(draft => {
+      draft.settings.defaultChart = mode;
+    });
+  };
   const [showBalanceLine, setShowBalanceLine] = useState(true);
   const [showFlowLines, setShowFlowLines] = useState(true);
   const [showSetupModal, setShowSetupModal] = useState(false);
+  const [showCushionModal, setShowCushionModal] = useState(false);
+  const [tempCushionAmt, setTempCushionAmt] = useState(profile.settings.minBalance || 0);
+  const [tempCushionCurr, setTempCushionCurr] = useState(profile.settings.minBalanceCurrency || profile.settings.displayCurrency || 'USD');
+  const [pendingFilter, setPendingFilter] = useState<'next_income' | 'next_30' | 'all'>('next_income');
   const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
   const [hiddenLines, setHiddenLines] = useState<Record<string, boolean>>({});
 
@@ -67,25 +134,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [adjustmentTarget, setAdjustmentTarget] = useState<string>('0');
   const [tempPlanStart, setTempPlanStart] = useState(profile.settings.planStart);
   const [tempOpeningBalanceStr, setTempOpeningBalanceStr] = useState(String(profile.settings.openingBalance || 0));
+  const [dismissAutoSaveRec, setDismissAutoSaveRec] = useState(false);
 
   const plan = calculateProjections(profile, exchangeRates);
   const [pinnedTooltip, setPinnedTooltip] = useState<any>(null);
   const [periodDetails, setPeriodDetails] = useState<any>(null);
-
-  const handleAcceptOptimization = async (opt: any) => {
-    const key = `${opt.itemType}_${opt.itemId}_${opt.originalDate}`;
-    
-    updateProfileData(draft => {
-      if (!draft.overrides) draft.overrides = {};
-      draft.overrides[key] = {
-        ...(draft.overrides[key] || {}),
-        actualDate: opt.suggestedDate,
-        userPostponed: true,
-      };
-    });
-    
-    showToast(`Fecha optimizada al ${opt.suggestedDate}`, 'success');
-  };
 
   const today = todayStr();
 
@@ -94,17 +147,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   let projectedToday = 0;
   let totalIncome = 0;
   let totalExpense = 0;
-  let criticalAlert: { date: string; reason: string } | null = null;
-  const delayedItems: any[] = [];
+  let criticalAlert: { date: string; reason: string; isBelowCushion?: boolean; isNeg?: boolean } | null = null;
 
   plan.forEach(e => { if(!e) return;
-    if (e.done) todayBalance += e?.amt;
-    if (e.date <= today) projectedToday += e?.amt;
+    const isOpening = e.type === 'opening_balance';
+    const isPastOrToday = e.date <= today || (e.targetDate && e.targetDate <= today);
+    const affectsCash = !e.noAffectBalance;
+
+    if (e.done && affectsCash && (isOpening || isPastOrToday)) {
+      todayBalance += e?.amt;
+    }
+    if (e.date <= today && affectsCash) {
+      projectedToday += e?.amt;
+    }
     
     if (e?.amt > 0 && e.type !== 'compensation' && e.type !== 'opening_balance') totalIncome += e?.amt;
-    if (e?.amt < 0 && e.type !== 'savings') totalExpense += Math.abs(e?.amt);
-    if (e.criticalDelay && !criticalAlert) criticalAlert = { date: e.date, reason: e.label };
-    if (e.isDelayed && e.date >= today && !e.criticalDelay) delayedItems.push(e);
+    if (e?.amt < 0 && e.type !== 'savings' && affectsCash) totalExpense += Math.abs(e?.amt);
+    if (!e.done && (e.criticalDelay || e.insufficientFunds || e.belowCushion) && !criticalAlert) {
+      criticalAlert = { date: e.date, reason: e.label, isBelowCushion: e.belowCushion, isNeg: e.insufficientFunds };
+    }
   });
 
   const lastOccurrence = plan[plan.length - 1];
@@ -112,26 +173,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalDebt = (profile.debts || []).reduce((acc, d) => acc + convertAmount(getRemainingDebtAmount(d, profile.overrides, exchangeRates), d.currency), 0);
 
   // Prepare Recharts Data
-  const chartDataMap: Record<string, { date: string; label: string; balance: number; income: number; expense: number; debt: number; totalEgresos: number; netAvailable: number; items: any[]; optimizedAdelantados?: number; optimizedAtrasados?: number; deficit?: number; plannedIncome: number; plannedEgresos: number; plannedNetFlow?: number;
-  rescates?: number; }> = {};
+  const chartDataMap: Record<string, { date: string; label: string; balance: number; income: number; expense: number; debt: number; totalEgresos: number; netAvailable: number; items: any[]; deficit?: number; plannedIncome: number; plannedEgresos: number; plannedNetFlow?: number;
+  rescates?: number; savingsAccumulated?: number; }> = {};
 
   // Initialize all dates in range
   const allDates = datesBetween(profile.settings.planStart, profile.settings.planEnd);
   allDates.forEach(d => {
     chartDataMap[d] = {
       date: d,
-      label: formatDateStr(d).substring(0, 5),
+      label: formatDailyLabel(d),
       balance: plan.length > 0 ? plan[0].balance : (profile.settings.openingBalance || 0), // Will be overridden
       income: 0,
       expense: 0,
-      optimizedAdelantados: 0,
-      optimizedAtrasados: 0,
       deficit: 0, debt: 0, rescates: 0,
       totalEgresos: 0,
       netAvailable: 0,
       plannedIncome: 0,
       plannedEgresos: 0,
       items: [],
+      savingsAccumulated: (profile.savings?.current || 0) + (profile.savings?.digital || 0),
     };
   });
 
@@ -142,25 +202,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (!chartDataMap[e.date]) {
         chartDataMap[e.date] = {
           date: e.date,
-          label: formatDateStr(e.date).substring(0, 5),
+          label: formatDailyLabel(e.date),
           balance: e.balance,
           income: 0,
           expense: 0,
-          optimizedAdelantados: 0,
-          optimizedAtrasados: 0,
           deficit: 0, debt: 0, rescates: 0,
           totalEgresos: 0,
           netAvailable: 0,
           plannedIncome: 0,
           plannedEgresos: 0,
           items: [],
+          savingsAccumulated: e.savingsAccumulated || 0,
         };
       }
       if (e?.amt > 0 && (e.type === 'income')) chartDataMap[e.date].income += e?.amt;
       if (e.type === 'rescate_ahorros') chartDataMap[e.date].rescates = (chartDataMap[e.date].rescates || 0) + e?.amt;
       if (e?.amt < 0 && e.type === 'expense') chartDataMap[e.date].expense += Math.abs(e?.amt);
       if (e?.amt < 0 && (e.type === 'debt' )) chartDataMap[e.date].debt += Math.abs(e?.amt);
+      if (e.insufficientFunds && e?.amt < 0 && e.balance < -0.01) chartDataMap[e.date].deficit = (chartDataMap[e.date].deficit || 0) + Math.abs(e?.amt);
       chartDataMap[e.date].balance = e.balance;
+      chartDataMap[e.date].savingsAccumulated = e.savingsAccumulated !== undefined ? e.savingsAccumulated : (chartDataMap[e.date].savingsAccumulated || 0);
       runningBalance = e.balance;
       chartDataMap[e.date].items.push(e);
     }
@@ -169,9 +230,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (!chartDataMap[e.originalDate]) {
         chartDataMap[e.originalDate] = {
            date: e.originalDate,
-           label: e.originalDate.substring(5, 10),
+           label: formatDailyLabel(e.originalDate),
            balance: 0,
-           income: 0, expense: 0, optimizedAdelantados: 0, optimizedAtrasados: 0, deficit: 0, debt: 0, rescates: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: []
+           income: 0, expense: 0, deficit: 0, debt: 0, rescates: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: [],
+           savingsAccumulated: 0
         };
       }
       if (e?.amt > 0 && (e.type === 'income')) {
@@ -184,12 +246,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   });
   
   // Backfill balances for days with no events
-  let lastBal = 0;
+  let lastBal = plan.length > 0 ? plan[0].balance : (profile.settings.openingBalance || 0);
+  let lastSav = (profile.savings?.current || 0) + (profile.savings?.digital || 0);
   allDates.forEach(d => {
     if (chartDataMap[d].items.length > 0) {
       lastBal = chartDataMap[d].balance;
+      lastSav = chartDataMap[d].savingsAccumulated !== undefined ? chartDataMap[d].savingsAccumulated! : lastSav;
     } else {
       chartDataMap[d].balance = lastBal;
+      chartDataMap[d].savingsAccumulated = lastSav;
     }
   });
 
@@ -201,70 +266,55 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   });
   const chartData = Object.values(chartDataMap);
 
-  // Monthly Aggregation Data
-  
-
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (active && payload && payload.length) {
-    const data = payload[0].payload;
-    return (
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 shadow-lg min-w-[200px]">
-        <p className="font-bold text-slate-800 dark:text-slate-100 mb-2 border-b border-slate-100 dark:border-slate-800 pb-1">{label}</p>
-        
-        {payload.map((entry: any, index: number) => {
-          let name = entry.name;
-          if (name.includes('Flujo Neto')) name = 'Flujo del Período';
-          if (name.includes('Eje')) name = name.replace(' (Eje Izq.)', '').replace(' (Eje Der.)', '');
-          return (
-          <div key={`item-${index}`} className="flex justify-between items-center text-xs mb-1" style={{ color: entry.color }}>
-            <span className="font-semibold">{name}:</span>
-            <span>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(entry.value)}</span>
-          </div>
-        )})}
-        <div className="flex justify-between items-center text-xs mb-1 mt-2 pt-1 border-t border-slate-100 dark:border-slate-800" style={{ color: '#3b82f6' }}>
-          <span className="font-bold">Liquidez Final del Día (Saldo):</span>
-          <span className="font-bold">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.balance)}</span>
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      const data = payload[0].payload;
+      return (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-xl min-w-[200px] z-50">
+          <p className="font-bold text-slate-800 dark:text-slate-100 mb-2 border-b border-slate-100 dark:border-slate-800 pb-1">{label}</p>
+          
+          {payload.map((entry: any, index: number) => {
+            let name = entry.name;
+            if (name.includes('Flujo Neto')) name = 'Flujo Neto (Período)';
+            if (name.includes('Eje')) name = name.replace(' (Eje Izq.)', '').replace(' (Eje Der.)', '');
+            if ((entry.dataKey === 'deficit' || entry.dataKey === 'rescates') && (!entry.value || entry.value <= 0)) {
+              return null;
+            }
+            return (
+              <div key={`item-${index}`} className="flex justify-between items-center text-xs mb-1" style={{ color: entry.color }}>
+                <span className="font-semibold">{name}:</span>
+                <span className="font-bold">{formatCurrency(entry.value)}</span>
+              </div>
+            );
+          })}
+          {data.balance !== undefined && (
+            <div className="flex justify-between items-center text-xs mb-1 mt-2 pt-1 border-t border-slate-100 dark:border-slate-800 text-blue-600 dark:text-blue-400">
+              <span className="font-bold">Liquidez Final:</span>
+              <span className="font-bold">{formatCurrency(data.balance)}</span>
+            </div>
+          )}
+          {data.savingsAccumulated !== undefined && (
+            <div className="flex justify-between items-center text-xs mb-1 pt-1 text-sky-500">
+              <span className="font-bold">Ahorros Totales:</span>
+              <span className="font-bold">{formatCurrency(data.savingsAccumulated || 0)}</span>
+            </div>
+          )}
         </div>
-        <div className="flex justify-between items-center text-xs mb-1 pt-1" style={{ color: '#0ea5e9' }}>
-          <span className="font-bold">Ahorros Totales:</span>
-          <span className="font-bold">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.savingsAccumulated || 0)}</span>
-        </div>
-      </div>
-    );
-  }
-  return null;
-};
-
-
-const getWeekStart = (dateStr: string) => {
-  const d = new Date(dateStr + 'T12:00:00Z');
-  const day = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() - (day - 1));
-  const m = d.getUTCMonth() + 1;
-  const da = d.getUTCDate();
-  return `${d.getUTCFullYear()}-${m < 10 ? '0'+m : m}-${da < 10 ? '0'+da : da}`;
-};
-
-  // Biweekly Aggregation Data
-  const getBiweeklyStart = (dateStr: string) => {
-    const d = new Date(dateStr + 'T12:00:00Z');
-    const m = d.getUTCMonth() + 1;
-    const da = d.getUTCDate();
-    const period = da <= 15 ? '01-15' : '16-31';
-    return `${d.getUTCFullYear()}-${m < 10 ? '0'+m : m}-${period}`;
+      );
+    }
+    return null;
   };
 
-  const biweeklyDataMap: Record<string, { label: string; income: number; expense: number; debt: number; rescates?: number; savingsAccumulated?: number; totalEgresos?: number; netAvailable?: number; items: any[]; balance?: number; optimizedAdelantados?: number; optimizedAtrasados?: number; deficit?: number; plannedIncome?: number; plannedEgresos?: number; plannedNetFlow?: number; }> = {};
+  // Biweekly Aggregation Data
+  const biweeklyDataMap: Record<string, { label: string; income: number; expense: number; debt: number; rescates?: number; savingsAccumulated?: number; totalEgresos?: number; netAvailable?: number; items: any[]; balance?: number; deficit?: number; plannedIncome?: number; plannedEgresos?: number; plannedNetFlow?: number; }> = {};
   plan.forEach(e => { if(!e) return;
     if (e.date >= profile.settings.planStart && e.date <= profile.settings.planEnd) {
-      const prefix = getBiweeklyStart(e.date);
+      const { key: prefix, label: bLabel } = getBiweeklyStart(e.date);
       if (!biweeklyDataMap[prefix]) {
         biweeklyDataMap[prefix] = {
-          label: prefix.substring(5),
+          label: bLabel,
           income: 0,
           expense: 0,
-          optimizedAdelantados: 0,
-          optimizedAtrasados: 0,
           deficit: 0, debt: 0, rescates: 0,
           totalEgresos: 0,
           netAvailable: 0,
@@ -278,39 +328,41 @@ const getWeekStart = (dateStr: string) => {
       if (e?.amt < 0 && e.type === 'expense') biweeklyDataMap[prefix].expense += Math.abs(e?.amt);
       if (e?.amt < 0 && (e.type === 'debt' )) biweeklyDataMap[prefix].debt += Math.abs(e?.amt);
       biweeklyDataMap[prefix].items.push(e);
-      if (e.pulledEarly) biweeklyDataMap[prefix].optimizedAdelantados += Math.abs(e?.amt);
-      if (e.isDelayed && !e.insufficientFunds) biweeklyDataMap[prefix].optimizedAtrasados += Math.abs(e?.amt);
       if (e.insufficientFunds && e?.amt < 0) biweeklyDataMap[prefix].deficit += Math.abs(e?.amt);
       biweeklyDataMap[prefix].balance = e.balance;
       biweeklyDataMap[prefix].savingsAccumulated = e.savingsAccumulated || 0;
     }
     if (e.originalDate >= profile.settings.planStart && e.originalDate <= profile.settings.planEnd) {
-      const origBiweekPrefix = getBiweeklyStart(e.originalDate);
+      const { key: origBiweekPrefix, label: origBLabel } = getBiweeklyStart(e.originalDate);
       if (!biweeklyDataMap[origBiweekPrefix]) {
         biweeklyDataMap[origBiweekPrefix] = {
-          label: origBiweekPrefix.substring(5),
-          income: 0, expense: 0, optimizedAdelantados: 0, optimizedAtrasados: 0, deficit: 0, debt: 0, rescates: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: [],
+          label: origBLabel,
+          income: 0, expense: 0, deficit: 0, debt: 0, rescates: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: [],
         };
       }
       if (e?.amt > 0 && (e.type === 'income')) biweeklyDataMap[origBiweekPrefix].plannedIncome = (biweeklyDataMap[origBiweekPrefix].plannedIncome || 0) + e?.amt;
       if (e?.amt < 0 && (e.type === 'expense' || e.type === 'debt')) biweeklyDataMap[origBiweekPrefix].plannedEgresos = (biweeklyDataMap[origBiweekPrefix].plannedEgresos || 0) + Math.abs(e?.amt);
     }
   });
-  Object.values(biweeklyDataMap).forEach(d => { d.totalEgresos = d.expense + d.debt; d.netAvailable = d.income - d.totalEgresos; d.plannedNetFlow = (d.plannedIncome || 0) - (d.plannedEgresos || 0); });
-  const biweeklyData = Object.values(biweeklyDataMap);
+  const sortedBiweeklyKeys = Object.keys(biweeklyDataMap).sort();
+  sortedBiweeklyKeys.forEach(k => {
+    const d = biweeklyDataMap[k];
+    d.totalEgresos = d.expense + d.debt;
+    d.netAvailable = d.income - d.totalEgresos;
+    d.plannedNetFlow = (d.plannedIncome || 0) - (d.plannedEgresos || 0);
+  });
+  const biweeklyData = sortedBiweeklyKeys.map(k => biweeklyDataMap[k]);
 
   // Weekly Aggregation Data
-  const weeklyDataMap: Record<string, { label: string; income: number; expense: number; debt: number; rescates?: number; savingsAccumulated?: number; totalEgresos?: number; netAvailable?: number; items: any[]; balance?: number; optimizedAdelantados?: number; optimizedAtrasados?: number; deficit?: number; plannedIncome?: number; plannedEgresos?: number; plannedNetFlow?: number; }> = {};
+  const weeklyDataMap: Record<string, { label: string; income: number; expense: number; debt: number; rescates?: number; savingsAccumulated?: number; totalEgresos?: number; netAvailable?: number; items: any[]; balance?: number; deficit?: number; plannedIncome?: number; plannedEgresos?: number; plannedNetFlow?: number; }> = {};
   plan.forEach(e => { if(!e) return;
     if (e.date >= profile.settings.planStart && e.date <= profile.settings.planEnd) {
-      const weekPrefix = getWeekStart(e.date);
+      const { key: weekPrefix, label: wLabel } = getWeekStart(e.date);
       if (!weeklyDataMap[weekPrefix]) {
         weeklyDataMap[weekPrefix] = {
-          label: weekPrefix.substring(5,10),
+          label: wLabel,
           income: 0,
           expense: 0,
-          optimizedAdelantados: 0,
-          optimizedAtrasados: 0,
           deficit: 0, debt: 0, rescates: 0,
           totalEgresos: 0,
           netAvailable: 0,
@@ -324,38 +376,40 @@ const getWeekStart = (dateStr: string) => {
       if (e?.amt < 0 && e.type === 'expense') weeklyDataMap[weekPrefix].expense += Math.abs(e?.amt);
       if (e?.amt < 0 && (e.type === 'debt' )) weeklyDataMap[weekPrefix].debt += Math.abs(e?.amt);
       weeklyDataMap[weekPrefix].items.push(e);
-      if (e.pulledEarly) weeklyDataMap[weekPrefix].optimizedAdelantados += Math.abs(e?.amt);
-      if (e.isDelayed && !e.insufficientFunds) weeklyDataMap[weekPrefix].optimizedAtrasados += Math.abs(e?.amt);
       if (e.insufficientFunds && e?.amt < 0) weeklyDataMap[weekPrefix].deficit += Math.abs(e?.amt);
       weeklyDataMap[weekPrefix].balance = e.balance; // Keep last balance of the week
       weeklyDataMap[weekPrefix].savingsAccumulated = e.savingsAccumulated || 0;
     }
     if (e.originalDate >= profile.settings.planStart && e.originalDate <= profile.settings.planEnd) {
-      const origWeekPrefix = getWeekStart(e.originalDate);
+      const { key: origWeekPrefix, label: origWLabel } = getWeekStart(e.originalDate);
       if (!weeklyDataMap[origWeekPrefix]) {
         weeklyDataMap[origWeekPrefix] = {
-          label: origWeekPrefix.substring(5,10),
-          income: 0, expense: 0, optimizedAdelantados: 0, optimizedAtrasados: 0, deficit: 0, debt: 0, rescates: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: [],
+          label: origWLabel,
+          income: 0, expense: 0, deficit: 0, debt: 0, rescates: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: [],
         };
       }
       if (e?.amt > 0 && (e.type === 'income')) weeklyDataMap[origWeekPrefix].plannedIncome = (weeklyDataMap[origWeekPrefix].plannedIncome || 0) + e?.amt;
       if (e?.amt < 0 && (e.type === 'expense' || e.type === 'debt')) weeklyDataMap[origWeekPrefix].plannedEgresos = (weeklyDataMap[origWeekPrefix].plannedEgresos || 0) + Math.abs(e?.amt);
     }
   });
-  Object.values(weeklyDataMap).forEach(d => { d.totalEgresos = d.expense + d.debt; d.netAvailable = d.income - d.totalEgresos; d.plannedNetFlow = (d.plannedIncome || 0) - (d.plannedEgresos || 0); });
-  const weeklyData = Object.values(weeklyDataMap);
+  const sortedWeeklyKeys = Object.keys(weeklyDataMap).sort();
+  sortedWeeklyKeys.forEach(k => {
+    const d = weeklyDataMap[k];
+    d.totalEgresos = d.expense + d.debt;
+    d.netAvailable = d.income - d.totalEgresos;
+    d.plannedNetFlow = (d.plannedIncome || 0) - (d.plannedEgresos || 0);
+  });
+  const weeklyData = sortedWeeklyKeys.map(k => weeklyDataMap[k]);
 
-  const monthlyDataMap: Record<string, { label: string; income: number; expense: number; debt: number; rescates?: number; savingsAccumulated?: number; totalEgresos?: number; netAvailable?: number; items: any[]; balance?: number; optimizedAdelantados?: number; optimizedAtrasados?: number; deficit?: number; plannedIncome?: number; plannedEgresos?: number; plannedNetFlow?: number; }> = {};
+  const monthlyDataMap: Record<string, { label: string; income: number; expense: number; debt: number; rescates?: number; savingsAccumulated?: number; totalEgresos?: number; netAvailable?: number; items: any[]; balance?: number; deficit?: number; plannedIncome?: number; plannedEgresos?: number; plannedNetFlow?: number; }> = {};
   plan.forEach(e => { if(!e) return;
     if (e.date >= profile.settings.planStart && e.date <= profile.settings.planEnd) {
       const monthPrefix = e.date.substring(0, 7); // YYYY-MM
       if (!monthlyDataMap[monthPrefix]) {
         monthlyDataMap[monthPrefix] = {
-          label: monthPrefix,
+          label: formatMonthLabel(monthPrefix),
           income: 0,
           expense: 0,
-          optimizedAdelantados: 0,
-          optimizedAtrasados: 0,
           deficit: 0, debt: 0, rescates: 0,
           totalEgresos: 0,
           netAvailable: 0,
@@ -369,8 +423,6 @@ const getWeekStart = (dateStr: string) => {
       if (e?.amt < 0 && e.type === 'expense') monthlyDataMap[monthPrefix].expense += Math.abs(e?.amt);
       if (e?.amt < 0 && (e.type === 'debt' )) monthlyDataMap[monthPrefix].debt += Math.abs(e?.amt);
       monthlyDataMap[monthPrefix].items.push(e);
-      if (e.pulledEarly) monthlyDataMap[monthPrefix].optimizedAdelantados += Math.abs(e?.amt);
-      if (e.isDelayed && !e.insufficientFunds) monthlyDataMap[monthPrefix].optimizedAtrasados += Math.abs(e?.amt);
       if (e.insufficientFunds && e?.amt < 0) monthlyDataMap[monthPrefix].deficit += Math.abs(e?.amt);
       monthlyDataMap[monthPrefix].balance = e.balance;
       monthlyDataMap[monthPrefix].savingsAccumulated = e.savingsAccumulated || 0;
@@ -379,25 +431,33 @@ const getWeekStart = (dateStr: string) => {
       const origMonthPrefix = e.originalDate.substring(0, 7);
       if (!monthlyDataMap[origMonthPrefix]) {
         monthlyDataMap[origMonthPrefix] = {
-          label: origMonthPrefix,
-          income: 0, expense: 0, optimizedAdelantados: 0, optimizedAtrasados: 0, deficit: 0, debt: 0, rescates: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: [],
+          label: formatMonthLabel(origMonthPrefix),
+          income: 0, expense: 0, deficit: 0, debt: 0, rescates: 0, totalEgresos: 0, netAvailable: 0, plannedIncome: 0, plannedEgresos: 0, items: [],
         };
       }
       if (e?.amt > 0 && (e.type === 'income')) monthlyDataMap[origMonthPrefix].plannedIncome = (monthlyDataMap[origMonthPrefix].plannedIncome || 0) + e?.amt;
       if (e?.amt < 0 && (e.type === 'expense' || e.type === 'debt')) monthlyDataMap[origMonthPrefix].plannedEgresos = (monthlyDataMap[origMonthPrefix].plannedEgresos || 0) + Math.abs(e?.amt);
     }
   });
-  Object.values(monthlyDataMap).forEach(d => { d.totalEgresos = d.expense + d.debt; d.netAvailable = d.income - d.totalEgresos; d.plannedNetFlow = (d.plannedIncome || 0) - (d.plannedEgresos || 0); });
-  const monthlyData = Object.values(monthlyDataMap);
+  const sortedMonthKeys = Object.keys(monthlyDataMap).sort();
+  sortedMonthKeys.forEach(k => {
+    const d = monthlyDataMap[k];
+    d.totalEgresos = d.expense + d.debt;
+    d.netAvailable = d.income - d.totalEgresos;
+    d.plannedNetFlow = (d.plannedIncome || 0) - (d.plannedEgresos || 0);
+  });
+  const monthlyData = sortedMonthKeys.map(k => monthlyDataMap[k]);
 
-  // Net Cash Flow monthly breakdown for chart
+  // Net Cash Flow monthly breakdown for chart with clean labels
   const netFlowMonthlyData = monthlyData.map(m => {
     const net = m.income - (m.expense + m.debt);
     return {
       label: m.label,
-      netFlow: net,
-      income: m.income,
-      expense: m.expense + m.debt,
+      netFlow: Math.round(net * 100) / 100,
+      income: Math.round(m.income * 100) / 100,
+      totalEgresos: Math.round((m.expense + m.debt) * 100) / 100,
+      expense: Math.round(m.expense * 100) / 100,
+      debt: Math.round(m.debt * 100) / 100,
       rescates: m.rescates,
       items: m.items,
       balance: m.balance,
@@ -429,11 +489,82 @@ const getWeekStart = (dateStr: string) => {
 
   const PIE_COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#10b981'];
 
-  // Next 30 days pending items
+  // Next upcoming income in the plan (ignoring injected starting fund)
+  const nextIncomeEvent = plan.find(e => 
+    e.type === 'income' && 
+    (e.amt || 0) > 0 && 
+    e.ref?.id !== 'required_starting_fund' && 
+    e.date >= today && 
+    !e.done
+  ) || plan.find(e => 
+    e.type === 'income' && 
+    (e.amt || 0) > 0 && 
+    e.ref?.id !== 'required_starting_fund' && 
+    e.date >= today
+  );
+
+  const nextIncomeDate = nextIncomeEvent ? nextIncomeEvent.date : null;
+
+  // Next 30 days pending items limit
   const next30Limit = new Date(Date.now() + 86400000 * 30).toISOString().slice(0, 10);
+  
+  // Pending items based on filter (default: up to next income)
   const upcomingList = plan
-    .filter(e => !e.done && e.originalDate <= next30Limit)
-    .sort((a, b) => a.originalDate.localeCompare(b.originalDate));
+    .filter(e => {
+      if (e.done) return false;
+      if (e.type === 'opening_balance') return false;
+      
+      // Verify it hasn't been paid or discarded via overrides
+      if (e.ref) {
+        const refAny = e.ref as any;
+        const idStr = String(refAny.id || '');
+        const idWithout = idStr.replace(/^debt_/, '');
+        const idWith = idStr.startsWith('debt_') ? idStr : 'debt_' + idStr;
+        const candidateKeys = [
+          refAny.cuotaKey,
+          `${e.type}_${refAny.id}_${e.originalDate}`,
+          `${refAny.id}_${e.originalDate}`,
+          `savings_${refAny.id}_${e.originalDate}`,
+          `auto_savings_${e.originalDate}`,
+          `debt_${idWithout}_${e.originalDate}`,
+          `${idWithout}_${e.originalDate}`,
+          `debt_${idWith}_${e.originalDate}`,
+          `${idWith}_${e.originalDate}`
+        ];
+        if (refAny.index !== undefined) {
+          candidateKeys.push(
+            `${refAny.id}_${refAny.index}`,
+            `debt_${refAny.id}_cuota_${refAny.index}`,
+            `${idWithout}_${refAny.index}`,
+            `debt_${idWithout}_cuota_${refAny.index}`,
+            `${idWith}_${refAny.index}`,
+            `debt_${idWith}_cuota_${refAny.index}`
+          );
+        }
+        for (const ck of candidateKeys) {
+          if (ck && profile.overrides && profile.overrides[ck] && (profile.overrides[ck].done || profile.overrides[ck].isPaid || profile.overrides[ck].discarded)) {
+            return false;
+          }
+        }
+      }
+
+      if (pendingFilter === 'all') return true;
+      if (pendingFilter === 'next_30') return e.originalDate <= next30Limit;
+      
+      // Default: next_income
+      if (nextIncomeDate) {
+        return e.date <= nextIncomeDate;
+      }
+      return e.originalDate <= next30Limit;
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const startingFundItem = plan.find(e => e.ref?.id === 'required_starting_fund');
+  const hasPendingStartingFund = startingFundItem && !startingFundItem.done;
+  const cushionCurrency = profile.settings.minBalanceCurrency || profile.settings.displayCurrency || 'USD';
+  const cushionInBase = convertAmount(profile.settings.minBalance || 0, cushionCurrency);
+  const autoSaveThresholdInBase = profile.settings.autoSaveThreshold ? convertAmount(profile.settings.autoSaveThreshold, profile.settings.displayCurrency || 'USD') : 0;
+  const surplusBalance = Math.max(0, todayBalance - cushionInBase - autoSaveThresholdInBase);
 
   const handleUpdatePlanDates = (start: string, end: string) => {
     updateProfileData(draft => {
@@ -445,28 +576,183 @@ const getWeekStart = (dateStr: string) => {
 
   return (
     <div className="space-y-6 pb-20">
+      {/* Starting Fund Required Alert Banner */}
+      {hasPendingStartingFund && (
+        <div className="p-4 bg-amber-50/95 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 bg-amber-500 text-white rounded-xl shadow-xs shrink-0 mt-0.5 sm:mt-0">
+              <Wallet className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wide flex items-center gap-1.5">
+                <span>Fondo Requerido para Iniciar el Plan</span>
+                <span className="bg-amber-200 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 px-1.5 py-0.5 rounded text-[10px] font-extrabold">
+                  Pendiente
+                </span>
+              </p>
+              <p className="text-sm font-semibold text-amber-950 dark:text-amber-100 mt-0.5">
+                Necesitas iniciar con al menos <span className="text-amber-700 dark:text-amber-400 font-black">{formatCurrency(startingFundItem.amt)}</span> para cubrir los compromisos previos a tu primer cobro {nextIncomeDate ? `(${formatDateStr(nextIncomeDate)})` : ''} sin quedar en saldo negativo.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+            <button
+              onClick={() => {
+                setTempOpeningBalanceStr(String(startingFundItem.amt));
+                setTempPlanStart(profile.settings.planStart || today);
+                setShowSetupModal(true);
+              }}
+              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-colors shadow-xs"
+            >
+              Ajustar Saldo Inicial
+            </button>
+            <button
+              onClick={() => {
+                const key = `income_required_starting_fund_${profile.settings.planStart}`;
+                updateProfileData(draft => {
+                  if (!draft.overrides) draft.overrides = {};
+                  draft.overrides[key] = {
+                    ...(draft.overrides[key] || {}),
+                    done: true,
+                    amt: startingFundItem.amt,
+                    actualDate: profile.settings.planStart
+                  };
+                  draft.settings.openingBalance = (draft.settings.openingBalance || 0) + startingFundItem.amt;
+                });
+                showToast(`Saldo inicial de ${formatCurrency(startingFundItem.amt)} marcado como fondeado`, '✅');
+              }}
+              className="px-3 py-1.5 bg-white dark:bg-slate-800 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 hover:bg-amber-100/50 text-xs font-bold rounded-xl transition-colors"
+            >
+              Marcar Fondeado
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Unviable Plan Critical Alert Banner */}
+      {integrityReport?.cashBreachAnalysis && !integrityReport.cashBreachAnalysis.isPlanViable && (
+        <div className="p-4 bg-rose-50/95 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 bg-rose-600 text-white rounded-xl shadow-xs shrink-0 mt-0.5 sm:mt-0">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-rose-800 dark:text-rose-300 uppercase tracking-wide flex items-center gap-1.5">
+                <span>⚠️ PLAN FINANCIERO INVIABLE</span>
+                <span className="bg-rose-200 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200 px-1.5 py-0.5 rounded text-[10px] font-extrabold">
+                  {integrityReport.cashBreachAnalysis.breachCount} Quiebre{integrityReport.cashBreachAnalysis.breachCount > 1 ? 's' : ''}
+                </span>
+              </p>
+              <p className="text-sm font-semibold text-rose-950 dark:text-rose-100 mt-1">
+                {integrityReport.cashBreachAnalysis.unviabilityReason}
+              </p>
+              <div className="mt-2 space-y-1">
+                {integrityReport.cashBreachAnalysis.breaches
+                  .filter((b) => Boolean(b.recommendationMessage))
+                  .map((b) => (
+                    <p key={b.index} className="text-xs text-rose-800 dark:text-rose-200 font-medium">
+                      {b.recommendationMessage}
+                    </p>
+                  ))}
+                {integrityReport.cashBreachAnalysis.breachCount > 3 && (
+                  <p className="text-[11px] text-rose-700 dark:text-rose-300 italic font-medium mt-1">
+                    (Y {integrityReport.cashBreachAnalysis.breachCount - 3} déficits adicionales detectados en proyecciones posteriores)
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Solvable Breaches Recommendation Banner */}
+      {integrityReport?.cashBreachAnalysis && integrityReport.cashBreachAnalysis.isPlanViable && integrityReport.cashBreachAnalysis.breachCount > 0 && (
+        <div className="p-4 bg-indigo-50/95 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-xs shrink-0 mt-0.5 sm:mt-0">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-indigo-800 dark:text-indigo-300 uppercase tracking-wide flex items-center gap-1.5">
+                <span>💡 Diagnóstico de Quiebres y Recuperación de Ahorros</span>
+                <span className="bg-indigo-200 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200 px-1.5 py-0.5 rounded text-[10px] font-extrabold">
+                  Plan Viable ({integrityReport.cashBreachAnalysis.breachCount} {integrityReport.cashBreachAnalysis.breachCount === 1 ? 'Quiebre Solucionable' : 'Quiebres Solucionables'})
+                </span>
+              </p>
+              <div className="mt-1.5 space-y-1.5">
+                {integrityReport.cashBreachAnalysis.breaches.map((b) => (
+                  <p key={b.index} className="text-xs font-semibold text-indigo-950 dark:text-indigo-100">
+                    {b.recommendationMessage}
+                  </p>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Smart Auto-Savings Recommendation (Optional) */}
+      {profile.settings.enableAutoSavings && surplusBalance >= 10 && !dismissAutoSaveRec && (
+        <div className="p-4 bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 bg-blue-500 text-white rounded-xl shadow-xs shrink-0 mt-0.5 sm:mt-0">
+              <PiggyBank className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-blue-700 dark:text-blue-300 uppercase tracking-wide flex items-center gap-1.5">
+                <span>Recomendación de Ahorro Inteligente</span>
+                <span className="bg-blue-200 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 px-1.5 py-0.5 rounded text-[10px] font-extrabold">
+                  Opcional
+                </span>
+              </p>
+              <p className="text-sm font-semibold text-blue-950 dark:text-blue-100 mt-0.5">
+                Detectamos un excedente de liquidez de <span className="text-blue-700 dark:text-blue-400 font-black">{formatCurrency(surplusBalance)}</span> por encima de tu colchón mínimo de seguridad.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+            <button
+              onClick={() => setActiveView('savings')}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-colors shadow-xs"
+            >
+              Apartar Ahorro
+            </button>
+            <button
+              onClick={() => setDismissAutoSaveRec(true)}
+              className="px-2.5 py-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-semibold"
+            >
+              Ignorar
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Alert Banner */}
       {criticalAlert ? (
         <div
           onClick={() => setActiveView('calendar')}
-          className="p-4 bg-rose-50 border border-rose-200 dark:bg-rose-950/30 dark:border-rose-900/50 rounded-2xl flex items-center justify-between cursor-pointer hover:bg-rose-100/80 transition-all shadow-xs"
+          className={`p-4 border rounded-2xl flex items-center justify-between cursor-pointer hover:opacity-90 transition-all shadow-xs ${
+            criticalAlert.isNeg 
+              ? 'bg-rose-50 border-rose-200 dark:bg-rose-950/30 dark:border-rose-900/50' 
+              : 'bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-900/50'
+          }`}
         >
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-rose-500 text-white rounded-xl shadow-xs">
+            <div className={`p-2.5 text-white rounded-xl shadow-xs ${criticalAlert.isNeg ? 'bg-rose-500' : 'bg-amber-500'}`}>
               <AlertTriangle className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-xs font-bold text-rose-700 dark:text-rose-300 uppercase tracking-wide">
-                Alerta de Déficit Crítico
+              <p className={`text-xs font-bold uppercase tracking-wide ${criticalAlert.isNeg ? 'text-rose-700 dark:text-rose-300' : 'text-amber-800 dark:text-amber-300'}`}>
+                {criticalAlert.isNeg ? '⚠️ Alerta de Saldo Negativo' : '⚠️ Alerta: Rompe Colchón de Seguridad'}
               </p>
-              <p className="text-sm font-semibold text-rose-900 dark:text-rose-100">
-                El pago "{criticalAlert.reason}" {(profile.settings.minBalance || 0) > 0 ? 'rompe tu colchón de seguridad' : 'genera un saldo negativo'} el {formatDateStr(criticalAlert.date)}.
+              <p className={`text-sm font-semibold ${criticalAlert.isNeg ? 'text-rose-900 dark:text-rose-100' : 'text-amber-900 dark:text-amber-100'}`}>
+                El movimiento "{criticalAlert.reason}" {criticalAlert.isNeg ? 'genera un saldo negativo' : 'deja tu disponible por debajo del colchón de seguridad'} el {formatDateStr(criticalAlert.date)}.
               </p>
             </div>
           </div>
-          <ChevronRight className="w-5 h-5 text-rose-500" />
+          <ChevronRight className={`w-5 h-5 ${criticalAlert.isNeg ? 'text-rose-500' : 'text-amber-500'}`} />
         </div>
-      ) : (
+      ) : (!integrityReport?.cashBreachAnalysis || (integrityReport.cashBreachAnalysis.isPlanViable && integrityReport.cashBreachAnalysis.breachCount === 0)) ? (
         <div className="p-3.5 bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-900/50 rounded-2xl flex items-center justify-between shadow-xs">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-emerald-500 text-white rounded-xl">
@@ -482,29 +768,56 @@ const getWeekStart = (dateStr: string) => {
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Main KPI Cards */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm space-y-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
                 {profile.settings.planStart > today ? 'Saldo Disponible (Inicio del Plan)' : 'Saldo Disponible (Hoy)'}
               </span>
+              <button
+                onClick={() => {
+                  setTempPlanStart(profile.settings.planStart || today);
+                  setTempOpeningBalanceStr(String(profile.settings.openingBalance || 0));
+                  setShowSetupModal(true);
+                }}
+                className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                title="Configurar fecha de inicio y saldo inicial base"
+              >
+                <span>Saldo Inicial: <strong>{formatCurrency(profile.settings.openingBalance || 0)}</strong></span>
+              </button>
             </div>
             <div className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-slate-50 tracking-tight mt-1">
               {formatCurrency(todayBalance)}
             </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Colchón Mínimo: <span className="font-semibold text-slate-700 dark:text-slate-300">{formatCurrency(profile.settings.minBalance || 0)}</span>
-              <span className="mx-2">•</span>
-              Proyectado: <span className="font-semibold text-slate-700 dark:text-slate-300" title="Saldo si todos los movimientos hasta hoy estuvieran marcados como pagados">{formatCurrency(projectedToday)}</span>
+            <p className="text-xs text-slate-500 mt-1 flex items-center flex-wrap gap-1">
+              <span>Colchón Mínimo:</span>
+              <button
+                onClick={() => {
+                  setTempCushionAmt(profile.settings.minBalance || 0);
+                  setTempCushionCurr(profile.settings.minBalanceCurrency || profile.settings.displayCurrency || 'USD');
+                  setShowCushionModal(true);
+                }}
+                className="inline-flex items-center gap-1 font-bold text-slate-700 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400 bg-slate-100 hover:bg-blue-50 dark:bg-slate-800 dark:hover:bg-slate-700 px-2 py-0.5 rounded-lg border border-slate-200 dark:border-slate-700 transition-all cursor-pointer"
+                title="Toca para ajustar el colchón mínimo de seguridad"
+              >
+                <span>{formatAmountWithCurrency(profile.settings.minBalance || 0, cushionCurrency)}</span>
+              </button>
+              {cushionCurrency !== (profile.settings.displayCurrency || 'USD') && (
+                <span className="text-[11px] text-slate-400 font-medium">
+                  (~{formatCurrency(convertAmount(profile.settings.minBalance || 0, cushionCurrency))})
+                </span>
+              )}
+              <span className="mx-1">•</span>
+              <span>Proyectado: <strong className="font-semibold text-slate-700 dark:text-slate-300" title="Saldo si todos los movimientos hasta hoy estuvieran marcados como pagados">{formatCurrency(projectedToday)}</strong></span>
             </p>
           </div>
 
           <div
-            onClick={() => setChartMode(3)}
+            onClick={() => handleSelectChartMode(3)}
             className="sm:text-right border-t sm:border-t-0 sm:border-l border-slate-100 dark:border-slate-800 pt-3 sm:pt-0 sm:pl-4 cursor-pointer hover:opacity-90 transition-opacity"
             title="Haz clic para ver el Gráfico de Flujo de Caja Neto"
           >
@@ -526,7 +839,7 @@ const getWeekStart = (dateStr: string) => {
         
         {/* Deficit Alert Banner */}
         {(() => {
-          const criticalDeficits = plan.filter(e => e.balance < 0 && chartDataMap[e.date]?.balance < 0 && e?.amt < 0 && !e.done);
+          const criticalDeficits = plan.filter(e => e.balance < -0.01 && (chartDataMap[e.date]?.balance ?? 0) < -0.01 && e?.amt < 0 && !e.done);
           if (criticalDeficits.length === 0) return null;
           
           const uniqueDeficits = Array.from(new Map(criticalDeficits.map(item => [item.ref?.id, item])).values());
@@ -578,37 +891,7 @@ const getWeekStart = (dateStr: string) => {
             </h3>
             <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
               <button
-                onClick={() => setChartMode(5)}
-                className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
-                  chartMode === 5
-                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
-                }`}
-              >
-                Quincenal
-              </button>
-              <button
-                onClick={() => setChartMode(4)}
-                className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
-                  chartMode === 4
-                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
-                }`}
-              >
-                Semanal
-              </button>
-              <button
-                onClick={() => setChartMode(0)}
-                className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
-                  chartMode === 0
-                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
-                }`}
-              >
-                Diario
-              </button>
-              <button
-                onClick={() => setChartMode(1)}
+                onClick={() => handleSelectChartMode(1)}
                 className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
                   chartMode === 1
                     ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
@@ -618,7 +901,37 @@ const getWeekStart = (dateStr: string) => {
                 Mensual
               </button>
               <button
-                onClick={() => setChartMode(3)}
+                onClick={() => handleSelectChartMode(5)}
+                className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
+                  chartMode === 5
+                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
+                }`}
+              >
+                Quincenal
+              </button>
+              <button
+                onClick={() => handleSelectChartMode(4)}
+                className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
+                  chartMode === 4
+                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
+                }`}
+              >
+                Semanal
+              </button>
+              <button
+                onClick={() => handleSelectChartMode(0)}
+                className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
+                  chartMode === 0
+                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
+                }`}
+              >
+                Diario
+              </button>
+              <button
+                onClick={() => handleSelectChartMode(3)}
                 className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
                   chartMode === 3
                     ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-xs'
@@ -628,7 +941,7 @@ const getWeekStart = (dateStr: string) => {
                 📈 Flujo Neto
               </button>
               <button
-                onClick={() => setChartMode(2)}
+                onClick={() => handleSelectChartMode(2)}
                 className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
                   chartMode === 2
                     ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
@@ -674,92 +987,253 @@ const getWeekStart = (dateStr: string) => {
           </div>
 
           {/* Recharts Canvas */}
-          <div className="h-64 w-full">
+          <div className="h-80 sm:h-96 md:h-[380px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               {(() => {
-                const activeData = chartMode === 5 ? chartData : chartMode === 4 ? weeklyData : chartMode === 3 ? biweeklyData : (chartMode === 2 || chartMode === 1) ? monthlyData : chartData;
+                if (chartMode === 2) {
+                  return (
+                    <PieChart margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
+                      <Pie
+                        data={pieData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={100}
+                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        labelLine={false}
+                      >
+                        {pieData.map((_, index) => (
+                          <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value: any) => formatCurrency(Number(value))} />
+                      <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '4px' }} />
+                    </PieChart>
+                  );
+                }
+
+                const activeData = chartMode === 5 
+                  ? biweeklyData 
+                  : chartMode === 4 
+                  ? weeklyData 
+                  : chartMode === 3 
+                  ? netFlowMonthlyData 
+                  : chartMode === 1 
+                  ? monthlyData 
+                  : chartData;
+
+                const mappedData = activeData.map((d: any) => ({
+                  ...d,
+                  preIncomeBalance: (d.balance || 0) - (d.income || 0),
+                  totalEgresos: d.totalEgresos !== undefined ? d.totalEgresos : ((d.expense || 0) + (d.debt || 0))
+                }));
+
+                const hasDeficit = mappedData.some((d: any) => (d.deficit || 0) > 0);
+                const hasRescates = mappedData.some((d: any) => (d.rescates || 0) > 0);
+                const hasIncome = mappedData.some((d: any) => (d.income || 0) > 0);
+                const hasEgresos = mappedData.some((d: any) => (d.totalEgresos || 0) > 0);
+                const hasBalance = mappedData.some((d: any) => d.balance !== undefined && d.balance !== null);
+                const hasNetFlow = mappedData.some((d: any) => d.netFlow !== undefined && d.netFlow !== 0);
+
                 return (
-                  <ComposedChart data={activeData.map((d: any) => ({ ...d, preIncomeBalance: (d.balance || 0) - (d.income || 0), totalEgresos: (d.expense || 0) + (d.debt || 0) })) as any} onClick={(e) => { if (e && (e as any).activePayload && (e as any).activePayload[0]) setPeriodDetails((e as any).activePayload[0].payload); }}>
-                    <XAxis dataKey="label" stroke="#94a3b8" fontSize={10} />
-                    <YAxis yAxisId="left" stroke="#94a3b8" fontSize={10} tickFormatter={val => `$${val >= 1000 ? (val / 1000).toFixed(0) + 'k' : val}`} />
+                  <ComposedChart
+                    data={mappedData as any}
+                    margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                    onClick={(e) => { if (e && (e as any).activePayload && (e as any).activePayload[0]) setPeriodDetails((e as any).activePayload[0].payload); }}
+                  >
+                    <XAxis dataKey="label" stroke="#94a3b8" fontSize={10} minTickGap={15} interval="preserveStartEnd" />
+                    <YAxis yAxisId="left" width={42} stroke="#94a3b8" fontSize={10} tickFormatter={val => `$${val >= 1000 ? (val / 1000).toFixed(0) + 'k' : val}`} />
                     <Tooltip content={<CustomTooltip />} wrapperStyle={{ pointerEvents: 'none' }} />
                     <Legend onClick={(e) => toggleLine(e.dataKey as string)} wrapperStyle={{ fontSize: '11px', paddingTop: '4px', cursor: 'pointer' }} />
                     <ReferenceLine y={0} stroke="#94a3b8" strokeDasharray="3 3" yAxisId="left" />
                     
-                    <Bar hide={hiddenLines["deficit"]} dataKey="deficit" stackId="opt" yAxisId="left" fill="#991b1b" name="Déficit (Alerta)" barSize={12} radius={[4,4,0,0]} />
-                    <Bar hide={hiddenLines["rescates"]} dataKey="rescates" stackId="opt" yAxisId="left" fill="#0ea5e9" name="Rescate de Ahorros" barSize={12} radius={[4,4,0,0]} />
-                    <Bar hide={hiddenLines["optimizedAdelantados"]} dataKey="optimizedAdelantados" stackId="opt" yAxisId="left" fill="#059669" name="Optimizados (Adelantados)" barSize={12} radius={[4,4,0,0]} />
-                    <Bar hide={hiddenLines["optimizedAtrasados"]} dataKey="optimizedAtrasados" stackId="opt" yAxisId="left" fill="#d97706" name="Optimizados (Atrasados)" barSize={12} radius={[4,4,0,0]} />
-                    
-                    <Line hide={hiddenLines["income"]} type="monotone" dataKey="income" yAxisId="left" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
-                    <Line hide={hiddenLines["totalEgresos"]} type="monotone" dataKey="totalEgresos" yAxisId="left" name="Egresos (Gastos+Deudas)" stroke="#f43f5e" strokeWidth={2} dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
-                    <Line hide={hiddenLines["balance"]} type="monotone" dataKey="balance" yAxisId="left" name="Liquidez Final del Día" stroke="#3b82f6" strokeWidth={2} strokeDasharray="3 3" dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
+                    {chartMode === 3 ? (
+                      <>
+                        {hasNetFlow && (
+                          <Bar hide={hiddenLines["netFlow"]} dataKey="netFlow" yAxisId="left" name="Flujo Neto" barSize={22} radius={[4, 4, 0, 0]}>
+                            {activeData.map((entry: any, index: number) => (
+                              <Cell key={`cell-net-${index}`} fill={(entry.netFlow || 0) >= 0 ? '#10b981' : '#f43f5e'} />
+                            ))}
+                          </Bar>
+                        )}
+                        {hasIncome && (
+                          <Line hide={hiddenLines["income"]} type="monotone" dataKey="income" yAxisId="left" name="Ingresos" stroke="#10b981" strokeWidth={2} dot activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
+                        )}
+                        {hasEgresos && (
+                          <Line hide={hiddenLines["totalEgresos"]} type="monotone" dataKey="totalEgresos" yAxisId="left" name="Egresos Totales" stroke="#f43f5e" strokeWidth={2} dot activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
+                        )}
+                        {hasBalance && (
+                          <Line hide={hiddenLines["balance"]} type="monotone" dataKey="balance" yAxisId="left" name="Liquidez Final" stroke="#3b82f6" strokeWidth={2} strokeDasharray="3 3" dot activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {hasDeficit && (
+                          <Bar hide={hiddenLines["deficit"]} dataKey="deficit" stackId="opt" yAxisId="left" fill="#991b1b" name="Déficit (Alerta)" barSize={12} radius={[4,4,0,0]} />
+                        )}
+                        {hasRescates && (
+                          <Bar hide={hiddenLines["rescates"]} dataKey="rescates" stackId="opt" yAxisId="left" fill="#8b5cf6" name="Rescate de Ahorros" barSize={12} radius={[4,4,0,0]} />
+                        )}
+                        {hasIncome && (
+                          <Line hide={hiddenLines["income"]} type="monotone" dataKey="income" yAxisId="left" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
+                        )}
+                        {hasEgresos && (
+                          <Line hide={hiddenLines["totalEgresos"]} type="monotone" dataKey="totalEgresos" yAxisId="left" name="Egresos (Gastos+Deudas)" stroke="#f43f5e" strokeWidth={2} dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
+                        )}
+                        {hasBalance && (
+                          <Line hide={hiddenLines["balance"]} type="monotone" dataKey="balance" yAxisId="left" name="Liquidez Final del Día" stroke="#3b82f6" strokeWidth={2} strokeDasharray="3 3" dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
+                        )}
+                      </>
+                    )}
                   </ComposedChart>
                 );
               })()}
             </ResponsiveContainer>
           </div>
           
-          <div className="h-40 mt-4 border-t border-slate-100 dark:border-slate-800 pt-4">
+          <div className="h-48 sm:h-56 mt-4 border-t border-slate-100 dark:border-slate-800 pt-4">
             <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Acumulación de Ahorros</h4>
             <ResponsiveContainer width="100%" height="100%">
               {(() => {
-                const activeData = chartMode === 5 ? chartData : chartMode === 4 ? weeklyData : chartMode === 3 ? biweeklyData : (chartMode === 2 || chartMode === 1) ? monthlyData : chartData;
+                const activeData = chartMode === 5 
+                  ? biweeklyData 
+                  : chartMode === 4 
+                  ? weeklyData 
+                  : chartMode === 3 
+                  ? netFlowMonthlyData 
+                  : chartMode === 1 
+                  ? monthlyData 
+                  : chartData;
+
                 return (
-                  <ComposedChart data={activeData as any} onClick={(e) => { if (e && (e as any).activePayload && (e as any).activePayload[0]) setPeriodDetails((e as any).activePayload[0].payload); }}>
-                    <XAxis dataKey="label" stroke="#94a3b8" fontSize={10} />
-                    <YAxis stroke="#0ea5e9" fontSize={10} tickFormatter={val => `$${val >= 1000 ? (val / 1000).toFixed(0) + 'k' : val}`} />
+                  <ComposedChart
+                    data={activeData as any}
+                    margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                    onClick={(e) => { if (e && (e as any).activePayload && (e as any).activePayload[0]) setPeriodDetails((e as any).activePayload[0].payload); }}
+                  >
+                    <XAxis dataKey="label" stroke="#94a3b8" fontSize={10} minTickGap={15} interval="preserveStartEnd" />
+                    <YAxis width={42} stroke="#0ea5e9" fontSize={10} tickFormatter={val => `$${val >= 1000 ? (val / 1000).toFixed(0) + 'k' : val}`} />
                     <Tooltip content={<CustomTooltip />} wrapperStyle={{ pointerEvents: 'none' }} />
                     <Line type="monotone" dataKey="savingsAccumulated" name="Ahorros" stroke="#0ea5e9" strokeWidth={2} dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
                   </ComposedChart>
                 );
               })()}
             </ResponsiveContainer>
-                        </div>
+          </div>
         </div>
       </div>
-      {/* Upcoming 30-Day Timeline */}
-      <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-            <CalendarIcon className="w-4 h-4 text-blue-600" />
-            Pendientes y Próximos 30 días
-          </h3>
-          <span className="text-xs text-slate-400 font-medium">
-            {upcomingList.length} ítems
-          </span>
+      {/* Upcoming Items Timeline */}
+      <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 flex-wrap">
+              <CalendarIcon className="w-4 h-4 text-blue-600" />
+              {pendingFilter === 'next_income' ? (
+                <span>Pendientes hasta el próximo ingreso {nextIncomeDate ? `(${formatDateStr(nextIncomeDate)})` : ''}</span>
+              ) : pendingFilter === 'next_30' ? (
+                <span>Pendientes de los próximos 30 días</span>
+              ) : (
+                <span>Todos los compromisos pendientes</span>
+              )}
+            </h3>
+            {nextIncomeEvent && pendingFilter === 'next_income' && (
+              <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-0.5">
+                Próximo cobro: <strong>{nextIncomeEvent.label}</strong> ({formatCurrency(nextIncomeEvent.amt)}) el {formatDateStr(nextIncomeEvent.date)}
+              </p>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs font-semibold self-start sm:self-auto">
+            <button
+              onClick={() => setPendingFilter('next_income')}
+              className={`px-2.5 py-1 rounded-lg transition-colors ${
+                pendingFilter === 'next_income'
+                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs font-bold'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              Hasta Próx. Ingreso
+            </button>
+            <button
+              onClick={() => setPendingFilter('next_30')}
+              className={`px-2.5 py-1 rounded-lg transition-colors ${
+                pendingFilter === 'next_30'
+                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs font-bold'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              30 días
+            </button>
+            <button
+              onClick={() => setPendingFilter('all')}
+              className={`px-2.5 py-1 rounded-lg transition-colors ${
+                pendingFilter === 'all'
+                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs font-bold'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              Todos ({plan.filter(e => !e.done && e.type !== 'opening_balance').length})
+            </button>
+          </div>
         </div>
 
         {upcomingList.length === 0 ? (
           <p className="text-xs text-slate-400 text-center py-6 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
-            No hay compromisos pendientes registrados en los próximos 30 días.
+            {pendingFilter === 'next_income' && nextIncomeDate
+              ? `No tienes compromisos pendientes antes de tu próximo ingreso del ${formatDateStr(nextIncomeDate)}.`
+              : 'No hay compromisos pendientes en este rango.'}
           </p>
         ) : (
           <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
             {upcomingList.map((u, idx) => {
-              const isOverdue = u.originalDate < today;
+              const isOverdue = !u.done && !u.isPaid && u.date < today;
+              const isStartingFund = u.ref?.id === 'required_starting_fund';
+
               return (
                 <div
                   key={idx}
-                  onClick={() => { if (u.type !== 'opening_balance') onOpenDetails(u.type, u.ref.id, u.originalDate, u.date); }}
+                  onClick={() => {
+                    if (isStartingFund) {
+                      setTempOpeningBalanceStr(String(u.amt));
+                      setTempPlanStart(profile.settings.planStart || today);
+                      setShowSetupModal(true);
+                    } else if (u.type !== 'opening_balance') {
+                      onOpenDetails(u.type, u.ref?.id || '', u.originalDate, u.date);
+                    }
+                  }}
                   style={(!isOverdue && u.ref?.effectiveColor) ? {
                     borderLeftColor: u.ref.effectiveColor,
                     borderLeftWidth: '4px'
                   } : {}}
                   className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between cursor-pointer ${
-                    isOverdue
+                    isStartingFund
+                      ? 'bg-amber-50/70 border-amber-300 dark:bg-amber-950/30 dark:border-amber-800 hover:border-amber-400'
+                      : isOverdue
                       ? 'bg-amber-50/60 border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/40'
-                      : (!u.ref?.effectiveColor ? 'bg-slate-50 dark:bg-slate-800/60 border-slate-100 dark:border-slate-800 hover:border-slate-300' : 'bg-white dark:bg-slate-900 shadow-sm border-slate-100 dark:border-slate-800')
+                      : (!u.ref?.effectiveColor ? 'bg-slate-50 dark:bg-slate-800/60 border-slate-100 dark:border-slate-800 hover:border-slate-300' : 'bg-white dark:bg-slate-900 shadow-sm border-slate-100 dark:border-slate-800 hover:border-slate-300')
                   }`}
                 >
                   <div className="space-y-0.5">
-                    <p className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                    <p className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 flex-wrap">
                       {u.label}
+                      {isStartingFund && (
+                        <span className="bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 px-1.5 py-0.2 rounded text-[9px] font-extrabold">
+                          Capital de inicio
+                        </span>
+                      )}
+                      {u.originalDate && u.originalDate !== u.date && (
+                          <span className="text-[9px] font-normal text-slate-500">(Plan: {formatDateStr(u.originalDate).substring(0,5)})</span>
+                      )}
                     </p>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      {isOverdue ? (
+                      {isStartingFund ? (
+                        <span className="text-amber-700 dark:text-amber-400 font-semibold">
+                          Requerido para iniciar el plan sin déficit
+                        </span>
+                      ) : isOverdue ? (
                         <span className="text-amber-600 dark:text-amber-400 font-semibold">
-                          ⚠️ Atrasado (Plan: {formatDateStr(u.originalDate)})
+                          ⚠️ Atrasado ({formatDateStr(u.date)})
                         </span>
                       ) : (
                         <span>Proyectado: {formatDateStr(u.date)}</span>
@@ -767,7 +1241,7 @@ const getWeekStart = (dateStr: string) => {
                     </p>
                   </div>
 
-                  <div className="text-right">
+                  <div className="text-right flex items-center gap-2">
                     <p
                       className={`text-sm font-extrabold ${
                         u.amt > 0 ? 'text-emerald-600' : 'text-slate-900 dark:text-slate-100'
@@ -775,7 +1249,29 @@ const getWeekStart = (dateStr: string) => {
                     >
                       {formatCurrency(Math.abs(u.amt))}
                     </p>
-                    {/* Saldo oculto */}
+                    {isStartingFund && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const key = `income_required_starting_fund_${profile.settings.planStart}`;
+                          updateProfileData(draft => {
+                            if (!draft.overrides) draft.overrides = {};
+                            draft.overrides[key] = {
+                              ...(draft.overrides[key] || {}),
+                              done: true,
+                              amt: u.amt,
+                              actualDate: profile.settings.planStart
+                            };
+                            draft.settings.openingBalance = (draft.settings.openingBalance || 0) + u.amt;
+                          });
+                          showToast(`Saldo inicial de ${formatCurrency(u.amt)} confirmado`, '✅');
+                        }}
+                        className="p-1 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded-lg text-[10px] font-extrabold transition-colors px-2"
+                        title="Marcar como depositado / fondeado"
+                      >
+                        Fondear
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -991,6 +1487,86 @@ const getWeekStart = (dateStr: string) => {
         </div>
       )}
 
+      {/* Cushion Adjustment Modal */}
+      {showCushionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col">
+            <div className="p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
+              <h2 className="text-xl font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                Ajustar Colchón Mínimo
+              </h2>
+              <button 
+                onClick={() => setShowCushionModal(false)}
+                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-5 sm:p-6 space-y-4">
+              <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-2xl border border-blue-100 dark:border-blue-800/30 flex gap-3">
+                <Info className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-blue-800 dark:text-blue-200 leading-relaxed font-medium">
+                  El colchón mínimo es la reserva de seguridad que el sistema protegerá en todo momento ante imprevistos para evitar que tu balance caiga en zona de riesgo.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  Monto y Moneda del Colchón
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={tempCushionAmt}
+                    onChange={(e) => setTempCushionAmt(parseFloat(e.target.value) || 0)}
+                    placeholder="0.00"
+                    className="flex-1 px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                  />
+                  <select
+                    value={tempCushionCurr}
+                    onChange={(e) => setTempCushionCurr(e.target.value)}
+                    className="w-32 px-3 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
+                  >
+                    <option value="EUR">EUR (€)</option>
+                    <option value="USD">USD ($)</option>
+                    <option value="BS">BS (Bs)</option>
+                    <option value="USDT">USDT</option>
+                  </select>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1.5 ml-1">
+                  Se calcularán las alertas y fondos requeridos respetando esta moneda.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30 flex justify-end gap-3 shrink-0">
+              <button
+                onClick={() => setShowCushionModal(false)}
+                className="px-5 py-2.5 text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  updateProfileData(draft => {
+                    draft.settings.minBalance = tempCushionAmt;
+                    draft.settings.minBalanceCurrency = tempCushionCurr;
+                  });
+                  setShowCushionModal(false);
+                  showToast(`Colchón mínimo actualizado a ${formatAmountWithCurrency(tempCushionAmt, tempCushionCurr)}`, '🛡️');
+                }}
+                className="px-5 py-2.5 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors shadow-sm hover:shadow-md"
+              >
+                Guardar Colchón
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Period Details Modal */}
       {periodDetails && (
@@ -1036,7 +1612,12 @@ const getWeekStart = (dateStr: string) => {
                             {item.amt > 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
                           </div>
                           <div>
-                            <p className="text-sm font-bold text-slate-800 dark:text-slate-200">{item.label}</p>
+                            <p className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 flex-wrap">
+                               {item.label}
+                               {item.originalDate && item.originalDate !== item.date && (
+                                   <span className="text-[10px] font-normal text-slate-500">(Plan: {formatDateStr(item.originalDate).substring(0,5)})</span>
+                               )}
+                            </p>
                             <p className="text-[10px] font-medium text-slate-500">{item.date}</p>
                           </div>
                         </div>

@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { CurrencyCode } from '../../types';
 import { Confetti } from '../shared/Confetti';
-import { formatCurrency, getRemainingDebtAmount, getDebtTotalPaid, calculateAmortizationPlan } from '../../utils/financialEngine';
-import { Plus, Building2, Edit2, ShieldAlert, Sparkles, Download, Layers, Trash2 } from 'lucide-react';
+import { formatCurrency, formatDateStr, getRemainingDebtAmount, getDebtTotalPaid, calculateAmortizationPlan } from '../../utils/financialEngine';
+import { publishDebtTemplateToFirestore, loadDebtTemplatesFromFirestore } from '../../utils/firebase';
+import { Plus, Building2, ShieldAlert, Sparkles, Download, Layers, Trash2, Table as TableIcon, LayoutGrid, ArrowUpDown, ArrowUp, ArrowDown, Filter } from 'lucide-react';
 
 interface DebtsViewProps {
   onOpenCreate: (type: 'debt') => void;
@@ -38,25 +40,32 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
   };
   
   const [subTab, setSubTab] = useState<'active' | 'settled' | 'types' | 'strategy'>('active');
+  const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
+  const [tableSortColumn, setTableSortColumn] = useState<'name' | 'start' | 'freq' | 'total' | 'paid' | 'installment' | 'remaining'>('remaining');
+  const [tableSortDir, setTableSortDir] = useState<'asc' | 'desc'>('desc');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
   const [strategyMode, setStrategyMode] = useState<'snowball' | 'avalanche'>('snowball');
   const [sortOption, setSortOption] = useState<'name' | 'total' | 'remaining' | 'paid' | 'type'>('remaining');
   const [showCustomDebtModal, setShowCustomDebtModal] = useState(false);
   const [editingCustomDebt, setEditingCustomDebt] = useState<any>(null);
-  const [customDebtForm, setCustomDebtForm] = useState({ name: '', freq: 'monthly', hasInterest: false, usePlan: false, color: '#9c27b0', dueDay: '1', cutDay: '5', creditLimit: '', limitCurrency: 'USD_BCV', isCreditCard: false });
+  const [customDebtForm, setCustomDebtForm] = useState<{ name: string; freq: string; hasInterest: boolean; usePlan: boolean; color: string; dueDay: string; cutDay: string; creditLimit: string; limitCurrency: string; isCreditCard: boolean; currency: CurrencyCode; }>({ name: '', freq: 'monthly', hasInterest: false, usePlan: false, color: '#9c27b0', dueDay: '1', cutDay: '5', creditLimit: '', limitCurrency: 'USD_BCV', isCreditCard: false, currency: 'USD_BCV' });
   const [showFormCutGrid, setShowFormCutGrid] = useState(false);
   const [showFormDueGrid, setShowFormDueGrid] = useState(false);
   const [showCloudTemplatesModal, setShowCloudTemplatesModal] = useState(false);
   const [cloudTemplates, setCloudTemplates] = useState<any[]>([]);
   const [isSearchingTemplates, setIsSearchingTemplates] = useState(false);
   const [templateSearchQuery, setTemplateSearchQuery] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
   const fetchTemplates = async () => {
     setIsSearchingTemplates(true);
     try {
-      const res = await fetch(`/api/debt-templates?q=${templateSearchQuery}`);
-      const data = await res.json();
-      if (data.success) {
-        setCloudTemplates(data.templates);
+      const templates = await loadDebtTemplatesFromFirestore();
+      if (templateSearchQuery) {
+        const queryLower = templateSearchQuery.toLowerCase();
+        setCloudTemplates(templates.filter(t => t.name?.toLowerCase().includes(queryLower) || t.authorAlias?.toLowerCase().includes(queryLower)));
+      } else {
+        setCloudTemplates(templates);
       }
     } catch (e) {
       showToast("Error al buscar plantillas", "❌");
@@ -76,7 +85,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
           dueDay: template.dueDay || '1',
           hasInterest: template.hasInterest,
           usePlan: template.usePlan,
-          color: template.color
+          color: template.color,
+          currency: template.currency || 'USD_BCV',
+          limitCurrency: template.limitCurrency || 'USD_BCV',
+          isCreditCard: !!template.isCreditCard,
+          cutDay: template.cutDay || '5',
+          creditLimit: template.creditLimit || ''
         });
       }
     });
@@ -86,23 +100,24 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
 
   const handlePublishCustomDebt = async (cd: any) => {
     try {
-      const res = await fetch('/api/debt-templates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: cd.name,
-          freq: cd.freq,
-          hasInterest: cd.hasInterest,
-          usePlan: cd.usePlan,
-          color: cd.color,
-          authorAlias: profile.settings.myAlias || 'Usuario Monywissen'
-        })
+      const res = await publishDebtTemplateToFirestore({
+        name: cd.name,
+        freq: cd.freq,
+        hasInterest: cd.hasInterest,
+        usePlan: cd.usePlan,
+        color: cd.color,
+        currency: cd.currency || 'USD_BCV',
+        limitCurrency: cd.limitCurrency || 'USD_BCV',
+        isCreditCard: !!cd.isCreditCard,
+        dueDay: cd.dueDay || '1',
+        cutDay: cd.cutDay || '5',
+        creditLimit: cd.creditLimit || '',
+        authorAlias: profile.settings.myAlias || 'Usuario Monywissen'
       });
-      const data = await res.json();
-      if (data.success) {
+      if (res.success) {
         showToast(`Modelo "${cd.name}" publicado en MonyStore 🌐`, '🚀');
       } else {
-        showToast(data.error || 'Error al publicar', '❌');
+        showToast(res.error || 'Error al publicar', '❌');
       }
     } catch (e) {
       showToast('Error al conectar con MonyStore', '❌');
@@ -115,18 +130,27 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
   const planStart = profile.settings.planStart || '2020-01-01';
   const planEnd = profile.settings.planEnd || '2099-12-31';
 
-  let baseActiveDebts = debts.filter(d => getRemainingDebtAmount(d, overrides, exchangeRates) > 0.01);
-  let baseSettledDebts = debts.filter(d => {
+  let filteredDebts = debts;
+  if (searchTerm.trim()) {
+    const q = searchTerm.toLowerCase();
+    filteredDebts = filteredDebts.filter(d => d.name.toLowerCase().includes(q) || (d.type && d.type.toLowerCase().includes(q)));
+  }
+  if (typeFilter !== 'all') {
+    filteredDebts = filteredDebts.filter(d => d.type === typeFilter);
+  }
+
+  let baseActiveDebts = filteredDebts.filter(d => getRemainingDebtAmount(d, overrides, exchangeRates) > 0.01);
+  let baseSettledDebts = filteredDebts.filter(d => {
     if (getRemainingDebtAmount(d, overrides, exchangeRates) > 0.01) return false;
     
     if (d.start >= planStart && d.start <= planEnd) return true;
 
     let hasPaymentInWindow = false;
     for (const key of Object.keys(overrides)) {
-       if (key.startsWith(`debt_${d.id}_`)) {
+       if (key.startsWith(`${d.id}_`) || key.startsWith(`debt_${d.id}_`)) {
           const ov = overrides[key];
           if (ov.done || (ov.partials && ov.partials.length > 0)) {
-             const paymentDate = ov.actualDate || key.split('_').pop();
+             const paymentDate = ov.actualDate || ov.date || (key.includes('cuota') ? '' : key.split('_').pop());
              if (paymentDate && paymentDate >= planStart && paymentDate <= planEnd) {
                  hasPaymentInWindow = true;
                  break;
@@ -147,39 +171,93 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
 
   const customDebts = profile.settings.customDebts || [];
 
+  const handleColumnHeaderClick = (col: 'name' | 'start' | 'freq' | 'total' | 'paid' | 'installment' | 'remaining') => {
+    if (tableSortColumn === col) {
+      setTableSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setTableSortColumn(col);
+      setTableSortDir(col === 'name' || col === 'freq' || col === 'start' ? 'asc' : 'desc');
+    }
+    setSortOption(col === 'name' ? 'name' : (col === 'total' ? 'total' : (col === 'paid' ? 'paid' : (col === 'freq' ? 'type' : 'remaining'))));
+  };
+
+  const renderSortIcon = (col: 'name' | 'start' | 'freq' | 'total' | 'paid' | 'installment' | 'remaining') => {
+    if (tableSortColumn !== col) {
+      return <ArrowUpDown className="w-3 h-3 opacity-30 group-hover:opacity-100 transition-opacity" />;
+    }
+    return tableSortDir === 'asc' ? (
+      <ArrowUp className="w-3 h-3 text-amber-600 dark:text-amber-400 font-bold" />
+    ) : (
+      <ArrowDown className="w-3 h-3 text-amber-600 dark:text-amber-400 font-bold" />
+    );
+  };
+
   const applySort = (list: any[]) => {
     return [...list].sort((a, b) => {
-      if (sortOption === 'name') return a.name.localeCompare(b.name);
-      if (sortOption === 'type') {
-         const typeA = customDebts.find((c: any) => c.id === a.type)?.name || a.type;
-         const typeB = customDebts.find((c: any) => c.id === b.type)?.name || b.type;
-         return typeA.localeCompare(typeB);
-      }
-      
-      const totalA = convertAmount(parseFloat(String(a.balance || 0)), a.currency);
-      const totalB = convertAmount(parseFloat(String(b.balance || 0)), b.currency);
-      if (sortOption === 'total') return totalB - totalA;
+      let res = 0;
+      if (tableSortColumn === 'name') {
+        res = a.name.localeCompare(b.name);
+      } else if (tableSortColumn === 'start') {
+        const startA = a.start || '9999-12-31';
+        const startB = b.start || '9999-12-31';
+        res = startA.localeCompare(startB);
+        if (res === 0) {
+          res = a.name.localeCompare(b.name);
+        }
+      } else if (tableSortColumn === 'freq') {
+        const freqA = a.type === 'card' ? `corte_${a.cutDay || 5}` : (a.freq || 'monthly');
+        const freqB = b.type === 'card' ? `corte_${b.cutDay || 5}` : (b.freq || 'monthly');
+        res = freqA.localeCompare(freqB);
+      } else if (tableSortColumn === 'total') {
+        const planA = calculateAmortizationPlan(a, overrides, customDebts, undefined, exchangeRates);
+        const remA = planA.reduce((acc, p) => acc + (p.requiredPay || 0), 0);
+        const paidA = getDebtTotalPaid(a, overrides, exchangeRates);
+        const origA = convertAmount(remA + paidA, a.currency);
 
-      const remA = convertAmount(getRemainingDebtAmount(a, overrides, exchangeRates), (a as any).currency);
-      const remB = convertAmount(getRemainingDebtAmount(b, overrides, exchangeRates), (b as any).currency);
-      if (sortOption === 'remaining') return remB - remA;
-      
-      const paidA = getDebtTotalPaid(a, overrides, exchangeRates);
-      const paidB = getDebtTotalPaid(b, overrides, exchangeRates);
-      const paidAConv = convertAmount(paidA, (a as any).currency);
-      const paidBConv = convertAmount(paidB, (b as any).currency);
-      if (sortOption === 'paid') return paidBConv - paidAConv;
-      
-      return 0;
+        const planB = calculateAmortizationPlan(b, overrides, customDebts, undefined, exchangeRates);
+        const remB = planB.reduce((acc, p) => acc + (p.requiredPay || 0), 0);
+        const paidB = getDebtTotalPaid(b, overrides, exchangeRates);
+        const origB = convertAmount(remB + paidB, b.currency);
+
+        res = origA - origB;
+      } else if (tableSortColumn === 'paid') {
+        const paidA = convertAmount(getDebtTotalPaid(a, overrides, exchangeRates), a.currency);
+        const paidB = convertAmount(getDebtTotalPaid(b, overrides, exchangeRates), b.currency);
+        res = paidA - paidB;
+      } else if (tableSortColumn === 'installment') {
+        const planA = calculateAmortizationPlan(a, overrides, customDebts, undefined, exchangeRates);
+        const instA = convertAmount(planA.length > 0 ? planA[0].expectedAmount : (a.amount || a.minPay || 0), a.currency);
+
+        const planB = calculateAmortizationPlan(b, overrides, customDebts, undefined, exchangeRates);
+        const instB = convertAmount(planB.length > 0 ? planB[0].expectedAmount : (b.amount || b.minPay || 0), b.currency);
+
+        res = instA - instB;
+      } else if (tableSortColumn === 'remaining') {
+        const remA = convertAmount(getRemainingDebtAmount(a, overrides, exchangeRates), a.currency);
+        const remB = convertAmount(getRemainingDebtAmount(b, overrides, exchangeRates), b.currency);
+        res = remA - remB;
+      }
+
+      return tableSortDir === 'asc' ? res : -res;
     });
   };
 
   const activeDebts = applySort(baseActiveDebts);
   const settledDebts = applySort(baseSettledDebts);
 
-  const totalOriginalActive = activeDebts.reduce((sum, d) => sum + convertAmount(parseFloat(String(d.balance || 0)), d.currency), 0);
-  const totalRemainingActive = activeDebts.reduce((sum, d) => sum + convertAmount(getRemainingDebtAmount(d, overrides, exchangeRates), d.currency), 0);
-  const totalPaidActive = Math.max(0, totalOriginalActive - totalRemainingActive);
+  let totalOriginalActive = 0;
+  let totalRemainingActive = 0;
+  let totalPaidActive = 0;
+
+  activeDebts.forEach(d => {
+    const plan = calculateAmortizationPlan(d, overrides, profile.settings.customDebts || [], undefined, exchangeRates);
+    const rem = plan.reduce((acc, p) => acc + (p.requiredPay || 0), 0);
+    const paid = getDebtTotalPaid(d, overrides, exchangeRates);
+    totalOriginalActive += convertAmount(rem + paid, d.currency);
+    totalRemainingActive += convertAmount(rem, d.currency);
+    totalPaidActive += convertAmount(paid, d.currency);
+  });
+
   const overallProgressPercent = totalOriginalActive > 0 ? Math.min(100, Math.round((totalPaidActive / totalOriginalActive) * 100)) : 0;
 
   const orderedDebts = [...activeDebts].sort((a, b) => {
@@ -197,7 +275,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
 
   const handleAddCustomDebt = () => {
     setEditingCustomDebt(null);
-    setCustomDebtForm({ name: '', freq: 'monthly', hasInterest: false, usePlan: false, color: '#9c27b0', dueDay: '1', cutDay: '5', creditLimit: '', limitCurrency: 'USD_BCV', isCreditCard: false });
+    setCustomDebtForm({ name: '', freq: 'monthly', hasInterest: false, usePlan: false, color: '#9c27b0', dueDay: '1', cutDay: '5', creditLimit: '', limitCurrency: 'USD_BCV', isCreditCard: false, currency: 'USD_BCV' as CurrencyCode });
     setShowCustomDebtModal(true);
   };
 
@@ -307,18 +385,59 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
         </div>
 
         {(subTab === 'active' || subTab === 'settled') && (
-          <div className="flex items-center justify-end px-1 mb-2">
-            <select
-              value={sortOption}
-              onChange={(e) => setSortOption(e.target.value as any)}
-              className="bg-transparent text-xs font-bold text-slate-500 dark:text-slate-400 outline-none cursor-pointer hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
-            >
-              <option value="remaining">Ordenar: Mayor Deuda</option>
-              <option value="total">Ordenar: Deuda Total</option>
-              <option value="paid">Ordenar: Más Pagado</option>
-              <option value="name">Ordenar: Por Nombre</option>
-              <option value="type">Ordenar: Por Tipo</option>
-            </select>
+          <div className="flex items-center justify-between gap-2 px-1 mb-2 flex-wrap sm:flex-nowrap">
+            <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+              <input
+                type="text"
+                placeholder="Buscar..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-28 sm:w-40 text-xs px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 outline-none text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:border-amber-500"
+              />
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-2 py-1">
+                <Filter className="w-3 h-3 text-slate-400 shrink-0" />
+                <select
+                  value={typeFilter}
+                  onChange={(e) => setTypeFilter(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-slate-600 dark:text-slate-300 outline-none cursor-pointer"
+                >
+                  <option value="all">Todos los tipos</option>
+                  <option value="card">💳 Tarjetas de Crédito</option>
+                  <option value="loan_interest">🏦 Préstamos con Interés</option>
+                  <option value="loan_no_interest">🤝 Préstamos sin Interés</option>
+                  {customDebts.map((cd: any) => (
+                    <option key={cd.id} value={cd.id}>🏷️ {cd.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700 shrink-0">
+              <button
+                type="button"
+                onClick={() => setViewMode('table')}
+                className={`flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
+                  viewMode === 'table'
+                    ? 'bg-white dark:bg-slate-700 text-amber-700 dark:text-amber-300 shadow-2xs'
+                    : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+                }`}
+                title="Vista Tabla"
+              >
+                <TableIcon className="w-3.5 h-3.5" /> Tabla
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('cards')}
+                className={`flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
+                  viewMode === 'cards'
+                    ? 'bg-white dark:bg-slate-700 text-amber-700 dark:text-amber-300 shadow-2xs'
+                    : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+                }`}
+                title="Vista Tarjetas"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" /> Tarjetas
+              </button>
+            </div>
           </div>
         )}
 
@@ -359,90 +478,300 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                 </div>
               </div>
 
-              {/* Debt Cards */}
-              {activeDebts.map(item => {
-                const realIndex = debts.findIndex(d => d.id === item.id);
-                
-                const plan = calculateAmortizationPlan(item, overrides, profile.settings.customDebts || [], undefined, exchangeRates);
-                const remaining = plan.reduce((acc, p) => acc + (p.requiredPay || 0), 0);
-                const paid = getDebtTotalPaid(item, overrides, exchangeRates);
-                const original = remaining + paid;
-                const progressPct = original > 0 ? Math.min(100, Math.round((paid / original) * 100)) : 0;
-                const isCleared = progressPct === 100;
-                const installmentsCount = plan.length;
-                const monthlyInstallment = plan.length > 0 ? plan[0].expectedAmount : (item.amount || item.minPay || 0);
+              {viewMode === 'table' ? (
+                /* Debt Table View */
+                <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs bg-white dark:bg-slate-900">
+                  <table className="w-full text-left border-collapse min-w-[700px]">
+                    <thead>
+                      <tr className="bg-slate-100/90 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 text-[10px] uppercase font-extrabold tracking-wider border-b border-slate-200 dark:border-slate-800 select-none">
+                        <th 
+                          onClick={() => handleColumnHeaderClick('name')}
+                          className="py-3 px-3.5 cursor-pointer hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors group"
+                        >
+                          <div className="flex items-center gap-1">
+                            <span>Deuda / Tipo</span>
+                            {renderSortIcon('name')}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleColumnHeaderClick('start')}
+                          className="py-3 px-3 cursor-pointer hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors group"
+                        >
+                          <div className="flex items-center gap-1">
+                            <span>Fecha Inicio</span>
+                            {renderSortIcon('start')}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleColumnHeaderClick('freq')}
+                          className="py-3 px-3 cursor-pointer hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors group"
+                        >
+                          <div className="flex items-center gap-1">
+                            <span>Frecuencia / Días</span>
+                            {renderSortIcon('freq')}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleColumnHeaderClick('total')}
+                          className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors group"
+                        >
+                          <div className="flex items-center justify-end gap-1">
+                            <span>Monto Inicial</span>
+                            {renderSortIcon('total')}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleColumnHeaderClick('paid')}
+                          className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors group"
+                        >
+                          <div className="flex items-center justify-end gap-1">
+                            <span>Pagado</span>
+                            {renderSortIcon('paid')}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleColumnHeaderClick('installment')}
+                          className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors group"
+                        >
+                          <div className="flex items-center justify-end gap-1">
+                            <span>Cuota Est.</span>
+                            {renderSortIcon('installment')}
+                          </div>
+                        </th>
+                        <th 
+                          onClick={() => handleColumnHeaderClick('remaining')}
+                          className="py-3 px-3 text-right cursor-pointer hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors group"
+                        >
+                          <div className="flex items-center justify-end gap-1">
+                            <span>Saldo Pendiente</span>
+                            {renderSortIcon('remaining')}
+                          </div>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-xs">
+                      {activeDebts.map(item => {
+                        const realIndex = debts.findIndex(d => d.id === item.id);
+                        const customDef = (profile.settings?.customDebts || []).find((cd: any) => cd.id === item.type);
+                        const itemColor = item.color || customDef?.color || (item.type === 'fixed' ? '#1a73e8' : item.type === 'noloan' ? '#00897b' : '#f59e0b');
+                        const itemTypeLabel = customDef ? `✨ ${customDef.name}` : (item.type === 'card' ? '💳 Tarjeta de Crédito' : (item.type === 'loan_interest' ? '🏦 Préstamo con Interés' : '🤝 Préstamo sin Interés'));
+                        
+                        const plan = calculateAmortizationPlan(item, overrides, profile.settings.customDebts || [], undefined, exchangeRates);
+                        const remaining = plan.reduce((acc, p) => acc + (p.requiredPay || 0), 0);
+                        const paid = getDebtTotalPaid(item, overrides, exchangeRates);
+                        const original = remaining + paid;
+                        const progressPct = original > 0 ? Math.min(100, Math.round((paid / original) * 100)) : 0;
+                        const monthlyInstallment = plan.length > 0 ? plan[0].expectedAmount : (item.amount || item.minPay || 0);
 
-                return (
-                  <div
-                    key={item.id}
-                    onClick={() => onOpenEdit('debt', realIndex)}
-                    className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-100 dark:border-slate-800 hover:border-slate-300 transition-all space-y-2.5 cursor-pointer"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2.5">
-                        <div
-                          className="w-3.5 h-3.5 rounded-full shrink-0 mt-0.5"
-                          style={{ backgroundColor: item.color || '#f59e0b' }}
-                        />
-                        <div>
-                          <p className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 flex-wrap">
-                            {item.name}
-                            {item.currency && item.currency !== 'USD_BCV' && (
-                              <span className="text-[9px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-md font-bold">
-                                {item.currency}
+                        return (
+                          <tr
+                            key={item.id}
+                            onClick={() => onOpenEdit('debt', realIndex)}
+                            className="hover:bg-amber-50/60 dark:hover:bg-amber-950/20 transition-colors cursor-pointer group"
+                          >
+                            <td className="py-3 px-3.5">
+                              <div className="flex items-center gap-2.5">
+                                <div
+                                  className="w-3.5 h-3.5 rounded-full shrink-0 shadow-2xs"
+                                  style={{ backgroundColor: itemColor }}
+                                />
+                                <div>
+                                  <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 flex-wrap">
+                                    {item.name}
+                                    {item.currency && item.currency !== 'USD_BCV' && (
+                                      <span className="text-[9px] px-1.5 py-0.2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded font-bold">
+                                        {item.currency}
+                                      </span>
+                                    )}
+                                    {item.incomeId && (() => {
+                                      const inc = (profile.incomes || []).find(i => i.id === item.incomeId);
+                                      return inc ? (
+                                        <span className="text-[9px] px-1.5 py-0.2 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 rounded font-bold border border-indigo-200/50 dark:border-indigo-800/30">
+                                          🏦 {inc.name}
+                                        </span>
+                                      ) : null;
+                                    })()}
+                                    {item.done && (
+                                      <span className="text-[9px] px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 rounded font-bold border border-emerald-200/50 dark:border-emerald-800/30">
+                                        ✓ Pagado
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[10px] text-slate-400 font-medium">
+                                    {itemTypeLabel}
+                                  </p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 text-[11px] text-slate-600 dark:text-slate-300 font-semibold whitespace-nowrap">
+                              {item.start ? formatDateStr(item.start) : '—'}
+                            </td>
+                            <td className="py-3 px-3 text-[11px] text-slate-600 dark:text-slate-300 font-medium whitespace-nowrap">
+                              {item.type === 'card'
+                                ? `Corte: día ${item.cutDay || 5} / Pago: día ${item.dueDay || 25}`
+                                : (item.freq === 'biweekly'
+                                    ? `Quincenal (Día ${item.dueDay || '15-30'})`
+                                    : (item.freq === 'weekly'
+                                        ? 'Semanal'
+                                        : (item.freq === 'triweekly'
+                                            ? 'Trisemanal'
+                                            : (item.freq === 'bimonthly'
+                                                ? `Bimensual (Día ${item.dueDay || 1})`
+                                                : (item.freq === 'quarterly'
+                                                    ? `Trimestral (Día ${item.dueDay || 1})`
+                                                    : (item.freq === 'four-monthly' || (item.freq as any) === 'cuatrimestral'
+                                                        ? `Cuatrimestral (Día ${item.dueDay || 1})`
+                                                        : (item.freq === 'semiannual' || (item.freq as any) === 'semestral'
+                                                            ? `Semestral (Día ${item.dueDay || 1})`
+                                                            : (item.freq === 'annual'
+                                                                ? `Anual (Día ${item.dueDay || 1})`
+                                                                : `Mensual (Día ${item.dueDay || 1})`))))))))}
+                            </td>
+                            <td className="py-3 px-3 text-right font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                              {formatCurrencyExt(original, item.currency)}
+                            </td>
+                            <td className="py-3 px-3 text-right whitespace-nowrap">
+                              <div className="font-bold text-emerald-600 dark:text-emerald-400">
+                                {formatCurrencyExt(paid, item.currency)}
+                              </div>
+                              <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                                <div className="w-12 bg-slate-200 dark:bg-slate-700 h-1 rounded-full overflow-hidden">
+                                  <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${progressPct}%` }} />
+                                </div>
+                                <span className="text-[9px] text-slate-400 font-bold">{progressPct}%</span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 text-right font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                              {formatCurrencyExt(monthlyInstallment, (item as any).currency)}
+                            </td>
+                            <td className="py-3 px-3 text-right font-black text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                              {formatCurrencyExt(remaining, (item as any).currency)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                /* Debt Cards View */
+                <div className="space-y-3">
+                  {activeDebts.map(item => {
+                    const realIndex = debts.findIndex(d => d.id === item.id);
+                    const customDef = (profile.settings?.customDebts || []).find((cd: any) => cd.id === item.type);
+                    const itemColor = item.color || customDef?.color || (item.type === 'fixed' ? '#1a73e8' : item.type === 'noloan' ? '#00897b' : '#f59e0b');
+                    const itemTypeLabel = customDef ? `✨ ${customDef.name}` : (item.type === 'card' ? '💳 Tarjeta de Crédito' : (item.type === 'loan_interest' ? '🏦 Préstamo con Interés' : '🤝 Préstamo sin Interés'));
+                    
+                    const plan = calculateAmortizationPlan(item, overrides, profile.settings.customDebts || [], undefined, exchangeRates);
+                    const remaining = plan.reduce((acc, p) => acc + (p.requiredPay || 0), 0);
+                    const paid = getDebtTotalPaid(item, overrides, exchangeRates);
+                    const original = remaining + paid;
+                    const progressPct = original > 0 ? Math.min(100, Math.round((paid / original) * 100)) : 0;
+                    const installmentsCount = plan.length;
+                    const monthlyInstallment = plan.length > 0 ? plan[0].expectedAmount : (item.amount || item.minPay || 0);
+
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => onOpenEdit('debt', realIndex)}
+                        className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-100 dark:border-slate-800 hover:border-slate-300 transition-all space-y-2.5 cursor-pointer"
+                        style={{ borderLeftWidth: '4px', borderLeftColor: itemColor }}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <div
+                              className="w-3.5 h-3.5 rounded-full shrink-0 mt-0.5 shadow-2xs"
+                              style={{ backgroundColor: itemColor }}
+                            />
+                            <div>
+                              <p className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 flex-wrap">
+                                {item.name}
+                                {item.currency && item.currency !== 'USD_BCV' && (
+                                  <span className="text-[9px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-md font-bold">
+                                    {item.currency}
+                                  </span>
+                                )}
+                                {item.incomeId && (() => {
+                                  const inc = (profile.incomes || []).find(i => i.id === item.incomeId);
+                                  return inc ? (
+                                    <span className="text-[9px] px-1.5 py-0.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 rounded-md font-bold border border-indigo-200/50 dark:border-indigo-800/30">
+                                      🏦 {inc.name}
+                                    </span>
+                                  ) : null;
+                                })()}
+                                {item.done && (
+                                  <span className="text-[9px] px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 rounded font-bold border border-emerald-200/50 dark:border-emerald-800/30">
+                                    ✓ Pagado
+                                  </span>
+                                )}
+                              </p>
+                              <p className="text-[10px] text-slate-500 font-medium">
+                                {itemTypeLabel}
+                                {' • '}
+                                {item.type === 'card' 
+                                  ? `Corte: día ${item.cutDay || 5} / Pago: día ${item.dueDay || 25}`
+                                  : (item.freq === 'biweekly' 
+                                      ? `Quincenal (${item.dueDay || '15-30'})` 
+                                      : (item.freq === 'weekly' 
+                                          ? 'Semanal' 
+                                          : (item.freq === 'triweekly' 
+                                              ? 'Trisemanal' 
+                                              : (item.freq === 'bimonthly'
+                                                  ? `Bimensual (Día ${item.dueDay || 1})`
+                                                  : (item.freq === 'quarterly'
+                                                      ? `Trimestral (Día ${item.dueDay || 1})`
+                                                      : (item.freq === 'four-monthly' || (item.freq as any) === 'cuatrimestral'
+                                                          ? `Cuatrimestral (Día ${item.dueDay || 1})`
+                                                          : (item.freq === 'semiannual' || (item.freq as any) === 'semestral'
+                                                              ? `Semestral (Día ${item.dueDay || 1})`
+                                                              : (item.freq === 'annual'
+                                                                  ? `Anual (Día ${item.dueDay || 1})`
+                                                                  : `Mensual (Día ${item.dueDay || 1})`))))))))}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            <span className="text-[10px] font-bold uppercase text-slate-400 block">Me falta</span>
+                            <p className="text-xs font-black text-rose-600 dark:text-rose-400">
+                              {formatCurrencyExt(remaining, (item as any).currency)}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Progress bar per item */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                            <span>Pagado: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrencyExt(paid, item.currency)}</strong></span>
+                            <span>Total: <strong>{formatCurrencyExt(original, item.currency)}</strong></span>
+                          </div>
+                          <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
+                            <div
+                              className="bg-emerald-500 h-full rounded-full transition-all"
+                              style={{ width: `${progressPct}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Installments info tag */}
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-slate-700/60 text-[10px] text-slate-500">
+                          <span className="font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1">
+                            🗓️ {installmentsCount > 1 ? `Plan de ${installmentsCount} cuotas` : 'Pago único / recurrente'}
+                            {item.start && (
+                              <span className="text-slate-400 font-normal">
+                                • Inicio: <strong className="font-semibold text-slate-600 dark:text-slate-300">{formatDateStr(item.start)}</strong>
                               </span>
                             )}
-                          </p>
-                          <p className="text-[10px] text-slate-500 font-medium">
-                            {item.type === 'card' ? '💳 Tarjeta de Crédito' : (item.type === 'loan_interest' ? '🏦 Préstamo con Interés' : '🤝 Préstamo sin Interés')}
-                            {' • '}
-                            {item.type === 'card' 
-                              ? `Corte: día ${item.cutDay || 5} / Pago: día ${item.dueDay || 25}`
-                              : (item.freq === 'biweekly' 
-                                  ? `Quincenal (${item.dueDay || '15-30'})` 
-                                  : (item.freq === 'weekly' 
-                                      ? 'Semanal' 
-                                      : (item.freq === 'triweekly' 
-                                          ? 'Trisemanal' 
-                                          : `Mensual (Día ${item.dueDay || 1})`)))}
-                          </p>
+                          </span>
+                          <span className="font-bold text-slate-700 dark:text-slate-200">
+                            Cuota: {formatCurrencyExt(monthlyInstallment, (item as any).currency)}
+                          </span>
                         </div>
                       </div>
-
-                      <div className="text-right shrink-0">
-                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Me falta</span>
-                        <p className="text-xs font-black text-rose-600 dark:text-rose-400">
-                          {formatCurrencyExt(remaining, (item as any).currency)}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Progress bar per item */}
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-[10px] font-medium text-slate-500 dark:text-slate-400">
-                        <span>Pagado: <strong className="text-emerald-600 dark:text-emerald-400">{formatCurrencyExt(paid, item.currency)}</strong></span>
-                        <span>Total: <strong>{formatCurrencyExt(original, item.currency)}</strong></span>
-                      </div>
-                      <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
-                        <div
-                          className="bg-emerald-500 h-full rounded-full transition-all"
-                          style={{ width: `${progressPct}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Installments info tag */}
-                    <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-slate-700/60 text-[10px] text-slate-500">
-                      <span className="font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1">
-                        🗓️ {installmentsCount > 1 ? `Plan de ${installmentsCount} cuotas` : 'Pago único / recurrente'}
-                      </span>
-                      <span className="font-bold text-slate-700 dark:text-slate-200">
-                        Cuota: {formatCurrencyExt(monthlyInstallment, (item as any).currency)}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )
         ) : subTab === 'settled' ? (
@@ -450,6 +779,68 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
             <p className="text-xs text-slate-400 text-center py-8">
               No hay deudas saldadas en el historial.
             </p>
+          ) : viewMode === 'table' ? (
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs bg-white dark:bg-slate-900">
+              <table className="w-full text-left border-collapse min-w-[500px]">
+                <thead>
+                  <tr className="bg-emerald-50/80 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-[10px] uppercase font-extrabold tracking-wider border-b border-emerald-100 dark:border-emerald-900/40 select-none">
+                    <th 
+                      onClick={() => handleColumnHeaderClick('name')}
+                      className="py-3 px-3.5 cursor-pointer hover:bg-emerald-100/60 dark:hover:bg-emerald-900/60 transition-colors group"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Deuda Saldada</span>
+                        {renderSortIcon('name')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleColumnHeaderClick('start')}
+                      className="py-3 px-3 cursor-pointer hover:bg-emerald-100/60 dark:hover:bg-emerald-900/60 transition-colors group"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Fecha Inicio</span>
+                        {renderSortIcon('start')}
+                      </div>
+                    </th>
+                    <th className="py-3 px-3">Estado</th>
+                    <th 
+                      onClick={() => handleColumnHeaderClick('remaining')}
+                      className="py-3 px-3 text-right cursor-pointer hover:bg-emerald-100/60 dark:hover:bg-emerald-900/60 transition-colors group"
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        <span>Monto Saldado</span>
+                        {renderSortIcon('remaining')}
+                      </div>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-emerald-100/60 dark:divide-emerald-900/30 text-xs">
+                  {settledDebts.map(item => {
+                    const realIndex = debts.findIndex(d => d.id === item.id);
+                    return (
+                      <tr
+                        key={item.id}
+                        onClick={() => onOpenEdit('debt', realIndex)}
+                        className="hover:bg-emerald-50/60 dark:hover:bg-emerald-950/30 transition-colors cursor-pointer"
+                      >
+                        <td className="py-3 px-3.5 font-bold text-slate-900 dark:text-slate-100">
+                          {item.name}
+                        </td>
+                        <td className="py-3 px-3 text-[11px] text-emerald-800/80 dark:text-emerald-300/80 font-medium whitespace-nowrap">
+                          {item.start ? formatDateStr(item.start) : '—'}
+                        </td>
+                        <td className="py-3 px-3 text-xs font-semibold text-emerald-600">
+                          ✅ Completada
+                        </td>
+                        <td className="py-3 px-3 text-right font-black text-emerald-700 dark:text-emerald-300">
+                          {formatCurrencyExt(item.balance, (item as any).currency)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           ) : (
             <div className="space-y-2">
               {settledDebts.map(item => {
@@ -464,7 +855,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                       <p className="text-xs font-bold text-emerald-900 dark:text-emerald-100">
                         {item.name}
                       </p>
-                      <p className="text-[10px] text-emerald-600">✅ Completada</p>
+                      <p className="text-[10px] text-emerald-600 flex items-center gap-1.5">
+                        <span>✅ Completada</span>
+                        {item.start && <span>• Inicio: {formatDateStr(item.start)}</span>}
+                      </p>
                     </div>
                     <span className="text-xs font-black text-emerald-700">
                       {formatCurrencyExt(item.balance, (item as any).currency)}
@@ -511,7 +905,15 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                         {cd.name}
                       </p>
                       <p className="text-[10px] text-slate-400 capitalize">
-                        {cd.freq} • {cd.hasInterest ? 'Con interés' : 'Sin interés'}
+                        <span className="text-amber-600 dark:text-amber-400 font-semibold">{cd.currency ? cd.currency.replace('_BCV', '') : 'USD'}</span> • {cd.freq === 'weekly' ? 'Semanal' :
+                         cd.freq === 'biweekly' ? `Quincenal (${cd.dueDay || '15-30'})` :
+                         cd.freq === 'triweekly' ? 'Trisemanal' :
+                         cd.freq === 'bimonthly' ? `Bimensual (Día ${cd.dueDay || 1})` :
+                         cd.freq === 'quarterly' ? `Trimestral (Día ${cd.dueDay || 1})` :
+                         cd.freq === 'four-monthly' || (cd.freq as any) === 'cuatrimestral' ? `Cuatrimestral (Día ${cd.dueDay || 1})` :
+                         cd.freq === 'semiannual' || (cd.freq as any) === 'semestral' ? `Semestral (Día ${cd.dueDay || 1})` :
+                         cd.freq === 'annual' ? `Anual (Día ${cd.dueDay || 1})` :
+                         `Mensual (Día ${cd.dueDay || 1})`} • {cd.hasInterest ? 'Con interés' : 'Sin interés'}
                       </p>
                     </div>
                   </div>
@@ -677,6 +1079,30 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                       label: 'Crédito Educativo',
                       desc: 'Matrículas o financiamiento de estudios',
                       form: { name: 'Crédito Educativo', freq: 'monthly', dueDay: '1', hasInterest: false, usePlan: true, color: '#e91e63' }
+                    },
+                    {
+                      icon: '🛡️',
+                      label: 'Póliza de Seguro',
+                      desc: 'Seguro de auto, salud o vida semestral/anual',
+                      form: { name: 'Póliza de Seguro', freq: 'semiannual', dueDay: '1', hasInterest: false, usePlan: true, color: '#00acc1' }
+                    },
+                    {
+                      icon: '🏛️',
+                      label: 'Impuestos / Tributos',
+                      desc: 'Declaraciones o pagos trimestrales',
+                      form: { name: 'Impuestos / Tasas', freq: 'quarterly', dueDay: '15', hasInterest: false, usePlan: false, color: '#fbbc04' }
+                    },
+                    {
+                      icon: '🏢',
+                      label: 'Cuota de Mantenimiento',
+                      desc: 'Condominio o mantenimiento bimensual',
+                      form: { name: 'Mantenimiento / Condominio', freq: 'bimonthly', dueDay: '5', hasInterest: false, usePlan: false, color: '#0f9d58' }
+                    },
+                    {
+                      icon: '📅',
+                      label: 'Suscripción / Anualidad',
+                      desc: 'Membresía o cuota anual',
+                      form: { name: 'Membresía Anual', freq: 'annual', dueDay: '1', hasInterest: false, usePlan: false, color: '#9c27b0' }
                     }
                   ].map((preset, pIdx) => (
                     <button
@@ -822,7 +1248,20 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Moneda del Tipo</label>
+                    <select
+                      value={customDebtForm.currency || 'USD_BCV'}
+                      onChange={e => setCustomDebtForm({...customDebtForm, currency: e.target.value as any})}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                    >
+                      <option value="USD_BCV">USD ($ BCV)</option>
+                      <option value="EUR_BCV">EUR (€ BCV)</option>
+                      <option value="USDT">USDT</option>
+                      <option value="BS">Bs (Bolívares)</option>
+                    </select>
+                  </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-500 mb-1">Frecuencia</label>
                     <select
@@ -836,10 +1275,45 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                       <option value="weekly">Semanal</option>
                       <option value="biweekly">Quincenal</option>
                       <option value="monthly">Mensual</option>
+                      <option value="bimonthly">Bimensual (Cada 2 meses)</option>
+                      <option value="quarterly">Trimestral (Cada 3 meses)</option>
+                      <option value="four-monthly">Cuatrimestral (Cada 4 meses)</option>
+                      <option value="semiannual">Semestral (Cada 6 meses)</option>
+                      <option value="annual">Anual (Cada 12 meses)</option>
                       <option value="triweekly">Trisemanal (3 Semanas)</option>
                     </select>
                   </div>
                 </div>
+
+                {customDebtForm.freq === 'biweekly' ? (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Día Pago</label>
+                    <select
+                      value={customDebtForm.dueDay || '15-30'}
+                      onChange={e => setCustomDebtForm({...customDebtForm, dueDay: e.target.value})}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                    >
+                      <option value="15-30">15 y 30</option>
+                      <option value="14-28">14 y 28</option>
+                      <option value="13-27">13 y 27</option>
+                      <option value="exact_14">Cada 14 días (Cashea)</option>
+                      <option value="exact_15">Cada 15 días</option>
+                    </select>
+                  </div>
+                ) : (customDebtForm.freq === 'monthly' || customDebtForm.freq === 'bimonthly' || customDebtForm.freq === 'quarterly' || customDebtForm.freq === 'four-monthly' || customDebtForm.freq === 'semiannual' || customDebtForm.freq === 'annual') ? (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">Día de Pago Sugerido</label>
+                      <select
+                        value={customDebtForm.dueDay || '1'}
+                        onChange={e => setCustomDebtForm({...customDebtForm, dueDay: e.target.value})}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                      >
+                        {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                          <option key={d} value={d}>Día {d}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
 
                 <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl space-y-2 border border-slate-200 dark:border-slate-700">
                   <label className="block text-xs font-bold text-indigo-600 dark:text-indigo-400 mb-1">Opciones Inteligentes:</label>
@@ -963,7 +1437,15 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ onOpenCreate, onOpenEdit }
                         </span>
                       </div>
                       <p className="text-[10px] text-slate-500 mt-1">
-                        {template.freq === 'weekly' ? 'Semanal' : template.freq === 'biweekly' ? 'Quincenal' : 'Mensual'}
+                        {template.freq === 'weekly' ? 'Semanal' :
+                         template.freq === 'biweekly' ? 'Quincenal' :
+                         template.freq === 'triweekly' ? 'Trisemanal' :
+                         template.freq === 'bimonthly' ? 'Bimensual' :
+                         template.freq === 'quarterly' ? 'Trimestral' :
+                         template.freq === 'four-monthly' || (template.freq as any) === 'cuatrimestral' ? 'Cuatrimestral' :
+                         template.freq === 'semiannual' || (template.freq as any) === 'semestral' ? 'Semestral' :
+                         template.freq === 'annual' ? 'Anual' :
+                         'Mensual'}
                         {' • '}
                         {template.downloads || 0} descargas
                       </p>

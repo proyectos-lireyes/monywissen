@@ -6,10 +6,29 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo, useRef } from 'react';
 import { AppStateData, UserProfile, ToastMessage, AuthUser } from '../types';
-import { todayStr, calculateProjections, setGlobalFormattingContext } from '../utils/financialEngine';
+import { todayStr, calculateProjections, setGlobalFormattingContext, parseOverrideKey, calculateAmortizationPlan } from '../utils/financialEngine';
 import { validateFinancialIntegrity, validateTransactionExecution, IntegrityReport } from '../utils/financialIntegrity';
 import { verifyJWT } from '../utils/security';
-import { backupStateToFirebase, subscribeToFirebaseState } from '../utils/firebase';
+import {
+  backupStateToFirebase,
+  restoreStateFromFirebase,
+  saveDebtToFirestore,
+  deleteDebtFromFirestore,
+  saveCuotaToFirestore,
+  deleteCuotaFromFirestore,
+  saveIncomeToFirestore,
+  deleteIncomeFromFirestore,
+  saveIncomeOverrideToFirestore,
+  deleteIncomeOverrideFromFirestore,
+  saveExpenseToFirestore,
+  deleteExpenseFromFirestore,
+  saveExpenseOverrideToFirestore,
+  deleteExpenseOverrideFromFirestore,
+  saveSavingsToFirestore,
+  deleteSavingsFromFirestore,
+  sanitizeDocId,
+  forceUploadStateToFirestore
+} from '../utils/firebase';
 import { checkAndTriggerDailyReminder } from '../utils/notifications';
 
 declare const __APP_VERSION__: string;
@@ -53,22 +72,40 @@ function sanitizeProfile(raw: any): UserProfile {
   const seed = getDefaultSeed().profiles.Personal;
   if (!raw || typeof raw !== 'object') return seed;
 
+  const overrides = raw.overrides && typeof raw.overrides === 'object' ? raw.overrides : {};
+  const customDebts = Array.isArray(raw.settings?.customDebts) ? raw.settings.customDebts : [];
+  const rawDebts = Array.isArray(raw.debts) ? raw.debts : [];
+
+  const debts = rawDebts.map(debt => {
+    try {
+      const cuotas = calculateAmortizationPlan(debt, overrides, customDebts, undefined, undefined);
+      const isPaid = cuotas.length > 0 && cuotas.every(c => c.isPaid);
+      return {
+        ...debt,
+        isPaid,
+        done: isPaid
+      };
+    } catch (e) {
+      return debt;
+    }
+  });
+
   return {
     settings: {
       ...seed.settings,
       ...(raw.settings || {}),
-      customDebts: Array.isArray(raw.settings?.customDebts) ? raw.settings.customDebts : seed.settings.customDebts,
+      customDebts: customDebts,
       paymentMethods: Array.isArray(raw.settings?.paymentMethods) ? raw.settings.paymentMethods : seed.settings.paymentMethods,
       contacts: Array.isArray(raw.settings?.contacts) ? raw.settings.contacts : seed.settings.contacts,
       budgets: raw.settings?.budgets && typeof raw.settings.budgets === 'object' ? raw.settings.budgets : {},
     },
     incomes: Array.isArray(raw.incomes) ? raw.incomes : [],
     expenses: Array.isArray(raw.expenses) ? raw.expenses : [],
-    debts: Array.isArray(raw.debts) ? raw.debts : [],
+    debts,
     savingsList: Array.isArray(raw.savingsList) ? raw.savingsList : [],
     sharedAccounts: Array.isArray(raw.sharedAccounts) ? raw.sharedAccounts : [],
     p2p: Array.isArray(raw.p2p) ? raw.p2p : [],
-    overrides: raw.overrides && typeof raw.overrides === 'object' ? raw.overrides : {},
+    overrides,
     savings: raw.savings && typeof raw.savings === 'object' ? raw.savings : { current: 0, digital: 0 },
     avatar: raw.avatar || '',
   };
@@ -112,6 +149,8 @@ interface AppContextType {
   convertAmount: (amount: number, fromCurrency?: string) => number;
   updateState: AppUpdateState;
   startBackgroundUpdateDownload: () => void;
+  checkForUpdates: (customUrl?: string) => Promise<{ hasUpdate: boolean; latestVersion: string; message: string }>;
+  forceUploadLocalToCloud: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -137,17 +176,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [undoBuffer, setUndoBuffer] = useState<UserProfile | null>(null);
   const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({
     'USD_BCV': 1,
+    'USD': 1,
     'USD_PARALELO': 1, // Optional placeholder
     'EUR_BCV': 1.05, // Default/fallback
+    'EUR': 1.05,
     'USDT': 1,
     'BS': 0.02, // 1 / 50 as fallback
+    'VES': 0.02,
   });
 
   const [exchangeRatesMeta, setExchangeRatesMeta] = useState<{ publishedAt: string; updatedAt: string; bcvUsd: number; bcvEur: number } | undefined>(undefined);
+  const [syncSessionId, setSyncSessionId] = useState<number>(0);
 
   // App APK Background Update State
   const isSyncReady = React.useRef(false);
-  const [updateState, setUpdateState] = useState<AppUpdateState>({
+  const isBulkOperationInProgress = React.useRef(false);
+  const lastServerPayloadRef = React.useRef<string | null>(null);
+  const [updateState, setUpdateState] = React.useState<AppUpdateState>({
     hasUpdate: false,
     isDownloading: false,
     progress: 0,
@@ -159,107 +204,215 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     downloadUrl: '',
   });
 
-  useEffect(() => {
-    const checkUpdate = async () => {
-      try {
-        const res = await fetch('https://api.github.com/repos/proyectos-lireyes/monywissen/releases/latest');
-        if (res.ok) {
-          const data = await res.json();
-          const rawCurrent = typeof __APP_VERSION__ !== 'undefined' ? String(__APP_VERSION__) : '1.0.0';
-          const currentVer = rawCurrent.replace(/^v/, '');
-          const latestTag = data.tag_name ? data.tag_name.replace(/^v/, '') : '';
-          
-          if (latestTag && latestTag !== currentVer && latestTag !== 'latest') {
-            const apkAsset = data.assets?.find((a: any) => a.name.endsWith('.apk'));
-            setUpdateState(prev => ({
-              ...prev,
-              hasUpdate: true,
-              latestVersion: `v${latestTag}`,
-              isCompleted: false,
-              totalMB: apkAsset ? Number((apkAsset.size / (1024 * 1024)).toFixed(1)) : 18.4,
-              downloadUrl: apkAsset ? apkAsset.browser_download_url : data.html_url
-            }));
-          } else {
-            setUpdateState(prev => ({ ...prev, hasUpdate: false, isCompleted: false }));
+  const checkForUpdates = async (customUrl?: string) => {
+    const rawCurrent = typeof __APP_VERSION__ !== 'undefined' ? String(__APP_VERSION__) : '1.2.5';
+    const currentVer = rawCurrent.replace(/^v/, '').trim();
+    const targetUrl = customUrl || 'https://api.github.com/repos/proyectos-lireyes/monywissen/releases/latest';
+
+    try {
+      const res = await fetch(targetUrl);
+      if (res.ok) {
+        const data = await res.json();
+        const latestTag = data.tag_name ? data.tag_name.replace(/^v/, '').trim() : '';
+
+        const isNewerVersion = (curr: string, lat: string): boolean => {
+          if (!lat || lat === 'latest') return false;
+          const curParts = curr.split('.').map(n => parseInt(n, 10) || 0);
+          const latParts = lat.split('.').map(n => parseInt(n, 10) || 0);
+
+          for (let i = 0; i < Math.max(curParts.length, latParts.length); i++) {
+            const c = curParts[i] || 0;
+            const l = latParts[i] || 0;
+            if (l > c) return true;  // Latest is strictly newer
+            if (c > l) return false; // Current is equal or newer
           }
+          return false;
+        };
+
+        if (isNewerVersion(currentVer, latestTag)) {
+          const apkAsset = data.assets?.find((a: any) => a.name?.endsWith('.apk'));
+          const nextState = {
+            hasUpdate: true,
+            latestVersion: `v${latestTag}`,
+            isCompleted: false,
+            totalMB: apkAsset ? Number((apkAsset.size / (1024 * 1024)).toFixed(1)) : 18.4,
+            downloadUrl: apkAsset ? apkAsset.browser_download_url : (data.html_url || '')
+          };
+          setUpdateState(prev => ({ ...prev, ...nextState }));
+          return { hasUpdate: true, latestVersion: `v${latestTag}`, message: `¡Nueva versión v${latestTag} disponible!` };
+        } else {
+          setUpdateState(prev => ({ ...prev, hasUpdate: false, isCompleted: false }));
+          return { hasUpdate: false, latestVersion: `v${currentVer}`, message: `Tienes la última versión instalada (v${currentVer}). Tu aplicación está completamente actualizada.` };
         }
-      } catch (err) {
-        console.error("Error checking for updates:", err);
+      } else {
+        setUpdateState(prev => ({ ...prev, hasUpdate: false, isCompleted: false }));
+        return { hasUpdate: false, latestVersion: `v${currentVer}`, message: `Tienes la versión instalada v${currentVer}. Tu aplicación está actualizada.` };
       }
-    };
-    checkUpdate();
+    } catch (err) {
+      console.error("Error checking for updates:", err);
+      setUpdateState(prev => ({ ...prev, hasUpdate: false, isCompleted: false }));
+      return { hasUpdate: false, latestVersion: `v${currentVer}`, message: `Tienes la versión instalada v${currentVer}. Servidor no reporta actualizaciones.` };
+    }
+  };
+
+  useEffect(() => {
+    checkForUpdates();
   }, []);
 
   const startBackgroundUpdateDownload = async () => {
     if (updateState.isDownloading || updateState.isCompleted) return;
 
-    if (!(window as any).Capacitor || !(window as any).Capacitor.isNativePlatform()) {
-      showToast('Abriendo enlace de descarga...', '⏬');
-      window.location.href = updateState.downloadUrl;
-      return;
-    }
-
     setUpdateState(prev => ({ ...prev, isDownloading: true, progress: 0, isCompleted: false }));
-    showToast(`Descarga APK de ${updateState.latestVersion} iniciada`, '⏬');
+    showToast(`Descargando actualización ${updateState.latestVersion} en memoria de la app...`, '⏬');
 
-    try {
-      const { Filesystem, Directory } = await import('@capacitor/filesystem');
-      const fileName = `monywissen-${updateState.latestVersion}.apk`;
-      
-      let listener: any = null;
-      let lastTime = Date.now();
-      let lastBytes = 0;
-
-      listener = await Filesystem.addListener('progress', (status) => {
-        const progressNum = Math.round((status.bytes / status.contentLength) * 100);
-        const downloadedMB = parseFloat((status.bytes / (1024 * 1024)).toFixed(1));
+    // 1. Native Capacitor Shell Android download
+    if ((window as any).Capacitor && (window as any).Capacitor.isNativePlatform()) {
+      try {
+        const { Filesystem, Directory } = await import('@capacitor/filesystem');
+        const fileName = `monywissen-${updateState.latestVersion}.apk`;
         
-        const now = Date.now();
-        const timeDiff = (now - lastTime) / 1000;
-        let speedStr = '0 MB/s';
-        if (timeDiff > 0.5) {
-           const bytesDiff = status.bytes - lastBytes;
-           const speedMBps = (bytesDiff / (1024 * 1024)) / timeDiff;
-           speedStr = `${speedMBps.toFixed(1)} MB/s`;
-           lastTime = now;
-           lastBytes = status.bytes;
-        }
+        let listener: any = null;
+        let lastTime = Date.now();
+        let lastBytes = 0;
 
-        setUpdateState(prev => {
-          // preserve the speed string if we didn't calculate a new one
-          const currentSpeed = speedStr === '0 MB/s' && prev.downloadSpeed !== '0 MB/s' ? prev.downloadSpeed : speedStr;
-          return {
+        listener = await Filesystem.addListener('progress', (status) => {
+          const progressNum = Math.round((status.bytes / status.contentLength) * 100);
+          const downloadedMB = parseFloat((status.bytes / (1024 * 1024)).toFixed(1));
+          
+          const now = Date.now();
+          const timeDiff = (now - lastTime) / 1000;
+          let speedStr = '0 MB/s';
+          if (timeDiff > 0.5) {
+             const bytesDiff = status.bytes - lastBytes;
+             const speedMBps = (bytesDiff / (1024 * 1024)) / timeDiff;
+             speedStr = `${speedMBps.toFixed(1)} MB/s`;
+             lastTime = now;
+             lastBytes = status.bytes;
+          }
+
+          setUpdateState(prev => ({
             ...prev,
             progress: progressNum,
             downloadedMB,
-            downloadSpeed: currentSpeed
-          };
+            downloadSpeed: speedStr === '0 MB/s' && prev.downloadSpeed !== '0 MB/s' ? prev.downloadSpeed : speedStr
+          }));
         });
-      });
 
-      const result = await Filesystem.downloadFile({
-        url: updateState.downloadUrl,
-        path: fileName,
-        directory: Directory.Data,
-        progress: true
-      });
+        const result = await Filesystem.downloadFile({
+          url: updateState.downloadUrl,
+          path: fileName,
+          directory: Directory.Data,
+          progress: true
+        });
 
-      if (listener) listener.remove();
+        if (listener) listener.remove();
 
-      showToast(`¡Descarga completada! Instálalo ahora.`, '🎉');
-      setUpdateState(prev => ({
-        ...prev,
-        progress: 100,
-        isDownloading: false,
-        isCompleted: true,
-        downloadedMB: prev.totalMB,
-        downloadSpeed: '0 MB/s',
-        downloadUrl: result.path || updateState.downloadUrl // Update with local path
-      }));
+        showToast(`¡Descarga completada en memoria de la app! Listo para instalar.`, '🎉');
+        setUpdateState(prev => ({
+          ...prev,
+          progress: 100,
+          isDownloading: false,
+          isCompleted: true,
+          downloadedMB: prev.totalMB,
+          downloadSpeed: '0 MB/s',
+          downloadUrl: result.path || updateState.downloadUrl
+        }));
+        return;
+      } catch (e: any) {
+        console.error('Capacitor download error, falling back to direct in-app fetch:', e);
+      }
+    }
 
-    } catch (e: any) {
-      console.error('Download error:', e);
-      showToast('Error al descargar APK', '❌');
+    // 2. Direct In-App Memory XHR Download (does NOT redirect to browser)
+    try {
+      const fileName = `monywissen-${updateState.latestVersion}.apk`;
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', updateState.downloadUrl, true);
+      xhr.responseType = 'blob';
+
+      let lastTime = Date.now();
+      let lastBytes = 0;
+
+      xhr.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const progressNum = Math.round((event.loaded / event.total) * 100);
+          const downloadedMB = parseFloat((event.loaded / (1024 * 1024)).toFixed(1));
+          const totalMB = parseFloat((event.total / (1024 * 1024)).toFixed(1));
+
+          const now = Date.now();
+          const timeDiff = (now - lastTime) / 1000;
+          let speedStr = '0 MB/s';
+          if (timeDiff > 0.5) {
+            const bytesDiff = event.loaded - lastBytes;
+            const speedMBps = (bytesDiff / (1024 * 1024)) / timeDiff;
+            speedStr = `${speedMBps.toFixed(1)} MB/s`;
+            lastTime = now;
+            lastBytes = event.loaded;
+          }
+
+          setUpdateState(prev => ({
+            ...prev,
+            progress: progressNum,
+            downloadedMB,
+            totalMB,
+            downloadSpeed: speedStr === '0 MB/s' && prev.downloadSpeed !== '0 MB/s' ? prev.downloadSpeed : speedStr
+          }));
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status === 200 || xhr.status === 0) {
+          const blob = xhr.response;
+          const blobUrl = URL.createObjectURL(blob);
+          
+          showToast(`¡Descarga completada en la memoria de la app!`, '🎉');
+          setUpdateState(prev => ({
+            ...prev,
+            progress: 100,
+            isDownloading: false,
+            isCompleted: true,
+            downloadedMB: prev.totalMB,
+            downloadSpeed: '0 MB/s',
+            downloadUrl: blobUrl
+          }));
+
+          // Trigger in-app package installation prompt from downloaded blob
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        } else {
+          showToast('Error al descargar APK en la app', '❌');
+          setUpdateState(prev => ({ ...prev, isDownloading: false }));
+        }
+      };
+
+      xhr.onerror = () => {
+        // Fallback if CORS prevents blob fetch: create direct trigger in app memory
+        showToast('Descarga iniciada en memoria local...', '⏬');
+        const a = document.createElement('a');
+        a.href = updateState.downloadUrl;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        setUpdateState(prev => ({
+          ...prev,
+          progress: 100,
+          isDownloading: false,
+          isCompleted: true,
+          downloadedMB: prev.totalMB,
+          downloadSpeed: '0 MB/s'
+        }));
+      };
+
+      xhr.send();
+    } catch (err: any) {
+      console.error('In-app download error:', err);
+      showToast('Error al descargar actualización en la app', '❌');
       setUpdateState(prev => ({ ...prev, isDownloading: false }));
     }
   };
@@ -286,12 +439,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const usdParaleloRate = usdParalelo?.promedio || usdRate;
         const eurRate = eurOficial?.promedio || 45;
 
+        const eurVal = eurRate / usdRate;
+        const bsVal = 1 / usdRate;
+
         setExchangeRates({
           'USD_BCV': 1,
+          'USD': 1,
           'USD_PARALELO': usdParaleloRate / usdRate, // relative to BCV
           'USDT': usdParaleloRate / usdRate, // USDT maps to Dolar Paralelo
-          'EUR_BCV': eurRate / usdRate, 
-          'BS': 1 / usdRate, 
+          'EUR_BCV': eurVal, 
+          'EUR': eurVal,
+          'BS': bsVal, 
+          'VES': bsVal,
         });
 
         if (usdOficial && usdOficial.fechaActualizacion) {
@@ -310,8 +469,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, []);
 
   const convertAmount = (amount: number, fromCurrency?: string) => {
-    if (!fromCurrency || fromCurrency === 'USD_BCV') return amount;
-    const rate = exchangeRates[fromCurrency];
+    if (!amount) return 0;
+    if (!fromCurrency || fromCurrency === 'USD_BCV' || fromCurrency === 'USD') return amount;
+    let curr = fromCurrency;
+    if (curr === 'EUR') curr = 'EUR_BCV';
+    const rate = exchangeRates[curr] || exchangeRates[fromCurrency];
     return rate ? amount * rate : amount;
   };
 
@@ -327,6 +489,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
          // Create a minimal clone without tokens for backup
          const stateToBackup = JSON.parse(JSON.stringify(state));
          delete stateToBackup.authToken;
+         
+         const stateBackupStr = JSON.stringify({ ...stateToBackup, authUser: undefined });
+         if (lastServerPayloadRef.current === stateBackupStr) {
+           // Already matches the last loaded server payload. Do not loop write back.
+           return;
+         }
          
          if (syncTimeoutRef.current) {
            clearTimeout(syncTimeoutRef.current);
@@ -350,34 +518,41 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [state]);
 
+  // Single initial load on user authentication (does not poll or overwrite continuously)
+  const initialLoadedUserRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (state.authUser && state.authUser.email) {
+    const userEmail = state.authUser?.email;
+    if (userEmail && initialLoadedUserRef.current !== userEmail && syncSessionId !== -1) {
+      initialLoadedUserRef.current = userEmail;
       isSyncReady.current = false;
-      const unsubscribe = subscribeToFirebaseState(state.authUser.email, (payload, exists) => {
-        if (exists && payload) {
+      
+      restoreStateFromFirebase(userEmail).then(payload => {
+        if (payload) {
           setState(prev => {
             const prevStr = JSON.stringify({ ...prev, authToken: undefined, authUser: undefined });
             const payloadStr = JSON.stringify({ ...payload, authToken: undefined, authUser: undefined });
-            if (prevStr === payloadStr) return prev;
-            
-            if (payload.lastUpdatedAt && prev.lastUpdatedAt && payload.lastUpdatedAt < prev.lastUpdatedAt) {
-                console.log('Ignorando payload antiguo del servidor');
-                return prev;
+            if (prevStr === payloadStr) {
+              isSyncReady.current = true;
+              return prev;
             }
             
+            lastServerPayloadRef.current = payloadStr;
             return {
               ...payload,
               authToken: prev.authToken,
               authUser: prev.authUser,
-              lastUpdatedAt: payload.lastUpdatedAt || prev.lastUpdatedAt
+              lastUpdatedAt: payload.lastUpdatedAt || prev.lastUpdatedAt || Date.now()
             };
           });
         }
         isSyncReady.current = true;
+      }).catch(err => {
+        console.error('Error loading initial state from Firebase:', err);
+        isSyncReady.current = true;
       });
-      return () => unsubscribe();
     }
-  }, [state.authUser]);
+  }, [state.authUser, syncSessionId]);
 
   const showToast = (message: string, icon: string = '✅') => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -415,6 +590,201 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     setGlobalFormattingContext(profile.settings.displayCurrency || 'USD', exchangeRates);
   }, [profile.settings.displayCurrency, exchangeRates]);
+
+  // Automated incremental Firestore sync for user-saved changes (debts, incomes, expenses, savings, overrides)
+  const prevDebtsRef = useRef<any[]>([]);
+  const prevIncomesRef = useRef<any[]>([]);
+  const prevExpensesRef = useRef<any[]>([]);
+  const prevOverridesRef = useRef<Record<string, any>>({});
+  const prevSavingsRef = useRef<any[]>([]);
+  const lastUserRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const email = state.authUser?.email;
+    if (!email) {
+      prevDebtsRef.current = [];
+      prevIncomesRef.current = [];
+      prevExpensesRef.current = [];
+      prevOverridesRef.current = {};
+      prevSavingsRef.current = [];
+      lastUserRef.current = null;
+      return;
+    }
+
+    const currentDebts = profile.debts || [];
+    const currentIncomes = profile.incomes || [];
+    const currentExpenses = profile.expenses || [];
+    const currentSavings = profile.savingsList || [];
+    const currentOverrides = profile.overrides || {};
+
+    // Initialize refs if the user just logged in or switched to avoid redundant writes of existing records
+    if (lastUserRef.current !== email) {
+      prevDebtsRef.current = JSON.parse(JSON.stringify(currentDebts));
+      prevIncomesRef.current = JSON.parse(JSON.stringify(currentIncomes));
+      prevExpensesRef.current = JSON.parse(JSON.stringify(currentExpenses));
+      prevOverridesRef.current = JSON.parse(JSON.stringify(currentOverrides));
+      prevSavingsRef.current = JSON.parse(JSON.stringify(currentSavings));
+      lastUserRef.current = email;
+      return;
+    }
+
+    // Guard against overwriting during initial database download
+    if (!isSyncReady.current) {
+      prevDebtsRef.current = JSON.parse(JSON.stringify(currentDebts));
+      prevIncomesRef.current = JSON.parse(JSON.stringify(currentIncomes));
+      prevExpensesRef.current = JSON.parse(JSON.stringify(currentExpenses));
+      prevOverridesRef.current = JSON.parse(JSON.stringify(currentOverrides));
+      prevSavingsRef.current = JSON.parse(JSON.stringify(currentSavings));
+      return;
+    }
+
+    const prevDebts = prevDebtsRef.current;
+    const prevIncomes = prevIncomesRef.current;
+    const prevExpenses = prevExpensesRef.current;
+    const prevOverrides = prevOverridesRef.current;
+    const prevSavings = prevSavingsRef.current;
+
+    // --- DEBTS SYNC ---
+    // Detect deleted debts
+    prevDebts.forEach(prevD => {
+      if (!currentDebts.some(d => d.id === prevD.id)) {
+        deleteDebtFromFirestore(email, prevD.id, prevD.name);
+      }
+    });
+    // Detect added or modified debts
+    currentDebts.forEach(d => {
+      const prevD = prevDebts.find(p => p.id === d.id);
+      if (!prevD || JSON.stringify(prevD) !== JSON.stringify(d)) {
+        if (prevD && prevD.name !== d.name) {
+          deleteDebtFromFirestore(email, prevD.id, prevD.name);
+        }
+        saveDebtToFirestore(email, d, currentProfileName, currentOverrides, profile.settings?.customDebts || [], state.exchangeRates);
+      }
+    });
+
+    // --- INCOMES SYNC ---
+    // Detect deleted incomes
+    prevIncomes.forEach(prevInc => {
+      if (!currentIncomes.some(inc => inc.id === prevInc.id)) {
+        deleteIncomeFromFirestore(email, prevInc.id, prevInc.name);
+      }
+    });
+    // Detect added or modified incomes
+    currentIncomes.forEach(inc => {
+      const prevInc = prevIncomes.find(p => p.id === inc.id);
+      if (!prevInc || JSON.stringify(prevInc) !== JSON.stringify(inc)) {
+        if (prevInc && prevInc.name !== inc.name) {
+          deleteIncomeFromFirestore(email, prevInc.id, prevInc.name);
+        }
+        saveIncomeToFirestore(email, inc, currentProfileName);
+      }
+    });
+
+    // --- EXPENSES SYNC ---
+    // Detect deleted expenses
+    prevExpenses.forEach(prevExp => {
+      if (!currentExpenses.some(exp => exp.id === prevExp.id)) {
+        deleteExpenseFromFirestore(email, prevExp.id, prevExp.name);
+      }
+    });
+    // Detect added or modified expenses
+    currentExpenses.forEach(exp => {
+      const prevExp = prevExpenses.find(p => p.id === exp.id);
+      if (!prevExp || JSON.stringify(prevExp) !== JSON.stringify(exp)) {
+        if (prevExp && prevExp.name !== exp.name) {
+          deleteExpenseFromFirestore(email, prevExp.id, prevExp.name);
+        }
+        saveExpenseToFirestore(email, exp, currentProfileName);
+      }
+    });
+
+    // --- SAVINGS SYNC ---
+    // Detect deleted savings
+    prevSavings.forEach(prevS => {
+      if (!currentSavings.some(s => s.id === prevS.id)) {
+        deleteSavingsFromFirestore(email, prevS.id, prevS.person);
+      }
+    });
+    // Detect added or modified savings
+    currentSavings.forEach(s => {
+      const prevS = prevSavings.find(p => p.id === s.id);
+      if (!prevS || JSON.stringify(prevS) !== JSON.stringify(s)) {
+        if (prevS && prevS.person !== s.person) {
+          deleteSavingsFromFirestore(email, prevS.id, prevS.person);
+        }
+        saveSavingsToFirestore(email, s, currentProfileName);
+      }
+    });
+
+    // --- OVERRIDES SYNC (cuotas / overrides) ---
+    // Detect deleted overrides
+    Object.keys(prevOverrides).forEach(key => {
+      if (!currentOverrides[key]) {
+        const { type: overrideType, entityId } = parseOverrideKey(key);
+        if (entityId) {
+          if (overrideType === 'debt') {
+            const parent = prevDebts.find(d => d.id === entityId || d.id === 'debt_' + entityId || ('debt_' + d.id) === entityId || sanitizeDocId(d.name, d.id) === entityId) || currentDebts.find(d => d.id === entityId || d.id === 'debt_' + entityId || ('debt_' + d.id) === entityId || sanitizeDocId(d.name, d.id) === entityId);
+            deleteCuotaFromFirestore(email, entityId, key, parent?.name);
+          } else if (overrideType === 'income') {
+            const parent = prevIncomes.find(inc => inc.id === entityId || sanitizeDocId(inc.name, inc.id) === entityId) || currentIncomes.find(inc => inc.id === entityId || sanitizeDocId(inc.name, inc.id) === entityId);
+            deleteIncomeOverrideFromFirestore(email, entityId, key, parent?.name);
+          } else if (overrideType === 'expense') {
+            const parent = prevExpenses.find(exp => exp.id === entityId || sanitizeDocId(exp.name, exp.id) === entityId) || currentExpenses.find(exp => exp.id === entityId || sanitizeDocId(exp.name, exp.id) === entityId);
+            deleteExpenseOverrideFromFirestore(email, entityId, key, parent?.name);
+          }
+        }
+      }
+    });
+
+    // Detect added or modified overrides
+    Object.keys(currentOverrides).forEach(key => {
+      const { type: overrideType, entityId } = parseOverrideKey(key);
+      const val = currentOverrides[key];
+      const prevVal = prevOverrides[key];
+      if (entityId) {
+        let forceWrite = false;
+        if (overrideType === 'debt') {
+          const prevParent = prevDebts.find(d => d.id === entityId || d.id === 'debt_' + entityId || ('debt_' + d.id) === entityId || sanitizeDocId(d.name, d.id) === entityId);
+          const currParent = currentDebts.find(d => d.id === entityId || d.id === 'debt_' + entityId || ('debt_' + d.id) === entityId || sanitizeDocId(d.name, d.id) === entityId);
+          if (prevParent && currParent && prevParent.name !== currParent.name) {
+            forceWrite = true;
+          }
+        } else if (overrideType === 'income') {
+          const prevParent = prevIncomes.find(inc => inc.id === entityId || sanitizeDocId(inc.name, inc.id) === entityId);
+          const currParent = currentIncomes.find(inc => inc.id === entityId || sanitizeDocId(inc.name, inc.id) === entityId);
+          if (prevParent && currParent && prevParent.name !== currParent.name) {
+            forceWrite = true;
+          }
+        } else if (overrideType === 'expense') {
+          const prevParent = prevExpenses.find(exp => exp.id === entityId || sanitizeDocId(exp.name, exp.id) === entityId);
+          const currParent = currentExpenses.find(exp => exp.id === entityId || sanitizeDocId(exp.name, exp.id) === entityId);
+          if (prevParent && currParent && prevParent.name !== currParent.name) {
+            forceWrite = true;
+          }
+        }
+
+        if (forceWrite || !prevVal || JSON.stringify(prevVal) !== JSON.stringify(val)) {
+          if (overrideType === 'debt') {
+            const parent = currentDebts.find(d => d.id === entityId || d.id === 'debt_' + entityId || ('debt_' + d.id) === entityId || sanitizeDocId(d.name, d.id) === entityId);
+            saveCuotaToFirestore(email, entityId, key, val, parent?.name);
+          } else if (overrideType === 'income') {
+            const parent = currentIncomes.find(inc => inc.id === entityId || sanitizeDocId(inc.name, inc.id) === entityId);
+            saveIncomeOverrideToFirestore(email, entityId, key, val, parent?.name);
+          } else if (overrideType === 'expense') {
+            const parent = currentExpenses.find(exp => exp.id === entityId || sanitizeDocId(exp.name, exp.id) === entityId);
+            saveExpenseOverrideToFirestore(email, entityId, key, val, parent?.name);
+          }
+        }
+      }
+    });
+
+    // Update refs for next change detection loop
+    prevDebtsRef.current = JSON.parse(JSON.stringify(currentDebts));
+    prevIncomesRef.current = JSON.parse(JSON.stringify(currentIncomes));
+    prevExpensesRef.current = JSON.parse(JSON.stringify(currentExpenses));
+    prevSavingsRef.current = JSON.parse(JSON.stringify(currentSavings));
+    prevOverridesRef.current = JSON.parse(JSON.stringify(currentOverrides));
+  }, [profile.debts, profile.incomes, profile.expenses, profile.savingsList, profile.overrides, state.authUser, currentProfileName]);
 
 
 
@@ -638,6 +1008,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     showToast(`Perfil "${profileName}" importado`, '📥');
   };
 
+  const forceUploadLocalToCloud = async () => {
+    if (!state.authUser?.email) {
+      showToast('Inicia sesión para subir datos a Firebase', '⚠️');
+      return;
+    }
+    
+    setSyncSessionId(-1);
+    isBulkOperationInProgress.current = true;
+    isSyncReady.current = false;
+    try {
+      const stateToBackup = JSON.parse(JSON.stringify(state));
+      delete stateToBackup.authToken;
+      
+      await forceUploadStateToFirestore(state.authUser.email, stateToBackup);
+      showToast('¡Nube sobrescrita con tus datos locales con éxito!', '🔥');
+    } catch (e) {
+      console.error(e);
+      showToast('Error al forzar la subida a Firebase', '❌');
+    } finally {
+      isSyncReady.current = true;
+      // Re-enable snapshot stream
+      setSyncSessionId(Date.now());
+      // Delay releasing the lock to let all deletion/update snapshots settle
+      setTimeout(() => {
+        isBulkOperationInProgress.current = false;
+      }, 1500);
+    }
+  };
+
   const integrityReport = useMemo(() => {
     return validateFinancialIntegrity(profile, exchangeRates);
   }, [profile]);
@@ -674,6 +1073,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         convertAmount,
         updateState,
         startBackgroundUpdateDownload,
+        checkForUpdates,
+        forceUploadLocalToCloud,
       }}
     >
       {children}

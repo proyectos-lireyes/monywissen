@@ -8,10 +8,10 @@ export const BottomNav: React.FC = () => {
   const items = [
     { id: 'dashboard', label: 'Inicio', icon: LayoutDashboard },
     { id: 'calendar', label: 'Plan', icon: Calendar },
-    { id: 'transactions', label: 'Transacciones', icon: ArrowLeftRight },
+    { id: 'income', label: 'Ingresos', icon: TrendingUp },
     { id: 'expenses', label: 'Gastos', icon: CreditCard },
     { id: 'debts', label: 'Deudas', icon: Building2 },
-    { id: 'shared', label: 'MonyShared', icon: Users },
+    { id: 'transactions', label: 'Movimientos', icon: ArrowLeftRight },
   ];
 
   return (

@@ -5,7 +5,26 @@
  */
 
 import { UserProfile, DebtItem, SharedGroup, P2PLoan, PlanOccurrence } from '../types';
-import { calculateProjections, getRemainingDebtAmount, calculateSharedSettlement, todayStr } from './financialEngine';
+import { calculateProjections, getRemainingDebtAmount, calculateSharedSettlement, todayStr, formatCurrency, formatDateStr } from './financialEngine';
+
+export interface BreachDetail {
+  index: number; // 1, 2, 3...
+  date: string;
+  amount: number; // deficit amount
+  causeLabel?: string;
+  isSolvable: boolean;
+  exceeds20PercentIncome: boolean;
+  recoveryDate?: string | null;
+  recommendationMessage: string;
+}
+
+export interface CashBreachAnalysis {
+  breachCount: number;
+  isPlanViable: boolean;
+  unviabilityReason?: string | null;
+  totalIncome: number;
+  breaches: BreachDetail[];
+}
 
 export interface DoubleEntryIssue {
   id: string;
@@ -67,6 +86,7 @@ export interface IntegrityReport {
   preventiveWarnings: PreventiveFlowWarning[];
   optimizations: OptimizationSuggestion[];
   contradictions: FinancialContradiction[];
+  cashBreachAnalysis: CashBreachAnalysis;
   summary: {
     openingBalance: number;
     totalSavings: number;
@@ -184,7 +204,16 @@ export function verifyDoubleEntry(profile: UserProfile): DoubleEntryIssue[] {
 export function detectPreventiveNegativeFlow(profile: UserProfile, exchangeRates: Record<string, number> = {}): PreventiveFlowWarning[] {
   const warnings: PreventiveFlowWarning[] = [];
   const plan: PlanOccurrence[] = calculateProjections(profile, exchangeRates);
-  const minBalance = profile.settings.minBalance || 0;
+
+  const convAmt = (amt: number, currency?: string) => {
+    if (!currency || currency === 'USD_BCV' || currency === 'USD') return amt;
+    let curr = currency;
+    if (curr === 'EUR') curr = 'EUR_BCV';
+    const rate = exchangeRates[curr] || exchangeRates[currency];
+    return rate ? amt * rate : amt;
+  };
+
+  const minBalance = convAmt(profile.settings.minBalance || 0, profile.settings.minBalanceCurrency || profile.settings.displayCurrency);
 
   let firstDeficitFound = false;
 
@@ -202,8 +231,8 @@ export function detectPreventiveNegativeFlow(profile: UserProfile, exchangeRates
         requiredCushion: minBalance,
         causeLabel: item.label,
         causeAmount: item?.amt,
-        message: `Iliquidez crítica proyectada para el ${item.date}: Saldo de $${item.balance.toFixed(2)}.`,
-        recommendedAction: `Posponer "${item.label}" ($${Math.abs(item?.amt || 0)}) o inyectar $${Math.abs(item.balance).toFixed(2)} antes del ${item.date}.`,
+        message: `Iliquidez crítica proyectada para el ${item.date}: Saldo de ${formatCurrency(item.balance)}.`,
+        recommendedAction: `Posponer "${item.label}" (${formatCurrency(Math.abs(item?.amt || 0))}) o inyectar ${formatCurrency(Math.abs(item.balance))} antes del ${item.date}.`,
       });
     }
     // 2. Safety Cushion Breach (Min Balance Breach)
@@ -216,8 +245,8 @@ export function detectPreventiveNegativeFlow(profile: UserProfile, exchangeRates
         requiredCushion: minBalance,
         causeLabel: item.label,
         causeAmount: item?.amt,
-        message: `Riesgo de colchón mínimo el ${item.date}: Saldo ($${item.balance.toFixed(2)}) por debajo del mínimo deseado ($${minBalance}).`,
-        recommendedAction: `Revisar compromisos cercanos para mantener el colchón de seguridad de $${minBalance}.`,
+        message: `Riesgo de colchón mínimo el ${item.date}: Saldo (${formatCurrency(item.balance)}) por debajo del mínimo deseado (${formatCurrency(minBalance)}).`,
+        recommendedAction: `Revisar compromisos cercanos para mantener el colchón de seguridad de ${formatCurrency(minBalance)}.`,
       });
     }
   });
@@ -352,6 +381,139 @@ export function validateTransactionExecution(
  * Generates smart date shifting recommendations to prevent liquidity issues or pay earlier.
  */
 
+export function evaluateCashBreaches(profile: UserProfile, exchangeRates: Record<string, number> = {}): CashBreachAnalysis {
+  const plan: PlanOccurrence[] = calculateProjections(profile, exchangeRates);
+
+  // Total projected income across the plan (excluding starting fund)
+  const totalIncome = plan
+    .filter(p => p && p.amt > 0 && p.type === 'income' && p.ref?.id !== 'required_starting_fund')
+    .reduce((s, p) => s + p.amt, 0);
+
+  const breaches: BreachDetail[] = [];
+  let currentBreachMinBal = 0;
+  let currentBreachDate = '';
+  let currentBreachCause = '';
+  let inBreach = false;
+
+  plan.forEach((p) => {
+    // A breach occurs if a savings rescue was required OR if the balance dropped below zero
+    const isRescue = p.type === 'rescate_ahorros';
+    const isUncoveredDeficit = p.balance < -0.001;
+
+    if (isRescue || isUncoveredDeficit) {
+      const deficitAmt = isRescue ? Math.abs(p.amt || 0) : Math.abs(p.balance || 0);
+      if (!inBreach) {
+        inBreach = true;
+        currentBreachMinBal = deficitAmt;
+        currentBreachDate = p.date;
+        currentBreachCause = p.label || 'Compromiso planificado';
+      } else {
+        if (deficitAmt > currentBreachMinBal) {
+          currentBreachMinBal = deficitAmt;
+        }
+      }
+    } else {
+      if (inBreach) {
+        breaches.push({
+          index: breaches.length + 1,
+          date: currentBreachDate,
+          amount: Math.round(currentBreachMinBal * 100) / 100,
+          causeLabel: currentBreachCause,
+          isSolvable: true,
+          exceeds20PercentIncome: false,
+          recommendationMessage: '',
+        });
+        inBreach = false;
+        currentBreachMinBal = 0;
+      }
+    }
+  });
+
+  if (inBreach) {
+    breaches.push({
+      index: breaches.length + 1,
+      date: currentBreachDate,
+      amount: Math.round(currentBreachMinBal * 100) / 100,
+      causeLabel: currentBreachCause,
+      isSolvable: true,
+      exceeds20PercentIncome: false,
+      recommendationMessage: '',
+    });
+  }
+
+  const twentyPercentLimit = totalIncome > 0 ? totalIncome * 0.20 : 0;
+  let isPlanViable = true;
+  let unviabilityReason: string | null = null;
+
+  breaches.forEach((b) => {
+    const exceeds20 = totalIncome > 0 && b.amount > twentyPercentLimit;
+    b.exceeds20PercentIncome = exceeds20;
+
+    // Search future accumulated savings / surplus for when this breach amount can be paid back
+    let recoveryDate: string | null = null;
+    for (const p of plan) {
+      if (p.date > b.date) {
+        const availableSavings = (p.savingsAccumulated || 0) + Math.max(0, p.balance);
+        if (availableSavings >= b.amount) {
+          recoveryDate = p.date;
+          break;
+        }
+      }
+    }
+    b.recoveryDate = recoveryDate;
+
+    if (b.index === 1) {
+      // 1st Breach: Solvable
+      b.isSolvable = true;
+      if (recoveryDate) {
+        b.recommendationMessage = `💡 Recomendación (Quiebre #1): Este quiebre por ${formatCurrency(b.amount)} el ${formatDateStr(b.date)} podrá ser pagado con tus ahorros/excedente proyectado para el ${formatDateStr(recoveryDate)}.`;
+      } else {
+        b.recommendationMessage = `💡 Recomendación (Quiebre #1): Este quiebre de ${formatCurrency(b.amount)} el ${formatDateStr(b.date)} es solucionable. Se sugiere un préstamo temporal para cubrirlo.`;
+      }
+    } else if (b.index === 2) {
+      // 2nd Breach: Solvable ONLY IF <= 20% total income
+      if (!exceeds20) {
+        b.isSolvable = true;
+        const pctStr = totalIncome > 0 ? ` (${((b.amount / totalIncome) * 100).toFixed(1)}% de tus ingresos)` : '';
+        if (recoveryDate) {
+          b.recommendationMessage = `💡 Recomendación (Quiebre #2): Representa un quiebre manejable${pctStr}. Podrá ser reembolsado con tus ahorros acumulados para el ${formatDateStr(recoveryDate)}.`;
+        } else {
+          b.recommendationMessage = `💡 Recomendación (Quiebre #2): Representa un quiebre de bajo impacto${pctStr}. Se sugiere financiamiento temporal para el ${formatDateStr(b.date)}.`;
+        }
+      } else {
+        b.isSolvable = false;
+        isPlanViable = false;
+        const pctStr = totalIncome > 0 ? `${((b.amount / totalIncome) * 100).toFixed(1)}%` : 'más del 20%';
+        b.recommendationMessage = `⚠️ PLAN INVIABLE: El 2do quiebre (${formatCurrency(b.amount)}) equivale al ${pctStr} de tus ingresos totales (${formatCurrency(twentyPercentLimit)}), superando el límite permitido del 20%.`;
+        if (!unviabilityReason) {
+          unviabilityReason = `El 2do quiebre (${formatCurrency(b.amount)}) supera el 20% de tus ingresos totales (${formatCurrency(twentyPercentLimit)}).`;
+        }
+      }
+    } else if (b.index === 3) {
+      // 3rd Breach: Plan becomes Inviable
+      b.isSolvable = false;
+      isPlanViable = false;
+      b.recommendationMessage = `⚠️ Límite Alcanzado (Quiebre #3): Ocurre el ${formatDateStr(b.date)} por ${formatCurrency(b.amount)}. Al llegar al 3er déficit de caja el plan financiero se considera inviable.`;
+      if (!unviabilityReason) {
+        unviabilityReason = `Se han registrado ${breaches.length} déficits de caja en la proyección. Al 3er déficit (${formatDateStr(b.date)}) el plan se considera inviable (máximo 2 déficits manejables).`;
+      }
+    } else {
+      // 4th breach or higher: Inviable, do not repeat individual messages to avoid clutter
+      b.isSolvable = false;
+      isPlanViable = false;
+      b.recommendationMessage = '';
+    }
+  });
+
+  return {
+    breachCount: breaches.length,
+    isPlanViable,
+    unviabilityReason,
+    totalIncome: Math.round(totalIncome * 100) / 100,
+    breaches,
+  };
+}
+
 export function detectOptimizations(profile: UserProfile, exchangeRates: Record<string, number> = {}): OptimizationSuggestion[] {
   return []; // Replaced by Engine Auto-Pilot
 }
@@ -361,6 +523,7 @@ export function validateFinancialIntegrity(profile: UserProfile, exchangeRates: 
   const doubleEntryIssues = verifyDoubleEntry(profile);
   const preventiveWarnings = detectPreventiveNegativeFlow(profile, exchangeRates);
   const contradictions = detectFinancialContradictions(profile);
+  const cashBreachAnalysis = evaluateCashBreaches(profile, exchangeRates);
 
   // Compute total active debt
   const totalActiveDebt = (profile.debts || []).reduce(
@@ -407,9 +570,9 @@ export function validateFinancialIntegrity(profile: UserProfile, exchangeRates: 
   score = Math.max(0, Math.min(100, Math.round(score)));
 
   let status: 'HEALTHY' | 'WARNING' | 'CRITICAL' = 'HEALTHY';
-  if (score < 50 || firstDeficit !== undefined) {
+  if (score < 50 || firstDeficit !== undefined || !cashBreachAnalysis.isPlanViable) {
     status = 'CRITICAL';
-  } else if (score < 85) {
+  } else if (score < 85 || cashBreachAnalysis.breachCount > 0) {
     status = 'WARNING';
   }
 
@@ -421,6 +584,7 @@ export function validateFinancialIntegrity(profile: UserProfile, exchangeRates: 
     preventiveWarnings,
     optimizations,
     contradictions,
+    cashBreachAnalysis,
     summary: {
       openingBalance: profile.settings.openingBalance || 0,
       totalSavings,

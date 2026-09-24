@@ -14,6 +14,8 @@ import {
   List as ListIcon,
   X,
   CheckCircle2,
+  ShieldAlert,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface CalendarViewProps {
@@ -82,13 +84,47 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
     );
   };
 
+  const getAccountSourceInfo = (e: any) => {
+    if (e.type === 'opening_balance') return null;
+    const isRescate = e.type === 'rescate_ahorros';
+    if (isRescate) return null;
+
+    if (e.noAffectBalance) {
+      return {
+        label: 'Fondos externos (no debitado)',
+        icon: '🛡️',
+        color: 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/50'
+      };
+    }
+
+    const accountId = e.incomeId || e.ref?.incomeId;
+    const account = (profile.incomes || []).find(i => i.id === accountId);
+    const primaryAccount = profile.incomes?.[0];
+    const accountName = account?.name || (primaryAccount ? primaryAccount.name : 'Cuenta principal');
+
+    if (e.type === 'income') {
+      return {
+        label: `${e.done ? 'Depositado en' : 'Entra en'}: ${accountName}`,
+        icon: '📥',
+        color: 'text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/50'
+      };
+    }
+
+    return {
+      label: `${e.done ? 'Pagado desde' : 'Se debitará de'}: ${accountName}`,
+      icon: '🏦',
+      color: e.done
+        ? 'text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800/50'
+        : 'text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+    };
+  };
+
   const filterOccurrence = (e: any) => {
-    const isOverdue = !e.done && e.originalDate < today;
-    const isPostponed = !e.done && (e.userPostponed || (e.isDelayed && !e.insufficientFunds) || (e.originalDate && e.originalDate < e.date && !e.insufficientFunds));
-    const isPulledEarly = !e.done && e.pulledEarly;
-    const isDeficit = !e.done && e.insufficientFunds && e.amt < 0;
-    const isPending = !e.done && !isOverdue && !isPostponed && !isPulledEarly && !isDeficit;
-    const isDone = e.done;
+    const isDone = Boolean(e.done || e.isPaid);
+    const isOverdue = !isDone && e.date < today;
+    const isPostponed = !isDone && (e.userPostponed || (e.originalDate && e.originalDate < e.date && !e.insufficientFunds));
+    const isDeficit = !isDone && e.insufficientFunds && e.amt < 0;
+    const isPending = !isDone && !isOverdue && !isPostponed && !isDeficit;
 
     if (activeStateFilters.includes('hide_done') && isDone) return false;
 
@@ -97,14 +133,17 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
       let show = false;
       if (activeStateFilters.includes('overdue') && isOverdue) show = true;
       if (activeStateFilters.includes('postponed') && isPostponed) show = true;
-      if (activeStateFilters.includes('pulledEarly') && isPulledEarly) show = true;
       if (activeStateFilters.includes('deficit') && isDeficit) show = true;
       if (activeStateFilters.includes('pending') && isPending) show = true;
       if (!show) return false;
     }
 
     if (activeOutflowFilters.length > 0) {
-      if (!activeOutflowFilters.includes(e.type)) return false;
+      const match = activeOutflowFilters.some(filterType => {
+        if (filterType === 'egresos') return e.type === 'expense' || e.type === 'debt';
+        return e.type === filterType;
+      });
+      if (!match) return false;
     }
 
     if (searchQuery && !e.label.toLowerCase().includes(searchQuery.toLowerCase())) {
@@ -202,24 +241,42 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
         </div>
 
         {/* Monthly Summary Cards */}
-        <div className="grid grid-cols-4 gap-2">
-          <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-2xl text-center">
-            <span className="text-[10px] font-bold text-emerald-600 uppercase">Ingresos</span>
-            <p className="text-sm font-black text-emerald-700 dark:text-emerald-400">{formatCurrency(mInc)}</p>
-          </div>
-          <div className="p-2.5 bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40 rounded-2xl text-center">
-            <span className="text-[10px] font-bold text-blue-600 uppercase">Gastos</span>
-            <p className="text-sm font-black text-blue-700 dark:text-blue-400">{formatCurrency(mExp)}</p>
-          </div>
-          <div className="p-2.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40 rounded-2xl text-center">
-            <span className="text-[10px] font-bold text-amber-600 uppercase">Deudas</span>
-            <p className="text-sm font-black text-amber-700 dark:text-amber-400">{formatCurrency(mDebt)}</p>
-          </div>
-          <div className="p-2.5 bg-sky-50 dark:bg-sky-950/20 border border-sky-100 dark:border-sky-900/40 rounded-2xl text-center">
-            <span className="text-[10px] font-bold text-sky-600 uppercase">Ahorro</span>
-            <p className="text-sm font-black text-sky-700 dark:text-sky-400">{formatCurrency(mSav)}</p>
-          </div>
-        </div>
+        {(() => {
+          const totalEgresos = mExp + mDebt;
+          const netFlow = mInc - totalEgresos;
+          return (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-2xl text-center">
+                <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">Ingresos</span>
+                <p className="text-sm font-black text-emerald-700 dark:text-emerald-400 mt-0.5">{formatCurrency(mInc)}</p>
+              </div>
+              <div className="p-2.5 bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40 rounded-2xl text-center">
+                <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block">Gastos Fijos</span>
+                <p className="text-sm font-black text-blue-700 dark:text-blue-400 mt-0.5">{formatCurrency(mExp)}</p>
+              </div>
+              <div className="p-2.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40 rounded-2xl text-center">
+                <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider block">Cuotas Deuda</span>
+                <p className="text-sm font-black text-amber-700 dark:text-amber-400 mt-0.5">{formatCurrency(mDebt)}</p>
+              </div>
+              <div className="p-2.5 bg-rose-50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/40 rounded-2xl text-center">
+                <span className="text-[10px] font-extrabold text-rose-600 uppercase tracking-wider block">Total Egresos</span>
+                <p className="text-sm font-black text-rose-700 dark:text-rose-400 mt-0.5">{formatCurrency(totalEgresos)}</p>
+              </div>
+              <div className={`p-2.5 border rounded-2xl text-center col-span-2 sm:col-span-1 ${
+                netFlow >= 0 
+                  ? 'bg-emerald-100/60 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800' 
+                  : 'bg-rose-100/60 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800'
+              }`}>
+                <span className={`text-[10px] font-extrabold uppercase tracking-wider block ${netFlow >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'}`}>
+                  Flujo Neto Plan
+                </span>
+                <p className={`text-sm font-black mt-0.5 ${netFlow >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'}`}>
+                  {netFlow >= 0 ? '+' : ''}{formatCurrency(netFlow)}
+                </p>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* CALENDAR VIEW */}
@@ -293,13 +350,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                             ? 'border-emerald-500 bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:border-emerald-500/50'
                             : (ev.date < today
                                ? 'border-rose-500 bg-rose-50 text-rose-800 dark:bg-rose-900/30 dark:border-rose-500/50'
-                               : ev.amt > 0
-                                 ? 'border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20'
-                                 : (!ev.ref?.effectiveColor ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/20' : 'bg-slate-50 dark:bg-slate-800'))
+                               : ev.type === 'rescate_ahorros'
+                                 ? 'border-purple-500 bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
+                                 : ev.amt > 0
+                                   ? 'border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20'
+                                   : (!ev.ref?.effectiveColor ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/20' : 'bg-slate-50 dark:bg-slate-800'))
                         }`}
                       >
                         {!ev.isGhost && ev.done && <span className="text-emerald-600 dark:text-emerald-400 mr-0.5">✓</span>}
-                        {!ev.isGhost && ev.pulledEarly ? '⚡ ' : ''}{!ev.isGhost && ev.isDelayed ? '⚠️ ' : ''}{ev.label}
+                        {ev.label}
                       </div>
                     ))}
                     {dayEvents.length > 2 && (
@@ -380,14 +439,18 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                     </div>
                   ) : (
                     filteredPlan.map((e, idx) => {
-                const isIncome = e.amt > 0 || e.type === 'income';
-                const preIncomeBalance = isIncome ? (e.balance - e.amt) : null;
+                const isRescate = e.type === 'rescate_ahorros';
+                const isIncome = (e.amt > 0 || e.type === 'income') && !isRescate;
+                const preIncomeBalance = (isIncome || isRescate) ? (e.balance - e.amt) : null;
 
                 return (
                   <div
                     key={idx}
                     onClick={() => { if (!e.isGhost && e.type !== 'opening_balance') onOpenDetails(e.type, e.ref?.id || '', e.originalDate || e.date, e.date); }}
-                    style={(!e.done && e.date >= today && !isIncome && e.ref?.effectiveColor && !e.isGhost) ? {
+                    style={(!e.done && e.date >= today && isRescate) ? {
+                      borderLeftColor: '#8b5cf6',
+                      borderLeftWidth: '4px'
+                    } : (!e.done && e.date >= today && !isIncome && e.ref?.effectiveColor && !e.isGhost) ? {
                       borderLeftColor: e.ref.effectiveColor,
                       borderLeftWidth: '4px'
                     } : {}}
@@ -397,6 +460,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                         ? 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'
                         : e.done
                         ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/50'
+                        : isRescate
+                        ? 'bg-purple-50/70 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800/60 shadow-xs'
                         : isIncome
                         ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60'
                         : (!e.ref?.effectiveColor ? 'bg-slate-50/60 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800 hover:border-slate-300' : 'bg-slate-50 dark:bg-slate-900 shadow-sm')
@@ -405,14 +470,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                     <div className="flex items-start sm:items-center justify-between gap-2">
                       <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-2 overflow-hidden">
                         <p className={`text-xs font-black flex items-center gap-2 truncate ${e.isGhost ? 'text-slate-500 line-through' : 'text-slate-900 dark:text-slate-100'}`}>
-                          <span className="truncate">{e.label}</span> {e.isGhost && <span className="text-[9px] font-normal no-underline ml-1 shrink-0">(Plan original)</span>}
+                          <span className="truncate">{e.label}</span> {e.isGhost && <span className="text-[9px] font-normal no-underline ml-1 shrink-0 text-slate-500">(Plan original)</span>}
+                          {!e.isGhost && e.originalDate && e.originalDate !== e.date && (
+                             <span className="text-[9px] font-normal no-underline ml-1 shrink-0 text-slate-500">
+                               (Plan: {formatDateStr(e.originalDate).substring(0,5)})
+                             </span>
+                          )}
                           
-                          {!e.isGhost && !e.done && e.pulledEarly && (
-                            <span className="text-[9px] bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0" title={`Adelantado desde el ${e.optimizedFrom}`}>⚡</span>
-                          )}
-                          {!e.done && e.isDelayed && !e.insufficientFunds && (
-                            <span className="text-[9px] bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0" title={`Retrasado desde el ${e.optimizedFrom}`}>⚠️</span>
-                          )}
                           {!e.done && e.insufficientFunds && e.amt < 0 && (
                             <span className="text-[9px] bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0" title="Quiebre / Fondos insuficientes">🚨</span>
                           )}
@@ -431,7 +495,17 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                       )}
                     </div>
                     
-                    {/* Display AVAILABLE BALANCE PRIOR TO INCOME */}
+                    {/* Display AVAILABLE BALANCE PRIOR TO RESCATE OR INCOME */}
+                    {isRescate && preIncomeBalance !== null && (
+                      <div className="p-1 px-2 bg-purple-100/70 dark:bg-purple-900/40 rounded-lg border border-purple-200/80 dark:border-purple-800/50 inline-block self-start">
+                        <p className="text-[10px] font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1">
+                          🛟 <span>Disp. previo:</span>
+                          <span className="font-black text-xs text-purple-700 dark:text-purple-300">
+                            {formatCurrency(preIncomeBalance)}
+                          </span>
+                        </p>
+                      </div>
+                    )}
                     {isIncome && e.type !== 'opening_balance' && preIncomeBalance !== null && (
                       <div className="p-1 px-2 bg-emerald-100/60 dark:bg-emerald-900/40 rounded-lg border border-emerald-200/80 dark:border-emerald-800/50 inline-block self-start">
                         <p className="text-[10px] font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1">
@@ -443,18 +517,47 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                       </div>
                     )}
                     
-                    {/* Warning for INSUFFICIENT FUNDS */}
-                    {!e.done && e.insufficientFunds && !isIncome && (
-                      <div className="p-1.5 bg-rose-50 dark:bg-rose-950/40 rounded-lg border border-rose-200 dark:border-rose-900/50 self-start">
-                        <p className="text-[10px] font-bold text-rose-700 dark:text-rose-400 leading-tight">
-                          {e.balance < 0 ? '⚠️ Saldo insuficiente' : '⚠️ Rompe tu colchón'}
-                        </p>
-                      </div>
+                    {/* Warning for INSUFFICIENT FUNDS OR BELOW CUSHION */}
+                    {!e.done && !isIncome && (
+                      e.insufficientFunds ? (
+                        <div className="p-1.5 bg-rose-50 dark:bg-rose-950/40 rounded-lg border border-rose-200 dark:border-rose-900/50 self-start flex items-center gap-1.5">
+                          <AlertTriangle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
+                          <p className="text-[10px] font-bold text-rose-700 dark:text-rose-400 leading-tight">
+                            ⚠️ Saldo insuficiente ({formatCurrency(e.balance)})
+                          </p>
+                        </div>
+                      ) : e.belowCushion ? (
+                        <div className="p-1.5 bg-amber-50 dark:bg-amber-950/40 rounded-lg border border-amber-200 dark:border-amber-900/50 self-start flex items-center gap-1.5">
+                          <ShieldAlert className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                          <p className="text-[10px] font-bold text-amber-700 dark:text-amber-300 leading-tight">
+                            ⚠️ Rompe colchón de seguridad (Saldo: {formatCurrency(e.balance)})
+                          </p>
+                        </div>
+                      ) : null
                     )}
 
+                    {/* Origen del dinero / Cuenta bancaria */}
+                    {(() => {
+                      const source = getAccountSourceInfo(e);
+                      if (!source) return null;
+                      return (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-lg border inline-flex items-center gap-1 ${source.color}`}>
+                            <span>{source.icon}</span>
+                            <span>{source.label}</span>
+                          </span>
+                          {e.isPartial && (
+                            <span className="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/50 px-1.5 py-0.5 rounded-md">
+                              Abono parcial
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     <div className="flex items-center justify-between mt-0.5">
-                      <p className={`text-sm font-black ${isIncome ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-slate-100'}`}>
-                        {isIncome ? '+' : '-'}{formatCurrency(Math.abs(e.amt))}
+                      <p className={`text-sm font-black ${isRescate ? 'text-purple-600 dark:text-purple-400' : isIncome ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-slate-100'}`}>
+                        {(isIncome || isRescate) ? '+' : '-'}{formatCurrency(Math.abs(e.amt))}
                       </p>
                       <p className="text-[10px] text-slate-500 font-medium">
                         Saldo: <span className={e.balance < 0 ? 'text-rose-600 font-bold' : 'text-slate-700 dark:text-slate-300 font-bold'}>{formatCurrency(e.balance)}</span>
@@ -472,35 +575,72 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
       )}
 
       {/* Filter Chips Bar */}
-      <div className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-2">
-        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-          Filtros por Estado y Tipo
-        </span>
-        <div className="flex flex-wrap gap-1.5">
-          {[
-            { id: 'pending', label: '🔴 Pendientes', type: 'state' },
-            { id: 'overdue', label: '⚠️ Atrasados', type: 'state' },
-            { id: 'postponed', label: '🔄 Pospuestos', type: 'state' },
-            { id: 'pulledEarly', label: '⚡ Adelantados', type: 'state' },
-            { id: 'deficit', label: '🚨 Quiebre', type: 'state' },
-            { id: 'expense', label: '📉 Gastos', type: 'outflow' },
-            { id: 'debt', label: '💳 Deudas', type: 'outflow' },
-          ].map(f => {
-            const isActive = f.type === 'state' ? activeStateFilters.includes(f.id) : activeOutflowFilters.includes(f.id);
-            return (
+      <div className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+        <div>
+          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-1.5">
+            Filtrar por Tipo de Movimiento
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              { id: 'income', label: '💚 Solo Ingresos' },
+              { id: 'expense', label: '💳 Solo Gastos Fijos' },
+              { id: 'debt', label: '🏦 Solo Deudas' },
+              { id: 'egresos', label: '🔴 Todos los Egresos (Gastos + Deudas)' },
+              { id: 'savings', label: '🛡️ Solo Ahorros' },
+            ].map(f => {
+              const isActive = activeOutflowFilters.includes(f.id);
+              return (
+                <button
+                  key={f.id}
+                  onClick={() => toggleOutflowFilter(f.id)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+                    isActive
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              );
+            })}
+            {activeOutflowFilters.length > 0 && (
               <button
-                key={f.id}
-                onClick={() => f.type === 'state' ? toggleStateFilter(f.id) : toggleOutflowFilter(f.id)}
-                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
-                  isActive
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-                }`}
+                onClick={() => setActiveOutflowFilters([])}
+                className="px-2.5 py-1.5 rounded-full text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 transition-colors"
               >
-                {f.label}
+                Limpiar tipo
               </button>
-            );
-          })}
+            )}
+          </div>
+        </div>
+
+        <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-1.5">
+            Filtrar por Estado
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              { id: 'pending', label: '🔴 Pendientes' },
+              { id: 'overdue', label: '⚠️ Atrasados' },
+              { id: 'postponed', label: '🔄 Pospuestos' },
+              { id: 'deficit', label: '🚨 Quiebre' },
+            ].map(f => {
+              const isActive = activeStateFilters.includes(f.id);
+              return (
+                <button
+                  key={f.id}
+                  onClick={() => toggleStateFilter(f.id)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                    isActive
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -535,22 +675,37 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                     setSelectedDayEvents(null);
                     onOpenDetails(e.type, e.ref.id, e.originalDate, e.date);
                   }}
-                  className={`p-3 rounded-2xl flex items-center justify-between cursor-pointer hover:opacity-80 transition-opacity border ${e.pulledEarly ? 'bg-emerald-50 border-emerald-100 dark:bg-emerald-900/20 dark:border-emerald-800/30' : e.insufficientFunds && e.amt < 0 ? 'bg-rose-50 border-rose-100 dark:bg-rose-900/20 dark:border-rose-800/30' : e.isDelayed ? 'bg-amber-50 border-amber-100 dark:bg-amber-900/20 dark:border-amber-800/30' : 'bg-slate-50 border-transparent dark:bg-slate-800'}`}
+                  className={`p-3 rounded-2xl flex items-center justify-between cursor-pointer hover:opacity-80 transition-opacity border ${e.insufficientFunds && e.amt < 0 ? 'bg-rose-50 border-rose-100 dark:bg-rose-900/20 dark:border-rose-800/30' : 'bg-slate-50 border-transparent dark:bg-slate-800'}`}
                 >
                   <div className="flex-1 min-w-0 pr-2 flex items-center gap-2">
                     <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: e.ref?.effectiveColor || '#94a3b8' }}></div>
                     <div className="flex-1 min-w-0">
-                      <p className={`text-xs font-bold flex items-center gap-1.5 truncate ${e.done ? 'text-slate-500 dark:text-slate-400 line-through decoration-slate-300' : e.pulledEarly ? 'text-emerald-900 dark:text-emerald-100' : e.insufficientFunds && e.amt < 0 ? 'text-rose-900 dark:text-rose-100' : 'text-slate-900 dark:text-slate-100'}`}>
+                      <p className={`text-xs font-bold flex items-center gap-1.5 truncate ${e.done ? 'text-slate-500 dark:text-slate-400 line-through decoration-slate-300' : e.insufficientFunds && e.amt < 0 ? 'text-rose-900 dark:text-rose-100' : 'text-slate-900 dark:text-slate-100'}`}>
                         {e.done && <span className="text-emerald-500 bg-emerald-100 dark:bg-emerald-900/40 rounded-full px-1 py-0.5 no-underline flex items-center justify-center"><CheckCircle2 className="w-3 h-3" /></span>}
                         {e.label}
-                        {e.pulledEarly && !e.done && <span title="Adelantado automáticamente" className="text-emerald-500 no-underline">⚡</span>}
+                        {!e.isGhost && e.originalDate && e.originalDate !== e.date && (
+                             <span className="text-[9px] font-normal no-underline ml-1 shrink-0 opacity-70">
+                               (Plan: {formatDateStr(e.originalDate).substring(0,5)})
+                             </span>
+                        )}
                         {e.insufficientFunds && e.amt < 0 && !e.done && <span title="Alerta de Quiebre" className="text-rose-500 no-underline">🚨</span>}
-                        {e.isDelayed && !e.insufficientFunds && !e.done && e.type !== 'rescate_ahorros' && !e.ref?.id?.startsWith('autosave') && <span title="Retrasado" className="text-amber-500 no-underline">⚠️</span>}
                       </p>
-                      <p className={`text-[10px] ${e.pulledEarly ? 'text-emerald-600/70 dark:text-emerald-400/60' : e.insufficientFunds && e.amt < 0 ? 'text-rose-600/70 dark:text-rose-400/60' : 'text-slate-400'}`}>{e.type}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className={`text-[10px] ${e.insufficientFunds && e.amt < 0 ? 'text-rose-600/70 dark:text-rose-400/60' : 'text-slate-400'}`}>{e.type}</p>
+                        {(() => {
+                          const source = getAccountSourceInfo(e);
+                          if (!source) return null;
+                          return (
+                            <span className={`text-[9px] font-semibold px-1.5 py-0.2 rounded-md border inline-flex items-center gap-1 ${source.color}`}>
+                              <span>{source.icon}</span>
+                              <span>{source.label}</span>
+                            </span>
+                          );
+                        })()}
+                      </div>
                     </div>
                   </div>
-                  <p className={`text-xs font-black ${e.pulledEarly ? 'text-amber-700 dark:text-amber-300' : e.insufficientFunds && e.amt < 0 ? 'text-rose-700 dark:text-rose-300' : 'text-slate-900 dark:text-slate-100'}`}>
+                  <p className={`text-xs font-black ${e.insufficientFunds && e.amt < 0 ? 'text-rose-700 dark:text-rose-300' : 'text-slate-900 dark:text-slate-100'}`}>
                     {formatCurrency(Math.abs(e.amt))}
                   </p>
                 </div>

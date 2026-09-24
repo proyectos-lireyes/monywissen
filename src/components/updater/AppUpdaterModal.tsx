@@ -26,17 +26,25 @@ export const AppUpdaterModal: React.FC<AppUpdaterModalProps> = ({
       try {
         const { FileOpener } = await import('@capawesome-team/capacitor-file-opener');
         await FileOpener.openFile({
-          path: downloadUrl, // Which is now the local path after download
+          path: downloadUrl, // Local path in app memory/storage
           mimeType: 'application/vnd.android.package-archive',
         });
       } catch (e: any) {
-        console.error('Error opening APK:', e);
-        showToast('No se pudo abrir el instalador', '❌');
-        window.open(downloadUrl, '_system');
+        console.error('Error opening APK via FileOpener:', e);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `monywissen-${latestVersion}.apk`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
       }
     } else {
-      // Create a direct link navigation to avoid cross-origin download block
-      window.location.href = downloadUrl;
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `monywissen-${latestVersion}.apk`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
     }
   };
 
@@ -47,7 +55,7 @@ export const AppUpdaterModal: React.FC<AppUpdaterModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full max-h-[90vh] overflow-y-auto p-6 space-y-5 shadow-2xl relative overflow-hidden">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-sm w-full h-[80vh] max-h-[80vh] flex flex-col overflow-y-auto p-6 space-y-5 shadow-2xl relative overflow-hidden">
         {/* Glow Header Accent */}
         <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-500" />
 

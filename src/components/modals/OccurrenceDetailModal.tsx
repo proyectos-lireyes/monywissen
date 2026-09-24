@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
-import { formatCurrency, formatDateStr, todayStr, calculateProjections, calculateAmortizationPlan } from '../../utils/financialEngine';
+import { formatCurrency, formatDateStr, todayStr, calculateProjections, calculateAmortizationPlan, calculateIncomeAccountBalances, sanitizeDocId, getOverrideForItem } from '../../utils/financialEngine';
 import confetti from 'canvas-confetti';
-import { X, CheckCircle2, RotateCcw, Calendar as CalendarIcon, ArrowRightLeft, CreditCard, Pencil, Trash2, Check } from 'lucide-react';
+import { X, CheckCircle2, RotateCcw, Calendar as CalendarIcon, ArrowRightLeft, CreditCard, Trash2, Check, ShieldCheck } from 'lucide-react';
 
 interface OccurrenceDetailModalProps {
   isOpen: boolean;
@@ -40,6 +40,8 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
   const [customPayAmt, setCustomPayAmt] = useState('');
   const [showCustomPay, setShowCustomPay] = useState(false);
   const [actualDate, setActualDate] = useState(todayStr());
+  const [affectBalance, setAffectBalance] = useState<boolean>(true);
+  const [selectedIncomeId, setSelectedIncomeId] = useState<string>('');
 
   // Find target item and its details
   let targetItem: any = null;
@@ -47,32 +49,47 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
   let baseAmount = 0;
   let itemCurrency = 'USD_BCV';
   let plannedUsdAmount = 0;
+  let occurrence: any = null;
 
   if (profile && type && refId) {
+    const rawId = String(refId || '');
+    const idWithout = rawId.replace(/^(debt_|income_|expense_|savings_)/, '');
+
+    // Find raw target item first so we have name/id references
+    if (type === 'income') {
+      targetItem = (profile.incomes || []).find(i => i.id === refId || i.id === idWithout || sanitizeDocId(i.name, i.id) === sanitizeDocId(rawId, rawId));
+    } else if (type === 'expense') {
+      targetItem = (profile.expenses || []).find(e => e.id === refId || e.id === idWithout || sanitizeDocId(e.name, e.id) === sanitizeDocId(rawId, rawId));
+    } else if (type === 'debt' || type === 'debt_cut') {
+      targetItem = (profile.debts || []).find(d => d.id === refId || d.id === idWithout || sanitizeDocId(d.name, d.id) === sanitizeDocId(rawId, rawId));
+    } else if (type === 'savings') {
+      targetItem = (profile.savingsList || []).find(s => s.id === refId || s.id === idWithout);
+    }
+
     const plan = calculateProjections(profile, exchangeRates);
-    let occurrence = plan.find(p => p.type === type && p.ref?.id === refId && p.originalDate === originalDate);
+    occurrence = plan.find(p => 
+      p.type === type && 
+      (
+        p.ref?.id === refId || 
+        p.ref?.id === idWithout || 
+        (targetItem && p.ref?.id === targetItem.id) ||
+        (targetItem && p.ref?.name === targetItem.name)
+      ) && 
+      (p.originalDate === originalDate || p.targetDate === originalDate || p.date === originalDate || p.originalDate === planDate)
+    );
     
-    // Find raw target item for reference
-    if (type === 'income') targetItem = (profile.incomes || []).find(i => i.id === refId);
-    else if (type === 'expense') targetItem = (profile.expenses || []).find(e => e.id === refId);
-    else if (type === 'debt' || type === 'debt_cut') targetItem = (profile.debts || []).find(d => d.id === refId);
-    else if (type === 'savings') targetItem = (profile.savingsList || []).find(s => s.id === refId);
+    if (!occurrence && type === 'rescate_ahorros') {
+      occurrence = plan.find(p => p.type === 'rescate_ahorros' && (p.date === planDate || p.originalDate === originalDate || p.ref?.id === refId));
+    }
 
     if (!occurrence && type === 'debt' && targetItem) {
       const expectedCuotas = calculateAmortizationPlan(targetItem, profile.overrides || {}, profile.settings?.customDebts || [], undefined, exchangeRates);
       const cuota = expectedCuotas.find(c => c.date === originalDate);
       if (cuota) {
         const cuotaAmtNative = cuota.requiredPay > 0 ? cuota.requiredPay : cuota.expectedAmount;
-        plannedUsdAmount = cuotaAmtNative * (exchangeRates[targetItem.currency] || 1); // convert to USD assuming convAmt logic
-        if (targetItem.currency === 'USD_BCV' || !targetItem.currency) {
-           plannedUsdAmount = cuotaAmtNative;
-        } else {
-           plannedUsdAmount = cuotaAmtNative * (exchangeRates[targetItem.currency] || 1); // No wait, convAmt divides? No, convAmt multiplies for USD? Wait, convAmt is amt * rate. Yes.
-           // Actually, let's just use convertAmount correctly.
-           plannedUsdAmount = convertAmount(cuotaAmtNative, targetItem.currency);
-        }
+        plannedUsdAmount = convertAmount(cuotaAmtNative, targetItem.currency);
         itemTitle = targetItem.name;
-        occurrence = { plannedAmt: plannedUsdAmount, label: itemTitle } as any;
+        occurrence = { plannedAmt: plannedUsdAmount, label: itemTitle, ref: targetItem, done: cuota.isPaid, isPaid: cuota.isPaid } as any;
       }
     }
 
@@ -104,10 +121,59 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
     }
   }
 
-  const key = `${type}_${refId}_${originalDate}`;
+  const customDebtDef = (type === 'debt' || type === 'debt_cut')
+    ? (profile.settings?.customDebts || []).find((cd: any) => cd.id === targetItem?.type)
+    : null;
+
+  const itemColor = (type === 'debt' || type === 'debt_cut')
+    ? (targetItem?.color || customDebtDef?.color || occurrence?.ref?.effectiveColor || '#f59e0b')
+    : (type === 'income' ? '#10b981' : (type === 'savings' ? '#10b981' : (type === 'rescate_ahorros' ? '#8b5cf6' : '#ef4444')));
+
+  const itemTypeLabel = (type === 'debt' || type === 'debt_cut')
+    ? (customDebtDef ? `✨ ${customDebtDef.name}` : (targetItem?.type === 'card' ? '💳 Tarjeta de Crédito' : (targetItem?.type === 'loan_interest' ? '🏦 Préstamo con Interés' : '🤝 Préstamo / Cuota')))
+    : (type === 'income' ? '📈 Ingreso' : (type === 'savings' ? '💰 Ahorro' : (type === 'rescate_ahorros' ? '🛟 Rescate de Ahorros' : '📉 Gasto / Pago')));
+
+  const cuotaKey = occurrence?.ref?.cuotaKey;
+  const legacyKey = `${type}_${refId}_${originalDate}`;
+  const key = cuotaKey || legacyKey;
+
+  const idStr = String(refId || '');
+  const idWithout = idStr.replace(/^(debt_|income_|expense_)/, '');
+  const idWith = idStr.startsWith('debt_') ? idStr : 'debt_' + idStr;
+  const cuotaIndex = occurrence?.ref?.index;
+
   const overrides = profile.overrides || {};
-  const overrideRecord = overrides[key] || {};
-  const isDone = !!overrideRecord.done;
+  let overrideRecord = getOverrideForItem(overrides, type, occurrence?.ref || targetItem || { id: refId, name: targetItem?.name }, originalDate) || {};
+
+  if (!overrideRecord || Object.keys(overrideRecord).length === 0) {
+    overrideRecord = (cuotaKey ? overrides[cuotaKey] : null) || 
+                     overrides[key] || 
+                     overrides[legacyKey] || 
+                     overrides[`${type}_${idWithout}_${originalDate}`] || 
+                     overrides[`${type}_${idWith}_${originalDate}`] || 
+                     overrides[`${idWithout}_${originalDate}`] || 
+                     overrides[`${idWith}_${originalDate}`] || {};
+  }
+
+  if (cuotaIndex !== undefined && !overrideRecord.done) {
+    const cuotaOv = overrides[`${idWith}_cuota_${cuotaIndex}`] || 
+                    overrides[`${idWithout}_cuota_${cuotaIndex}`] || 
+                    overrides[`${idWith}_${cuotaIndex}`] || 
+                    overrides[`${idWithout}_${cuotaIndex}`];
+    if (cuotaOv) overrideRecord = cuotaOv;
+  }
+
+  const isDone = occurrence?.done !== undefined
+    ? !!occurrence.done
+    : occurrence?.isPaid !== undefined
+    ? !!occurrence.isPaid
+    : overrideRecord.done !== undefined
+    ? !!overrideRecord.done
+    : overrideRecord.isPaid !== undefined
+    ? !!overrideRecord.isPaid
+    : targetItem?.isPaid !== undefined
+    ? !!targetItem.isPaid
+    : !!targetItem?.done;
 
   // Calculate sum of partial payments in USD
   const partialsSum = (overrideRecord.partials || []).reduce(
@@ -115,16 +181,40 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
     0
   );
 
-  const remainingUsd = Math.max(0, plannedUsdAmount - partialsSum);
+  const remainingUsd = isDone ? 0 : Math.max(0, plannedUsdAmount - partialsSum);
+
+  // Compute live balances per income account to show available funds in selectors
+  const planForBalances = React.useMemo(() => calculateProjections(profile, exchangeRates), [profile, exchangeRates]);
+  const incomeBalances = React.useMemo(() => calculateIncomeAccountBalances(profile, planForBalances, convertAmount, todayStr()), [profile, planForBalances, convertAmount]);
+  const balanceMap = React.useMemo(() => {
+    const m: Record<string, number> = {};
+    incomeBalances.forEach(b => { m[b.id] = b.availableToday; });
+    return m;
+  }, [incomeBalances]);
 
   useEffect(() => {
-    if (isOpen && originalDate) {
-      setActualDate(planDate || originalDate);
-      setPostponeDate(planDate || originalDate);
+    if (isOpen) {
+      setIsCelebrating(false);
+      setProgress(0);
+      setShowConfetti(false);
       setShowCustomPay(false);
       setShowPostponeInput(false);
+      setEditingPartialIdx(null);
+      setPartialAmt('');
+      const isNoAffectRecorded = overrideRecord.noAffectBalance === true || overrideRecord.externalPay === true || overrideRecord.paidPrior === true;
+      setAffectBalance(!isNoAffectRecorded);
+      const defaultIncId = overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId || (profile.incomes?.[0]?.id || '');
+      setSelectedIncomeId(isNoAffectRecorded ? '__EXTERNAL__' : defaultIncId);
+      if (originalDate) {
+        setActualDate(planDate || originalDate);
+        setPostponeDate(planDate || originalDate);
+      }
+    } else {
+      setIsCelebrating(false);
+      setProgress(0);
+      setShowConfetti(false);
     }
-  }, [isOpen, originalDate, planDate]);
+  }, [isOpen, refId, originalDate, planDate, type]);
 
   // Initialize input amount based on selected currency
   useEffect(() => {
@@ -147,22 +237,145 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
   // Exchange rate display string
   const bsPerUsd = exchangeRates['BS'] ? (1 / exchangeRates['BS']).toFixed(2) : '43.00';
 
-      const finishMarkDone = () => {
-    const finalAmountUsd = showCustomPay ? convertedPayUsd : remainingUsd;
-    updateProfileData(draft => {
-      draft.overrides = draft.overrides || {};
-      draft.overrides[key] = {
-        ...draft.overrides[key],
-        done: true,
-        actualDate: actualDate,
-        amt: finalAmountUsd,
-        payCurrency,
-        rawPayAmount: numericInput,
+  const isIncome = type === 'income' || occurrence?.type === 'income' || (occurrence?.amt !== undefined && occurrence.amt > 0);
+
+  const applyOverride = (draft: any, updates: any) => {
+    draft.overrides = draft.overrides || {};
+    const effectiveUpdates = { ...updates };
+    if (effectiveUpdates.isPaid !== undefined && effectiveUpdates.done === undefined) {
+      effectiveUpdates.done = Boolean(effectiveUpdates.isPaid);
+    }
+    delete effectiveUpdates.isPaid; // Use done as the single source of truth
+    
+    const rawId = String(refId || '');
+    const idWithout = rawId.replace(/^(debt_|income_|expense_|savings_)/, '');
+    const rawName = occurrence?.ref?.name || targetItem?.name || '';
+    const sanitizedId = sanitizeDocId(rawName, refId || '');
+
+    const candidateIds = Array.from(new Set([
+      refId,
+      rawId,
+      idWithout,
+      sanitizedId,
+      rawName.toLowerCase().replace(/\s+/g, '_')
+    ].filter(Boolean)));
+
+    const keysToWrite = new Set<string>([
+      key,
+      legacyKey,
+      cuotaKey,
+      `${refId}_${originalDate}`,
+      `${type}_${refId}_${originalDate}`,
+      `${type}_${idWithout}_${originalDate}`,
+      `${idWithout}_${originalDate}`,
+      `${type}_${sanitizedId}_${originalDate}`,
+      `${sanitizedId}_${originalDate}`,
+    ].filter(Boolean) as string[]);
+
+    if (effectiveUpdates.actualDate) {
+      const actDate = effectiveUpdates.actualDate;
+      keysToWrite.add(`${refId}_${actDate}`);
+      keysToWrite.add(`${type}_${refId}_${actDate}`);
+      keysToWrite.add(`${type}_${idWithout}_${actDate}`);
+      keysToWrite.add(`${idWithout}_${actDate}`);
+      keysToWrite.add(`${type}_${sanitizedId}_${actDate}`);
+      keysToWrite.add(`${sanitizedId}_${actDate}`);
+    }
+
+    // Scan draft.overrides for matches
+    Object.keys(draft.overrides).forEach(k => {
+      if (k.endsWith(`_${originalDate}`)) {
+        for (const cid of candidateIds) {
+          if (cid && cid.length > 2 && k.includes(cid)) {
+            keysToWrite.add(k);
+          }
+        }
+      }
+    });
+
+    keysToWrite.forEach(k => {
+      draft.overrides[k] = {
+        ...(draft.overrides[k] || {}),
+        ...effectiveUpdates
       };
     });
+
+    // Update base item directly in draft.incomes / draft.expenses for single source of truth
+    if (isIncome || type === 'income') {
+      (draft.incomes || []).forEach((inc: any) => {
+        if (inc.id === refId || inc.id === idWithout || inc.id === rawId || inc.name === rawName) {
+          if (effectiveUpdates.done !== undefined) {
+            inc.isPaid = effectiveUpdates.done;
+            inc.done = effectiveUpdates.done;
+          }
+          if (effectiveUpdates.actualDate && inc.freq === 'one-time') {
+            inc.date = effectiveUpdates.actualDate;
+          }
+        }
+      });
+    } else if (type === 'expense' || occurrence?.type === 'expense') {
+      (draft.expenses || []).forEach((exp: any) => {
+        if (exp.id === refId || exp.id === idWithout || exp.id === rawId || exp.name === rawName) {
+          if (effectiveUpdates.done !== undefined) {
+            exp.isPaid = effectiveUpdates.done;
+            exp.done = effectiveUpdates.done;
+          }
+          if (effectiveUpdates.actualDate && exp.freq === 'one-time') {
+            exp.date = effectiveUpdates.actualDate;
+          }
+        }
+      });
+    }
+
+    if (idStr.includes('auto_savings')) {
+      draft.overrides[`savings_auto_savings_${originalDate}`] = {
+        ...(draft.overrides[`savings_auto_savings_${originalDate}`] || {}),
+        ...effectiveUpdates
+      };
+      draft.overrides[`auto_savings_${originalDate}`] = {
+        ...(draft.overrides[`auto_savings_${originalDate}`] || {}),
+        ...effectiveUpdates
+      };
+    }
+    if (idStr.includes('rescate_ahorros')) {
+      draft.overrides[`rescate_ahorros_${originalDate}`] = {
+        ...(draft.overrides[`rescate_ahorros_${originalDate}`] || {}),
+        ...effectiveUpdates
+      };
+      draft.overrides[`rescate_ahorros_rescate_ahorros_${originalDate}`] = {
+        ...(draft.overrides[`rescate_ahorros_rescate_ahorros_${originalDate}`] || {}),
+        ...effectiveUpdates
+      };
+    }
+  };
+
+  const finishMarkDone = () => {
+    const finalAmountUsd = showCustomPay ? convertedPayUsd : remainingUsd;
+    const finalPayDate = showCustomPay ? actualDate : (actualDate || todayStr());
+    updateProfileData(draft => {
+      applyOverride(draft, {
+        done: true,
+        actualDate: finalPayDate,
+        amt: affectBalance ? finalAmountUsd : 0,
+        noAffectBalance: !affectBalance,
+        incomeId: affectBalance ? selectedIncomeId : undefined,
+        payCurrency,
+        rawPayAmount: numericInput,
+      });
+    });
     const currLabel = payCurrency === 'BS' ? 'Bs' : (payCurrency === 'EUR_BCV' ? '€' : '$');
-    showToast(`Pagado (${currLabel} ${numericInput.toLocaleString()}) → $${finalAmountUsd.toFixed(2)} USD`, '✅');
-    setTimeout(() => onClose(), 1500); // Wait for confetti to finish before closing
+    const incName = (profile.incomes || []).find(i => i.id === selectedIncomeId)?.name;
+    if (affectBalance) {
+      showToast(isIncome ? `Ingreso recibido (${currLabel} ${numericInput.toLocaleString()}) → $${finalAmountUsd.toFixed(2)} USD [${incName || 'Cuenta'}]` : `Pagado (${currLabel} ${numericInput.toLocaleString()}) → $${finalAmountUsd.toFixed(2)} USD [${incName || 'Cuenta'}]`, '✅');
+    } else {
+      showToast(isIncome ? `Marcado como cobrado con fondos externos` : `Marcada como pagada con fondos anteriores / externos`, '🛡️');
+    }
+    setTimeout(() => {
+      setIsCelebrating(false);
+      setProgress(0);
+      setShowConfetti(false);
+      onClose();
+    }, 1500); // Wait for confetti to finish before closing
   };
 
   const handleMarkDone = () => {
@@ -198,29 +411,31 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
       return;
     }
     const finalAmountUsd = showCustomPay ? convertedPayUsd : remainingUsd;
+    const finalPayDate = showCustomPay ? actualDate : (actualDate || todayStr());
     updateProfileData(draft => {
-      draft.overrides = draft.overrides || {};
-      draft.overrides[key] = {
-        ...draft.overrides[key],
+      applyOverride(draft, {
         done: true,
-        actualDate: actualDate,
-        amt: finalAmountUsd,
+        actualDate: finalPayDate,
+        amt: affectBalance ? finalAmountUsd : 0,
+        noAffectBalance: !affectBalance,
+        incomeId: affectBalance ? selectedIncomeId : undefined,
         payCurrency,
         rawPayAmount: numericInput,
-      };
+      });
     });
     const currLabel = payCurrency === 'BS' ? 'Bs' : (payCurrency === 'EUR_BCV' ? '€' : '$');
-    showToast(`Pagado (${currLabel} ${numericInput.toLocaleString()}) → $${finalAmountUsd.toFixed(2)} USD`, '✅');
+    const incName = (profile.incomes || []).find(i => i.id === selectedIncomeId)?.name;
+    if (affectBalance) {
+      showToast(isIncome ? `Ingreso recibido (${currLabel} ${numericInput.toLocaleString()}) → $${finalAmountUsd.toFixed(2)} USD [${incName || 'Cuenta'}]` : `Pagado (${currLabel} ${numericInput.toLocaleString()}) → $${finalAmountUsd.toFixed(2)} USD [${incName || 'Cuenta'}]`, '✅');
+    } else {
+      showToast(isIncome ? `Marcado como cobrado con fondos externos` : `Marcada como pagada con fondos anteriores / externos`, '🛡️');
+    }
     onClose();
   };
 
   const handleDiscard = () => {
     updateProfileData(draft => {
-      draft.overrides = draft.overrides || {};
-      draft.overrides[key] = {
-        ...draft.overrides[key],
-        discarded: true
-      };
+      applyOverride(draft, { discarded: true });
     });
     showToast('Movimiento descartado', '🗑️');
     onClose();
@@ -229,13 +444,34 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
   const handlePostpone = () => {
     if (!postponeDate) return;
     updateProfileData(draft => {
-      draft.overrides = draft.overrides || {};
-      draft.overrides[key] = {
-        ...draft.overrides[key],
+      applyOverride(draft, {
         actualDate: postponeDate,
         done: false,
+        isPaid: false,
         userPostponed: true,
-      };
+      });
+
+      const idStr = String(refId || '');
+      const idWithout = idStr.replace(/^(debt_|income_|expense_)/, '');
+      if (type === 'income' || occurrence?.type === 'income') {
+        const inc = (draft.incomes || []).find((i: any) => i.id === refId || i.id === idWithout);
+        if (inc) {
+          inc.isPaid = false;
+          (inc as any).done = false;
+          if (inc.freq === 'one-time') {
+            inc.date = postponeDate;
+          }
+        }
+      } else if (type === 'expense' || occurrence?.type === 'expense') {
+        const exp = (draft.expenses || []).find((e: any) => e.id === refId || e.id === idWithout);
+        if (exp) {
+          exp.isPaid = false;
+          (exp as any).done = false;
+          if (exp.freq === 'one-time') {
+            exp.date = postponeDate;
+          }
+        }
+      }
     });
     showToast(`Posfechado para el ${formatDateStr(postponeDate)}`, '🗓️');
     onClose();
@@ -249,15 +485,16 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
 
     updateProfileData(draft => {
       draft.overrides = draft.overrides || {};
-      const current = draft.overrides[key] || {};
-      current.partials = current.partials || [];
-      current.partials.push({
+      const current = draft.overrides[key] || draft.overrides[legacyKey] || {};
+      const partials = [...(current.partials || [])];
+      partials.push({
         date: todayStr(),
         amt: usdVal,
         rawAmt: rawNum,
         currency: partialCurrency,
+        incomeId: affectBalance ? selectedIncomeId : undefined,
       });
-      draft.overrides[key] = current;
+      applyOverride(draft, { partials });
     });
 
     setPartialAmt('');
@@ -267,13 +504,15 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
   const handleDeletePartial = (pIdx: number) => {
     updateProfileData(draft => {
       draft.overrides = draft.overrides || {};
-      const current = draft.overrides[key] || {};
+      const current = draft.overrides[key] || draft.overrides[legacyKey] || {};
       if (current.partials) {
-        current.partials.splice(pIdx, 1);
-        if (current.partials.length === 0 && !current.done && !current.userPostponed) {
+        const partials = [...current.partials];
+        partials.splice(pIdx, 1);
+        if (partials.length === 0 && !current.done && !current.userPostponed) {
           delete draft.overrides[key];
+          delete draft.overrides[legacyKey];
         } else {
-          draft.overrides[key] = current;
+          applyOverride(draft, { partials });
         }
       }
     });
@@ -294,15 +533,16 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
 
     updateProfileData(draft => {
       draft.overrides = draft.overrides || {};
-      const current = draft.overrides[key] || {};
+      const current = draft.overrides[key] || draft.overrides[legacyKey] || {};
       if (current.partials && current.partials[pIdx]) {
-        current.partials[pIdx] = {
-          ...current.partials[pIdx],
+        const partials = [...current.partials];
+        partials[pIdx] = {
+          ...partials[pIdx],
           amt: usdVal,
           rawAmt: rawNum,
           currency: editingPartialCurrency,
         };
-        draft.overrides[key] = current;
+        applyOverride(draft, { partials });
       }
     });
 
@@ -311,11 +551,117 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
   };
 
   const handleUndoDone = () => {
+    const idStr = String(refId || '');
+    const idWithout = idStr.replace(/^(debt_|income_|expense_|savings_)/, '');
+    const rawName = occurrence?.ref?.name || targetItem?.name || '';
+    const cleanName = rawName
+      .replace(/\s*\([^)]*\)/g, '')
+      .replace(/[\✓\√\✔\✅]+/g, '')
+      .trim();
+    const sanitizedId = sanitizeDocId(rawName, refId || '');
+    const cuotaIndex = occurrence?.ref?.index;
+
     updateProfileData(draft => {
-      if (draft.overrides && draft.overrides[key]) {
-        delete draft.overrides[key];
+      draft.overrides = draft.overrides || {};
+
+      const candidateIds = Array.from(new Set([
+        refId,
+        idStr,
+        idWithout,
+        sanitizedId,
+        rawName.toLowerCase().replace(/\s+/g, '_'),
+        cleanName.toLowerCase().replace(/\s+/g, '_')
+      ].filter(Boolean)));
+
+      const targetKeys = new Set<string>([
+        key,
+        legacyKey,
+        cuotaKey,
+        `${refId}_${originalDate}`,
+        `income_${refId}_${originalDate}`,
+        `expense_${refId}_${originalDate}`,
+        `debt_${refId}_${originalDate}`,
+        `${idWithout}_${originalDate}`,
+        `income_${idWithout}_${originalDate}`,
+        `expense_${idWithout}_${originalDate}`,
+        `debt_${idWithout}_${originalDate}`,
+        `${sanitizedId}_${originalDate}`,
+        `income_${sanitizedId}_${originalDate}`,
+        `expense_${sanitizedId}_${originalDate}`,
+        `debt_${sanitizedId}_${originalDate}`,
+      ].filter(Boolean) as string[]);
+
+      if (cuotaIndex !== undefined) {
+        targetKeys.add(`${refId}_${cuotaIndex}`);
+        targetKeys.add(`debt_${refId}_cuota_${cuotaIndex}`);
+        targetKeys.add(`${idWithout}_${cuotaIndex}`);
+        targetKeys.add(`debt_${idWithout}_cuota_${cuotaIndex}`);
+      }
+
+      // Scan draft.overrides for ALL keys matching candidate IDs
+      Object.keys(draft.overrides).forEach(k => {
+        for (const cid of candidateIds) {
+          if (cid && cid.length > 2 && k.includes(cid)) {
+            targetKeys.add(k);
+          }
+        }
+      });
+
+      targetKeys.forEach(k => {
+        if (draft.overrides[k] !== undefined) {
+          delete draft.overrides[k];
+        }
+      });
+
+      // Update base item in incomes / expenses / debts
+      if (type === 'income' || occurrence?.type === 'income') {
+        (draft.incomes || []).forEach((inc: any) => {
+          if (
+            inc.id === refId || 
+            inc.id === idWithout || 
+            (cleanName && inc.name && inc.name.includes(cleanName)) ||
+            sanitizeDocId(inc.name, inc.id) === sanitizedId
+          ) {
+            inc.isPaid = false;
+            inc.done = false;
+            if (cleanName && inc.name && (inc.name.includes('(') || inc.name.includes('✓') || inc.name.includes('√'))) {
+              inc.name = cleanName;
+            }
+          }
+        });
+      } else if (type === 'expense' || occurrence?.type === 'expense') {
+        (draft.expenses || []).forEach((exp: any) => {
+          if (
+            exp.id === refId || 
+            exp.id === idWithout || 
+            (cleanName && exp.name && exp.name.includes(cleanName)) ||
+            sanitizeDocId(exp.name, exp.id) === sanitizedId
+          ) {
+            exp.isPaid = false;
+            exp.done = false;
+            if (cleanName && exp.name && (exp.name.includes('(') || exp.name.includes('✓') || exp.name.includes('√'))) {
+              exp.name = cleanName;
+            }
+          }
+        });
+      } else if (type === 'debt' || occurrence?.type === 'debt') {
+        (draft.debts || []).forEach((dbt: any) => {
+          if (
+            dbt.id === refId || 
+            dbt.id === idWithout || 
+            (cleanName && dbt.name && dbt.name.includes(cleanName)) ||
+            sanitizeDocId(dbt.name, dbt.id) === sanitizedId
+          ) {
+            dbt.isPaid = false;
+            dbt.done = false;
+            if (cleanName && dbt.name && (dbt.name.includes('(') || dbt.name.includes('✓') || dbt.name.includes('√'))) {
+              dbt.name = cleanName;
+            }
+          }
+        });
       }
     });
+
     showToast('Pago revertido', '🔄');
     onClose();
   };
@@ -357,12 +703,25 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
   }
 return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+      <div 
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full h-[80vh] max-h-[80vh] flex flex-col shadow-2xl overflow-hidden"
+        style={{ borderTop: `4px solid ${itemColor}` }}
+      >
         <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800 shrink-0">
           <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">
-              {type === 'income' ? '📈 Ingreso' : (type === 'debt' ? '💳 Cuota / Deuda' : '📉 Gasto / Pago')}
-            </span>
+            <div className="flex items-center gap-1.5 mb-1">
+              <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: itemColor }} />
+              <span 
+                className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                style={{
+                  backgroundColor: `${itemColor}18`,
+                  color: itemColor,
+                  border: `1px solid ${itemColor}35`
+                }}
+              >
+                {itemTypeLabel}
+              </span>
+            </div>
             <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
               {itemTitle}
             </h3>
@@ -399,9 +758,9 @@ return (
             </div>
 
             <div>
-              <span className="text-slate-400 font-bold uppercase block text-[10px]">Fecha Prevista</span>
+              <span className="text-slate-400 font-bold uppercase block text-[10px]">Fecha</span>
               <p className="font-extrabold text-slate-800 dark:text-slate-200 text-sm">
-                {formatDateStr(originalDate)}
+                {formatDateStr(occurrence?.date || planDate || originalDate)}
               </p>
             </div>
           </div>
@@ -414,25 +773,37 @@ return (
             </span>
           </div>
 
-          {/* Pending remaining summary */}
-          <div className="flex items-center justify-between p-2.5 bg-blue-50 dark:bg-blue-950/40 rounded-xl text-xs">
-            <span className="font-bold text-blue-900 dark:text-blue-200">
-              {partialsSum > 0 ? 'Saldo Restante Owed:' : 'Total a Pagar:'}
-            </span>
-            <span className="font-black text-blue-700 dark:text-blue-300 text-sm flex items-center gap-1.5 flex-wrap justify-end">
-              <span>{formatCurrency(remainingUsd)}</span>
-              {((profile.settings?.paymentCurrency || 'BS') !== (profile.settings?.displayCurrency || 'USD')) && (
-                <span className="text-xs opacity-70">
-                  (~{
-                    (profile.settings?.paymentCurrency || 'BS') === 'BS' ? `Bs ${(remainingUsd / (exchangeRates['BS'] || 0.02325)).toFixed(2)}` :
-                    (profile.settings?.paymentCurrency || 'BS') === 'EUR' ? `€${(remainingUsd / (exchangeRates['EUR_BCV'] || 1.05)).toFixed(2)}` :
-                    (profile.settings?.paymentCurrency || 'BS') === 'USDT' ? `${(remainingUsd / (exchangeRates['USDT'] || 1)).toFixed(2)} USDT` :
-                    formatCurrency(remainingUsd)
-                  })
-                </span>
-              )}
-            </span>
-          </div>
+          {/* Pending remaining summary or Completed state */}
+          {isDone ? (
+            <div className="flex items-center justify-between p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl text-xs">
+              <span className="font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span>Estado: <strong>Ya está lista (Pagada)</strong></span>
+              </span>
+              <span className="font-black text-emerald-700 dark:text-emerald-300 text-sm">
+                {formatCurrency(overrideRecord.amt !== undefined ? overrideRecord.amt : plannedUsdAmount)}
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between p-2.5 bg-blue-50 dark:bg-blue-950/40 rounded-xl text-xs">
+              <span className="font-bold text-blue-900 dark:text-blue-200">
+                {partialsSum > 0 ? 'Saldo Restante Pendiente:' : 'Total a Pagar:'}
+              </span>
+              <span className="font-black text-blue-700 dark:text-blue-300 text-sm flex items-center gap-1.5 flex-wrap justify-end">
+                <span>{formatCurrency(remainingUsd)}</span>
+                {((profile.settings?.paymentCurrency || 'BS') !== (profile.settings?.displayCurrency || 'USD')) && (
+                  <span className="text-xs opacity-70">
+                    (~{
+                      (profile.settings?.paymentCurrency || 'BS') === 'BS' ? `Bs ${(remainingUsd / (exchangeRates['BS'] || 0.02325)).toFixed(2)}` :
+                      (profile.settings?.paymentCurrency || 'BS') === 'EUR' ? `€${(remainingUsd / (exchangeRates['EUR_BCV'] || 1.05)).toFixed(2)}` :
+                      (profile.settings?.paymentCurrency || 'BS') === 'USDT' ? `${(remainingUsd / (exchangeRates['USDT'] || 1)).toFixed(2)} USDT` :
+                      formatCurrency(remainingUsd)
+                    })
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* History of Partial Abonos */}
@@ -442,6 +813,7 @@ return (
             {overrideRecord.partials.map((pt: any, pIdx: number) => {
               const isEditingThis = editingPartialIdx === pIdx;
               const currLabel = pt.currency === 'BS' ? 'Bs' : (pt.currency === 'EUR_BCV' ? '€' : (pt.currency === 'USDT' ? 'USDT' : '$'));
+              const fundAccount = (profile.incomes || []).find(i => i.id === pt.incomeId);
 
               return (
                 <div key={pIdx} className="p-2 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1.5">
@@ -466,14 +838,14 @@ return (
                       </select>
                       <button
                         onClick={() => handleSaveEditPartial(pIdx)}
-                        className="p-1 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+                        className="p-1 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 cursor-pointer"
                         title="Guardar"
                       >
                         <Check className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => setEditingPartialIdx(null)}
-                        className="p-1 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-300"
+                        className="p-1 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-300 cursor-pointer"
                         title="Cancelar"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -481,10 +853,29 @@ return (
                     </div>
                   ) : (
                     <div className="flex justify-between items-center text-xs">
-                      <div>
-                        <span className="text-slate-500 font-medium block text-[10px]">{formatDateStr(pt.date)}</span>
-                        <div className="flex items-center gap-1">
-                          <span className="font-bold text-emerald-600 text-xs">{formatCurrency(pt.amt)}</span>
+                      <div
+                        onClick={() => handleStartEditPartial(pIdx, pt)}
+                        className="flex-1 cursor-pointer group pr-2"
+                        title="Toca para editar abono"
+                      >
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-slate-500 font-medium text-[10px]">{formatDateStr(pt.date)}</span>
+                          {fundAccount ? (
+                            <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-1.5 py-0.5 rounded">
+                              🏦 {fundAccount.name}
+                            </span>
+                          ) : pt.incomeId && pt.incomeId !== '__EXTERNAL__' ? (
+                            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                              🏦 Histórico (Cuenta eliminada)
+                            </span>
+                          ) : pt.incomeId === '__EXTERNAL__' ? (
+                            <span className="text-[10px] font-bold text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                              🛡️ Fondos externos
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <span className="font-bold text-emerald-600 text-xs group-hover:underline">{formatCurrency(pt.amt)}</span>
                           {pt.rawAmt && pt.currency !== 'USD_BCV' && (
                             <span className="text-[10px] text-slate-400 font-medium">
                               ({pt.rawAmt.toLocaleString()} {currLabel})
@@ -495,15 +886,8 @@ return (
 
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={() => handleStartEditPartial(pIdx, pt)}
-                          className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-lg transition-colors"
-                          title="Editar abono"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button
                           onClick={() => handleDeletePartial(pIdx)}
-                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors"
+                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
                           title="Eliminar / Deshacer abono"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -519,32 +903,174 @@ return (
 
         {/* Dynamic Action Section */}
         {isDone ? (
-          <div className="p-4 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 rounded-2xl text-center space-y-2">
-            <p className="font-bold text-emerald-800 dark:text-emerald-300 text-xs">
-              ✅ Marcado como Pagado el {formatDateStr(overrideRecord.actualDate || originalDate)}
-            </p>
-            {overrideRecord.amt !== undefined && (
-              <p className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
-                Monto Registrado: <b>{formatCurrency(overrideRecord.amt)}</b>
+          <div className="p-4 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 rounded-2xl text-center space-y-3">
+            <div className="flex items-center justify-center gap-1.5 text-emerald-800 dark:text-emerald-300 font-bold text-xs">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <span>{isIncome ? 'Marcado como Recibido el' : 'Marcado como Pagado el'} {formatDateStr(overrideRecord.actualDate || originalDate)}</span>
+            </div>
+
+            {/* Origen del dinero / Cuenta que pagó o recibió */}
+            <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 text-left space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                  {isIncome ? 'Cuenta que recibió el ingreso:' : 'Cuenta de donde se pagó:'}
+                </span>
+                <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                  overrideRecord.noAffectBalance
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200'
+                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200'
+                }`}>
+                  {overrideRecord.noAffectBalance
+                    ? '🛡️ Fondos externos / Anteriores'
+                    : (() => {
+                        const incId = overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId;
+                        const foundInc = (profile.incomes || []).find(i => i.id === incId);
+                        if (foundInc) return `🏦 ${foundInc.name}`;
+                        if (incId) return '🏦 Histórico (Cuenta eliminada)';
+                        return '🏦 Cuenta Predeterminada';
+                      })()}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-500">
+                {overrideRecord.noAffectBalance
+                  ? (isIncome ? 'Este ingreso está marcado con fondos previos o externos. No suma dinero a tus cuentas actuales.' : 'Esta cuota está marcada con fondos previos o externos. No descuenta dinero de tus cuentas de ingreso actuales.')
+                  : (isIncome ? 'Se suma al saldo acumulado de la cuenta de ingreso seleccionada.' : 'Se descuenta del saldo acumulado de la cuenta de ingreso seleccionada.')}
               </p>
-            )}
+              <div className="pt-1">
+                <label className="text-[10px] font-bold text-slate-500 block mb-1">
+                  {isIncome ? 'Cambiar cuenta receptora para este ingreso:' : 'Cambiar cuenta de origen para este pago:'}
+                </label>
+                <select
+                  value={overrideRecord.noAffectBalance ? '__EXTERNAL__' : (overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId || profile.incomes?.[0]?.id || '')}
+                  onChange={e => {
+                    const val = e.target.value;
+                    const finalAmountUsd = overrideRecord.amt !== undefined && overrideRecord.amt > 0 ? overrideRecord.amt : plannedUsdAmount;
+                    if (val === '__EXTERNAL__') {
+                      updateProfileData(draft => {
+                        applyOverride(draft, {
+                          noAffectBalance: true,
+                          incomeId: undefined,
+                          amt: 0
+                        });
+                      });
+                      showToast('Cambiado a: Fondos externos / Anteriores', '🛡️');
+                    } else {
+                      updateProfileData(draft => {
+                        applyOverride(draft, {
+                          noAffectBalance: false,
+                          incomeId: val,
+                          amt: finalAmountUsd > 0 ? finalAmountUsd : plannedUsdAmount
+                        });
+                      });
+                      const incName = (profile.incomes || []).find(i => i.id === val)?.name || 'Cuenta';
+                      showToast(`Cambiado a cuenta: ${incName}`, '🏦');
+                    }
+                  }}
+                  className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-bold text-slate-800 dark:text-slate-200"
+                >
+                  {(profile.incomes || []).map(inc => {
+                    const bal = balanceMap[inc.id] ?? 0;
+                    return (
+                      <option key={inc.id} value={inc.id}>
+                        🏦 {inc.name} — {isIncome ? 'Disponible:' : 'Quedan:'} {formatCurrency(bal)}
+                      </option>
+                    );
+                  })}
+                  <option value="__EXTERNAL__">
+                    🛡️ Fondos externos / Anteriores ({isIncome ? 'no sumar a cuentas' : 'no debitar de cuentas'})
+                  </option>
+                </select>
+              </div>
+            </div>
+
             <button
               onClick={handleUndoDone}
-              className="w-full py-2 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/30 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
+              className="w-full py-2 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/30 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5" /> Revertir Estado a Pendiente
             </button>
           </div>
         ) : (
           <div className="space-y-3 text-xs">
+            {/* Selector: Cuenta de destino u origen */}
+            <div className="p-3 bg-slate-100/80 dark:bg-slate-800/90 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="font-bold text-slate-800 dark:text-slate-200 text-xs block">
+                  {isIncome ? 'Cuenta receptora del ingreso (a donde sumará):' : 'Cuenta de donde saldrá el egreso:'}
+                </label>
+                {selectedIncomeId !== '__EXTERNAL__' && balanceMap[selectedIncomeId] !== undefined && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                    {isIncome ? 'Disponible actual:' : 'Quedan:'} {formatCurrency(balanceMap[selectedIncomeId])}
+                  </span>
+                )}
+              </div>
+              <select
+                value={selectedIncomeId}
+                onChange={e => {
+                  const val = e.target.value;
+                  setSelectedIncomeId(val);
+                  setAffectBalance(val !== '__EXTERNAL__');
+                }}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs text-slate-800 dark:text-slate-100"
+              >
+                {(profile.incomes || []).map(inc => {
+                  const bal = balanceMap[inc.id] ?? 0;
+                  return (
+                    <option key={inc.id} value={inc.id}>
+                      🏦 {inc.name} — {isIncome ? 'Disponible:' : 'Quedan:'} {formatCurrency(bal)}
+                    </option>
+                  );
+                })}
+                <option value="__EXTERNAL__">
+                  🛡️ Fondos externos / Anteriores ({isIncome ? 'no sumar a cuentas' : 'no deducir de cuentas'})
+                </option>
+              </select>
+
+              {selectedIncomeId !== '__EXTERNAL__' && (
+                <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between text-[11px]">
+                  <span className="text-slate-500 font-medium">
+                    {isIncome ? 'Saldo tras recibir este ingreso:' : 'Saldo tras pagar este ítem:'}
+                  </span>
+                  {(() => {
+                    const currentBal = balanceMap[selectedIncomeId] ?? 0;
+                    const payAmt = showCustomPay ? convertedPayUsd : remainingUsd;
+                    const afterBal = isIncome ? currentBal + payAmt : currentBal - payAmt;
+                    return (
+                      <span className={`font-black ${afterBal >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                        {formatCurrency(afterBal)}
+                      </span>
+                    );
+                  })()}
+                </div>
+              )}
+
+              <p className="text-[10px] text-slate-500 leading-tight">
+                {selectedIncomeId === '__EXTERNAL__'
+                  ? (isIncome ? '🛡️ Se registrará como cobrado sin sumar a tus cuentas de ingreso actuales.' : '🛡️ Se registrará como pagada con dinero previo o externo, sin restar de tus cuentas de ingreso actuales.')
+                  : (isIncome ? '💳 Se sumará al disponible acumulativo de la cuenta de ingreso seleccionada.' : '💳 Se restará del disponible acumulativo de la cuenta de ingreso seleccionada.')}
+              </p>
+            </div>
+
             {/* Custom currency / amount toggle */}
             {!showCustomPay ? (
               <div className="space-y-2">
                 <button
                   onClick={handleMarkDone}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition-colors"
+                  className={`w-full py-3 rounded-xl font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition-colors text-white ${
+                    affectBalance
+                      ? 'bg-emerald-600 hover:bg-emerald-700'
+                      : 'bg-indigo-600 hover:bg-indigo-700'
+                  }`}
                 >
-                  <CheckCircle2 className="w-4 h-4" /> Marcar Completo ({formatCurrency(remainingUsd)}{((profile.settings?.paymentCurrency || 'BS') !== (profile.settings?.displayCurrency || 'USD')) && ` ~ ${(profile.settings?.paymentCurrency || 'BS') === 'BS' ? `Bs ${(remainingUsd / (exchangeRates['BS'] || 0.02325)).toFixed(2)}` : (profile.settings?.paymentCurrency || 'BS') === 'EUR' ? `€${(remainingUsd / (exchangeRates['EUR_BCV'] || 1.05)).toFixed(2)}` : (profile.settings?.paymentCurrency || 'BS') === 'USDT' ? `${(remainingUsd / (exchangeRates['USDT'] || 1)).toFixed(2)} USDT` : ''}`})
+                  {affectBalance ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" /> Marcar Completo ({formatCurrency(remainingUsd)}{((profile.settings?.paymentCurrency || 'BS') !== (profile.settings?.displayCurrency || 'USD')) && ` ~ ${(profile.settings?.paymentCurrency || 'BS') === 'BS' ? `Bs ${(remainingUsd / (exchangeRates['BS'] || 0.02325)).toFixed(2)}` : (profile.settings?.paymentCurrency || 'BS') === 'EUR' ? `€${(remainingUsd / (exchangeRates['EUR_BCV'] || 1.05)).toFixed(2)}` : (profile.settings?.paymentCurrency || 'BS') === 'USDT' ? `${(remainingUsd / (exchangeRates['USDT'] || 1)).toFixed(2)} USDT` : ''}`})
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4" /> Marcar Pagada con Fondos Anteriores / Externos
+                    </>
+                  )}
                 </button>
 
                 <button
@@ -625,16 +1151,32 @@ return (
 
                 <button
                   onClick={handleMarkDone}
-                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-extrabold text-xs shadow-md transition-colors"
+                  className={`w-full py-2.5 text-white rounded-xl font-extrabold text-xs shadow-md transition-colors ${
+                    affectBalance
+                      ? 'bg-indigo-600 hover:bg-indigo-700'
+                      : 'bg-emerald-600 hover:bg-emerald-700'
+                  }`}
                 >
-                  Confirmar Pago ({formatCurrency(convertedPayUsd)})
+                  {affectBalance
+                    ? `Confirmar Pago (${formatCurrency(convertedPayUsd)})`
+                    : 'Confirmar Pago Previo (Sin Descontar Disponible)'}
                 </button>
               </div>
             )}
 
             {/* Abono Parcial */}
             <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl space-y-2 border border-slate-200/60 dark:border-slate-700/40">
-              <span className="text-[10px] font-bold text-slate-400 uppercase block">Registrar Abono Parcial</span>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-slate-500 uppercase block">Registrar Abono Parcial</span>
+                {affectBalance && selectedIncomeId && (
+                  <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">
+                    Fondear desde: {(profile.incomes || []).find(i => i.id === selectedIncomeId)?.name || 'Cuenta'}
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-400">
+                Puedes pagar con múltiples cuentas: abona un monto desde una cuenta y el restante desde otra.
+              </p>
               <div className="flex gap-1.5">
                 <input
                   type="number"
