@@ -85,9 +85,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
           d.initialPaidCuotas = 0;
         });
       }
+      if (draft.incomes) {
+        draft.incomes.forEach(inc => {
+          inc.isPaid = false;
+          inc.done = false;
+          if (inc.name) {
+            inc.name = inc.name.replace(/\s*\([^)]*\)/g, '').replace(/[\✓\√\✔\✅]+/g, '').trim();
+          }
+        });
+      }
+      if (draft.expenses) {
+        draft.expenses.forEach(exp => {
+          exp.isPaid = false;
+          exp.done = false;
+          if (exp.name) {
+            exp.name = exp.name.replace(/\s*\([^)]*\)/g, '').replace(/[\✓\√\✔\✅]+/g, '').trim();
+          }
+        });
+      }
     });
     setConfirmPendingReset(false);
-    showToast('¡Todos los pagos e ingresos se cambiaron a Pendiente!', '🔄');
+    showToast('¡Todos los pagos, gastos e ingresos se cambiaron a Pendiente!', '🔄');
   };
 
   const settings = profile.settings;

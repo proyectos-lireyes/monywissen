@@ -20,6 +20,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
     deleteProfile,
     renameProfile,
     updateProfileData,
+    loginUser,
     logoutUser,
     showToast,
   } = useApp();
@@ -46,6 +47,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
     });
 
     if (state.authUser?.email) {
+      loginUser({ ...state.authUser, alias, phone }, state.authToken || '');
       saveUserProfileToFirestore(
         state.authUser.email,
         alias,
@@ -157,7 +159,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
           {/* Profile Avatar & Name */}
           <div className="flex flex-col items-center gap-2">
             <button onClick={() => setAvatarViewerOpen(true)} className="relative cursor-pointer group rounded-full">
-              <div className="w-20 h-20 rounded-full bg-blue-100 text-blue-700 border-2 border-blue-500 font-extrabold text-2xl flex items-center justify-center overflow-hidden shadow-md">
+              <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full bg-blue-100 text-blue-700 border-2 border-blue-500 font-extrabold text-3xl flex items-center justify-center overflow-hidden shadow-md">
                 {profile.avatar ? (
                   <img src={profile.avatar} alt="Avatar" className="w-full h-full object-cover" />
                 ) : (
@@ -279,64 +281,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
           {/* Profile Switcher & New Profile Creation */}
           <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
             <div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Mantenimiento de Estados</span>
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (window.confirm('¿Deseas restablecer TODOS los ingresos a estado PENDIENTE (sin pagar)?')) {
-                      updateProfileData(draft => {
-                        (draft.incomes || []).forEach((inc: any) => {
-                          inc.isPaid = false;
-                          inc.done = false;
-                          if (inc.name) {
-                            inc.name = inc.name.replace(/\s*\([^)]*\)/g, '').replace(/[\✓\√\✔\✅]+/g, '').trim();
-                          }
-                        });
-                        draft.overrides = draft.overrides || {};
-                        Object.keys(draft.overrides).forEach(k => {
-                          if (k.startsWith('income_')) {
-                            delete draft.overrides[k];
-                          }
-                        });
-                      });
-                      showToast('Todos los ingresos restablecidos a pendiente', '🔄');
-                    }
-                  }}
-                  className="w-full py-2 px-3 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 hover:bg-amber-100 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border border-amber-200 dark:border-amber-800/50 transition-colors cursor-pointer"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" /> Restablecer Todos los Ingresos a Pendiente
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (window.confirm('¿Deseas restablecer TODOS los gastos a estado PENDIENTE (sin pagar)?')) {
-                      updateProfileData(draft => {
-                        (draft.expenses || []).forEach((exp: any) => {
-                          exp.isPaid = false;
-                          exp.done = false;
-                          if (exp.name) {
-                            exp.name = exp.name.replace(/\s*\([^)]*\)/g, '').replace(/[\✓\√\✔\✅]+/g, '').trim();
-                          }
-                        });
-                        draft.overrides = draft.overrides || {};
-                        Object.keys(draft.overrides).forEach(k => {
-                          if (k.startsWith('expense_')) {
-                            delete draft.overrides[k];
-                          }
-                        });
-                      });
-                      showToast('Todos los gastos restablecidos a pendiente', '🔄');
-                    }
-                  }}
-                  className="w-full py-2 px-3 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" /> Restablecer Todos los Gastos a Pendiente
-                </button>
-              </div>
-            </div>
-
-            <div>
               <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Perfil Activo</span>
               <select
                 value={currentProfileName}
@@ -389,6 +333,32 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onO
                 <Trash2 className="w-3.5 h-3.5" /> Eliminar Perfil Activo ("{currentProfileName}")
               </button>
             )}
+
+            {/* Logout Session Button */}
+            {state.authUser ? (
+              <button
+                type="button"
+                onClick={() => {
+                  logoutUser();
+                  showToast('Sesión cerrada correctamente', '👋');
+                  onClose();
+                }}
+                className="w-full py-2.5 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-rose-200 dark:border-rose-900/50 transition-colors mt-3"
+              >
+                <LogOut className="w-4 h-4" /> Cerrar Sesión ({state.authUser.email})
+              </button>
+            ) : onOpenAuth ? (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenAuth();
+                }}
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors mt-3 shadow-sm"
+              >
+                <LogIn className="w-4 h-4" /> Iniciar Sesión / Vincular Cuenta
+              </button>
+            ) : null}
           </div>
         </div>
       </div>

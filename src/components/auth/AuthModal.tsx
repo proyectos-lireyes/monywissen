@@ -107,7 +107,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
         </div>
 
         <p className="text-xs text-slate-500">
-          Inicia sesión para sincronización segura en la nube y token JWT cifrado.
+          Acceso con tu cuenta para respaldo en la nube y sincronización opcional (MonyShared / MonyStore).
         </p>
 
         {/* Google Sign-In Button */}

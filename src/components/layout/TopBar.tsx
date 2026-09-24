@@ -53,7 +53,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const activeDebts = profile.debts || [];
   const upcomingDebts = activeDebts.filter(d => (d.balance ?? 0) > 0);
 
-  const isUpdateAvailable = !updateState?.isCompleted && !dismissedAlerts.includes('update');
+  const isUpdateAvailable = !!updateState?.hasUpdate && !updateState?.isCompleted && !dismissedAlerts.includes('update');
   const showP2PNotif = pendingP2P.length > 0 && !dismissedAlerts.includes('p2p');
   const showContactsNotif = pendingContacts.length > 0 && !dismissedAlerts.includes('contacts');
   const showSharedNotif = sharedGroups.length > 0 && !dismissedAlerts.includes('shared');

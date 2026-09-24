@@ -102,7 +102,7 @@ export const LoginScreen: React.FC = () => {
         {/* Security Badge */}
         <div className="p-3 bg-blue-50/60 border border-blue-100 rounded-2xl flex items-center gap-3 text-xs text-blue-900">
           <ShieldCheck className="w-5 h-5 text-blue-600 shrink-0" />
-          <span className="font-medium">Acceso seguro con respaldo automático en Firebase Cloud DB.</span>
+          <span className="font-medium">Acceso con tu cuenta para respaldo opcional y funciones colaborativas.</span>
         </div>
 
         {/* Google Sign-In Button */}
@@ -139,7 +139,7 @@ export const LoginScreen: React.FC = () => {
         
 
         <p className="text-[11px] text-center text-slate-500 font-medium">
-          Al iniciar sesión, tus datos y perfil se sincronizarán en la nube de Firebase Firestore.
+          Al iniciar sesión vincularás tu identidad para participar en MonyShared y MonyStore. Si tienes activo el Modo Solo Local (Lite), tus finanzas personales permanecerán privadas únicamente en tu dispositivo.
         </p>
       </div>
     </div>

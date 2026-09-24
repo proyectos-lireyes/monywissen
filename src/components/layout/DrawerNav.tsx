@@ -72,7 +72,7 @@ export const DrawerNav: React.FC<DrawerNavProps> = ({ isOpen, onClose, onExportP
 
   const clearCalc = () => setRawInput('');
   
-  const isUpdateAvailable = !updateState?.isCompleted;
+  const isUpdateAvailable = !!updateState?.hasUpdate && !updateState?.isCompleted;
 
   return (
     <>

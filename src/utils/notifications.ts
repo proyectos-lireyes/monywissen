@@ -24,7 +24,32 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return false;
 }
 
-export function sendLocalNotification(title: string, body: string, icon = '/icon.png') {
+export async function sendLocalNotification(title: string, body: string, icon = '/icon.png') {
+  if ((window as any).Capacitor && (window as any).Capacitor.isNativePlatform()) {
+    try {
+      const { LocalNotifications } = await import('@capacitor/local-notifications');
+      const perm = await LocalNotifications.requestPermissions();
+      if (perm.display === 'granted') {
+        await LocalNotifications.schedule({
+          notifications: [
+            {
+              title,
+              body,
+              id: Math.floor(Math.random() * 100000) + 1,
+              schedule: { at: new Date(Date.now() + 1000) },
+              sound: undefined,
+              actionTypeId: '',
+              extra: null
+            }
+          ]
+        });
+        return;
+      }
+    } catch (e) {
+      console.warn('Capacitor LocalNotifications no disponible o sin permisos:', e);
+    }
+  }
+
   if ('Notification' in window && Notification.permission === 'granted') {
     try {
       new Notification(title, {
@@ -33,13 +58,13 @@ export function sendLocalNotification(title: string, body: string, icon = '/icon
         badge: icon,
       });
     } catch (e) {
-      console.error('Error enviando notificación local:', e);
+      console.error('Error enviando notificación de navegador:', e);
     }
   }
 }
 
 /**
- * Checks for due payments today or tomorrow and schedules/triggers the daily reminder at configured time
+ * Checks for due payments today and overdue payments, scheduling a native system notification
  */
 export function checkAndTriggerDailyReminder(
   expenses: ExpenseItem[],
@@ -70,6 +95,7 @@ export function checkAndTriggerDailyReminder(
 
   // Find due payments for today
   const dueExpensesToday = expenses.filter(e => {
+    if ((e as any).isPaid || (e as any).done) return false;
     if (e.freq === 'monthly' && Number(e.day) === dayOfMonth) return true;
     if (e.freq === 'one-time' && e.date === todayDateStr) return true;
     if (e.start === todayDateStr) return true;
@@ -77,18 +103,40 @@ export function checkAndTriggerDailyReminder(
   });
 
   const dueDebtsToday = debts.filter(d => {
+    if ((d as any).isPaid || (d as any).done) return false;
     if (d.dueDay && Number(d.dueDay) === dayOfMonth) return true;
     if (d.start === todayDateStr) return true;
     return false;
   });
 
-  const totalDueCount = dueExpensesToday.length + dueDebtsToday.length;
+  // Find overdue payments (retrasados)
+  const overdueExpenses = expenses.filter(e => {
+    if ((e as any).isPaid || (e as any).done) return false;
+    if (e.freq === 'one-time' && e.date && e.date < todayDateStr) return true;
+    if (e.freq === 'monthly' && Number(e.day) < dayOfMonth) return true;
+    if (e.start && e.start < todayDateStr) return true;
+    return false;
+  });
 
-  if (totalDueCount > 0) {
+  const overdueDebts = debts.filter(d => {
+    if ((d as any).isPaid || (d as any).done) return false;
+    if (d.dueDay && Number(d.dueDay) < dayOfMonth) return true;
+    if (d.start && d.start < todayDateStr) return true;
+    return false;
+  });
+
+  const totalToday = dueExpensesToday.length + dueDebtsToday.length;
+  const totalOverdue = overdueExpenses.length + overdueDebts.length;
+
+  if (totalToday > 0 || totalOverdue > 0) {
     // Save that we triggered today
     localStorage.setItem('mony_last_daily_reminder', todayDateStr);
 
-    const message = `Tienes ${totalDueCount} pago(s) pendiente(s) programados para el día de hoy. ¡Revisa tu agenda de Mony!`;
+    const parts: string[] = [];
+    if (totalOverdue > 0) parts.push(`⚠️ ${totalOverdue} pago(s) atrasado(s)`);
+    if (totalToday > 0) parts.push(`📅 ${totalToday} pago(s) pendiente(s) para hoy`);
+
+    const message = parts.join(' y ') + '. ¡Abre Monywissen para gestionarlos!';
     
     // If permission granted, send notification
     requestNotificationPermission().then(granted => {
