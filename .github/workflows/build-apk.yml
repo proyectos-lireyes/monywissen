@@ -47,6 +47,9 @@ jobs:
 
       - name: 6. Configurar SDK Android
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: "11.0"
+          packages: "platform-tools build-tools;34.0.0 platforms;android-34"
 
       - name: 7. Inicializar Capacitor Android (Si no existe)
         run: |
