@@ -27,6 +27,7 @@ interface IncomeViewProps {
 export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit }) => {
   const { profile, convertAmount, updateProfileData, showToast, exchangeRates } = useApp();
   const [expandedAccountId, setExpandedAccountId] = useState<string | null>(null);
+  const [accountToDelete, setAccountToDelete] = useState<{ id: string; name: string; assignedCount: number } | null>(null);
 
   // Compute projection plan to get up-to-date inflows and outflows per account
   const plan = calculateProjections(profile, exchangeRates);
@@ -55,28 +56,29 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
       (profile.debts || []).filter(d => d.incomeId === id).length +
       (profile.savingsList || []).filter(s => s.incomeId === id).length;
 
-    let confirmMsg = `¿Seguro que deseas eliminar la cuenta de ingreso "${name}"?`;
-    if (assignedCount > 0) {
-      confirmMsg += `\n\nAtención: Tiene ${assignedCount} gasto(s)/deuda(s) asignados por defecto a esta cuenta.\n\nTodo su historial de pagos y cuotas ya abonadas PERMANECERÁ INTACTO (pagado). Los futuros cobros quedarán desvinculados de esta cuenta.`;
-    }
+    setAccountToDelete({ id, name, assignedCount });
+  };
 
-    if (window.confirm(confirmMsg)) {
-      updateProfileData(draft => {
-        draft.incomes = (draft.incomes || []).filter(i => i.id !== id);
+  const handleConfirmDelete = () => {
+    if (!accountToDelete) return;
+    const { id, name } = accountToDelete;
 
-        // Cleanly unbind future default incomeId from items
-        (draft.expenses || []).forEach(e => {
-          if (e.incomeId === id) e.incomeId = undefined;
-        });
-        (draft.debts || []).forEach(d => {
-          if (d.incomeId === id) d.incomeId = undefined;
-        });
-        (draft.savingsList || []).forEach(s => {
-          if (s.incomeId === id) s.incomeId = undefined;
-        });
+    updateProfileData(draft => {
+      draft.incomes = (draft.incomes || []).filter(i => i.id !== id);
+
+      // Cleanly unbind future default incomeId from items
+      (draft.expenses || []).forEach(e => {
+        if (e.incomeId === id) e.incomeId = undefined;
       });
-      showToast(`Cuenta "${name}" eliminada`, '🗑️');
-    }
+      (draft.debts || []).forEach(d => {
+        if (d.incomeId === id) d.incomeId = undefined;
+      });
+      (draft.savingsList || []).forEach(s => {
+        if (s.incomeId === id) s.incomeId = undefined;
+      });
+    });
+    showToast(`Cuenta "${name}" eliminada`, '🗑️');
+    setAccountToDelete(null);
   };
 
   return (
@@ -388,6 +390,44 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
           </div>
         )}
       </div>
+
+      {/* In-App Confirmation Modal for Deleting Account */}
+      {accountToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-3xl p-5 max-w-sm w-full shadow-2xl space-y-4 animate-in zoom-in-95">
+            <div className="flex items-center gap-2.5 text-rose-600">
+              <Trash2 className="w-5 h-5 shrink-0" />
+              <h4 className="text-sm font-black text-slate-900 dark:text-slate-100">
+                Eliminar Cuenta de Ingreso
+              </h4>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              ¿Seguro que deseas eliminar la cuenta de ingreso <strong>"{accountToDelete.name}"</strong>?
+            </p>
+            {accountToDelete.assignedCount > 0 && (
+              <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-900/40 text-[11px] text-amber-800 dark:text-amber-200 leading-relaxed">
+                ⚠️ Atención: Tiene <strong>{accountToDelete.assignedCount}</strong> gasto(s)/deuda(s) asignados a esta cuenta. El historial de pagos realizados permanecerá intacto.
+              </div>
+            )}
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setAccountToDelete(null)}
+                className="flex-1 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                className="flex-1 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs"
+              >
+                Sí, Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

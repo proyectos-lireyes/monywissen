@@ -31,6 +31,13 @@ export interface UserSettings {
   budgets?: Record<string, number>;
   displayCurrency?: string;
   paymentCurrency?: string;
+  enableCloudSync?: boolean;
+  backupSchedule?: {
+    enabled: boolean;
+    days: number[]; // 0 = Sunday, 1 = Monday, 2 = Tuesday, 3 = Wednesday, 4 = Thursday, 5 = Friday, 6 = Saturday
+    time: string;   // HH:mm
+    lastRunDate?: string; // YYYY-MM-DD
+  };
 }
 
 export interface CreditCard {

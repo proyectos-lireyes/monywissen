@@ -27,7 +27,8 @@ import {
   saveSavingsToFirestore,
   deleteSavingsFromFirestore,
   sanitizeDocId,
-  forceUploadStateToFirestore
+  forceUploadStateToFirestore,
+  logoutFirebase
 } from '../utils/firebase';
 import { checkAndTriggerDailyReminder } from '../utils/notifications';
 
@@ -45,13 +46,14 @@ function getDefaultSeed(): AppStateData {
           planEnd: new Date(Date.now() + 86400000 * 60).toISOString().slice(0, 10),
           minBalance: 50,
           delayDays: 7,
-          openingBalance: undefined,
+          openingBalance: 0,
           freeSpend: 0,
           notifTime: '08:00',
           defaultChart: 0,
           customDebts: [],
           paymentMethods: [],
           contacts: [],
+          onboardingCompleted: true,
         },
         incomes: [],
         expenses: [],
@@ -867,7 +869,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const switchProfile = (name: string) => {
     if (state.profiles[name]) {
-      setState(prev => ({ ...prev, currentProfile: name }));
+      setState(prev => {
+        const draftProfiles = { ...prev.profiles };
+        if (draftProfiles[name]?.settings) {
+          if (draftProfiles[name].settings.openingBalance === undefined) {
+            draftProfiles[name].settings.openingBalance = 0;
+          }
+          draftProfiles[name].settings.onboardingCompleted = true;
+        }
+        return { ...prev, currentProfile: name, profiles: draftProfiles };
+      });
       showToast(`Perfil cambiado a "${name}"`, '👤');
     }
   };
@@ -889,6 +900,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         defaultChart: 0,
         paymentMethods: [],
         contacts: [],
+        onboardingCompleted: true,
       },
       incomes: [],
       expenses: [],
@@ -920,6 +932,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const draftProfiles = { ...prev.profiles };
       delete draftProfiles[name];
       const nextProfile = Object.keys(draftProfiles)[0];
+      if (draftProfiles[nextProfile]?.settings) {
+        if (draftProfiles[nextProfile].settings.openingBalance === undefined) {
+          draftProfiles[nextProfile].settings.openingBalance = 0;
+        }
+        draftProfiles[nextProfile].settings.onboardingCompleted = true;
+      }
       return {
         ...prev,
         currentProfile: nextProfile,
@@ -951,15 +969,43 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const loginUser = (user: AuthUser, token: string) => {
-    setState(prev => ({
-      ...prev,
-      authToken: token,
-      authUser: user,
-    }));
+    setState(prev => {
+      const aliasName = user.alias?.trim();
+      const draftProfiles = { ...prev.profiles };
+      let newCurrentProfile = prev.currentProfile;
+
+      if (aliasName) {
+        if (draftProfiles[newCurrentProfile] && newCurrentProfile !== aliasName && !draftProfiles[aliasName]) {
+          draftProfiles[aliasName] = draftProfiles[newCurrentProfile];
+          delete draftProfiles[newCurrentProfile];
+          newCurrentProfile = aliasName;
+        } else if (draftProfiles['Personal'] && !draftProfiles[aliasName]) {
+          draftProfiles[aliasName] = draftProfiles['Personal'];
+          delete draftProfiles['Personal'];
+          if (newCurrentProfile === 'Personal') {
+            newCurrentProfile = aliasName;
+          }
+        }
+      }
+
+      // Also ensure myAlias setting is synced
+      if (aliasName && draftProfiles[newCurrentProfile]) {
+        draftProfiles[newCurrentProfile].settings.myAlias = aliasName;
+      }
+
+      return {
+        ...prev,
+        authToken: token,
+        authUser: user,
+        currentProfile: newCurrentProfile,
+        profiles: draftProfiles,
+      };
+    });
     showToast(`¡Bienvenido, ${user.alias}!`, '🔐');
   };
 
   const logoutUser = () => {
+    logoutFirebase();
     setState({
       ...getDefaultSeed(),
       authToken: null,
@@ -968,14 +1014,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     showToast('Sesión cerrada y datos locales borrados', '👋');
   };
 
-  const importFullState = (newState: any) => {
-    if (!newState || typeof newState !== 'object') {
+  const importFullState = (incomingState: any) => {
+    if (!incomingState || typeof incomingState !== 'object') {
       showToast('Objeto de datos no válido para la restauración', '⚠️');
       return;
     }
 
+    const newState = incomingState.dataPayload ? incomingState.dataPayload : incomingState;
     const defaultSeed = getDefaultSeed();
-    const rawProfiles = newState.profiles && typeof newState.profiles === 'object' ? newState.profiles : {};
+    let rawProfiles = newState.profiles && typeof newState.profiles === 'object' ? newState.profiles : null;
+
+    if (!rawProfiles) {
+      if (newState.incomes || newState.expenses || newState.settings || newState.debts) {
+        rawProfiles = { [newState.currentProfile || 'Personal']: newState };
+      } else {
+        rawProfiles = {};
+      }
+    }
 
     const sanitizedProfiles: Record<string, UserProfile> = {};
     Object.keys(rawProfiles).forEach(key => {
@@ -996,7 +1051,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       authUser: newState.authUser || prev.authUser,
       authToken: newState.authToken || prev.authToken,
     }));
-    showToast('Base de datos y perfil restaurados correctamente desde la nube', '💾');
+    showToast('Base de datos y perfiles restaurados correctamente con toda tu información', '💾');
   };
 
   const importProfileState = (profileName: string, profileData: UserProfile) => {

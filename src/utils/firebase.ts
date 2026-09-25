@@ -21,6 +21,21 @@ export const db = firebaseConfig.firestoreDatabaseId
   : getFirestore(app);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+/**
+ * Full logout from Firebase Auth and Capacitor GoogleAuth
+ */
+export async function logoutFirebase() {
+  try {
+    await auth.signOut();
+    if (Capacitor.isNativePlatform()) {
+      await GoogleAuth.signOut();
+    }
+  } catch (e) {
+    console.warn('Logout Firebase error:', e);
+  }
+}
 
 /**
  * Sign in with Google Firebase Auth
@@ -113,8 +128,6 @@ export async function registerUserInFirebase(email: string, alias: string, phone
         alias_lower: alias.toLowerCase().trim(),
         phone,
         updatedAt: new Date().toISOString(),
-        deletionRequestedAt: null, // Cancel any pending deletion
-        deletionScheduledFor: null,
       }, { merge: true });
       return { isNew: false, data: userSnap.data() };
     }
@@ -125,7 +138,7 @@ export async function registerUserInFirebase(email: string, alias: string, phone
 }
 
 /**
- * Request account deletion
+ * Request account deletion with 7 days grace period
  */
 export async function requestAccountDeletion(email: string) {
   try {
@@ -142,6 +155,74 @@ export async function requestAccountDeletion(email: string) {
 }
 
 /**
+ * Check if user account is pending deletion or if 7-day grace period expired
+ */
+export async function checkAccountDeletionStatus(email: string) {
+  try {
+    if (!email) return null;
+    const userRef = doc(db, 'users', email.toLowerCase().trim());
+    const userSnap = await getDoc(userRef);
+    if (!userSnap.exists()) return null;
+    
+    const data = userSnap.data();
+    if (data.deletionScheduledFor) {
+      const scheduledTime = new Date(data.deletionScheduledFor).getTime();
+      const now = Date.now();
+      const remainingMs = scheduledTime - now;
+      if (remainingMs > 0) {
+        const remainingDays = Math.max(1, Math.ceil(remainingMs / (1000 * 60 * 60 * 24)));
+        return {
+          isPendingDeletion: true,
+          remainingDays,
+          scheduledFor: data.deletionScheduledFor,
+          requestedAt: data.deletionRequestedAt,
+        };
+      } else {
+        // Grace period expired! Permanently delete data
+        await permanentlyDeleteUserAccount(email);
+        return { isExpiredDeletion: true };
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error('Error checking deletion status:', error);
+    return null;
+  }
+}
+
+/**
+ * Cancel pending account deletion (restore account)
+ */
+export async function cancelAccountDeletion(email: string) {
+  try {
+    if (!email) return;
+    const userRef = doc(db, 'users', email.toLowerCase().trim());
+    await setDoc(userRef, {
+      deletionRequestedAt: null,
+      deletionScheduledFor: null,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  } catch (error) {
+    console.error('Error canceling account deletion:', error);
+    throw error;
+  }
+}
+
+/**
+ * Permanently delete user account and backup from Firestore
+ */
+export async function permanentlyDeleteUserAccount(email: string) {
+  try {
+    if (!email) return;
+    const cleanEmail = email.toLowerCase().trim();
+    await deleteDoc(doc(db, 'users', cleanEmail));
+    await deleteDoc(doc(db, 'backups', cleanEmail));
+  } catch (error) {
+    console.error('Error permanently deleting account:', error);
+  }
+}
+
+/**
  * Save full app backup state to Firebase Firestore
  */
 export async function backupStateToFirebase(email: string, appState: any) {
@@ -149,11 +230,12 @@ export async function backupStateToFirebase(email: string, appState: any) {
     if (!email) return;
     
     const cleanPayload = cleanFirestoreData(appState);
+    const cleanEmail = email.toLowerCase().trim();
     
-    // Main synced backup
-    const backupRef = doc(db, 'backups', email.toLowerCase().trim());
+    // Main synced document (Cloud Sync)
+    const backupRef = doc(db, 'backups', cleanEmail);
     await setDoc(backupRef, {
-      userEmail: email.toLowerCase().trim(),
+      userEmail: cleanEmail,
       dataPayload: cleanPayload,
       updatedAt: new Date().toISOString(),
     });
@@ -162,9 +244,9 @@ export async function backupStateToFirebase(email: string, appState: any) {
     const today = new Date();
     if (today.getDay() === 1) { // 1 = Monday
        const mondayDate = today.toISOString().split('T')[0];
-       const weeklyRef = doc(db, 'backups_weekly', `${email.toLowerCase().trim()}_${mondayDate}`);
+       const weeklyRef = doc(db, 'backups_weekly', `${cleanEmail}_${mondayDate}`);
        await setDoc(weeklyRef, {
-         userEmail: email.toLowerCase().trim(),
+         userEmail: cleanEmail,
          dataPayload: cleanPayload,
          backupDate: mondayDate,
          updatedAt: new Date().toISOString(),
@@ -419,33 +501,51 @@ export function subscribeToFirebaseState(email: string, onUpdate: (data: any, ex
   };
 }
 
-export async function saveManualBackup(email: string, appState: any, label: string) {
+export async function saveManualBackup(email: string, appState: any, label?: string, isScheduled: boolean = false) {
   try {
     if (!email) return;
-    const historyRef = collection(db, 'backups', email.toLowerCase().trim(), 'history');
+    const cleanEmail = email.toLowerCase().trim();
+    const historyRef = collection(db, 'backups', cleanEmail, 'history');
     
     // Add new backup
-    const timestamp = Date.now().toString();
-    const newBackupRef = doc(historyRef, timestamp);
+    const timestampNum = Date.now();
+    const timestampStr = timestampNum.toString();
+    const newBackupRef = doc(historyRef, timestampStr);
     const cleanPayload = cleanFirestoreData(appState);
+    
+    const formattedLabel = label || (isScheduled 
+      ? `Respaldo Programado (${new Date().toLocaleString('es-ES')})` 
+      : `Respaldo Manual (${new Date().toLocaleString('es-ES')})`);
+
     await setDoc(newBackupRef, {
-      id: timestamp,
-      label,
-      userEmail: email.toLowerCase().trim(),
+      id: timestampStr,
+      label: formattedLabel,
+      userEmail: cleanEmail,
       dataPayload: cleanPayload,
       updatedAt: new Date().toISOString(),
-      timestamp: parseInt(timestamp)
+      timestamp: timestampNum,
+      isLocked: false,
+      isScheduled: Boolean(isScheduled),
     });
 
     // Fetch all backups to enforce limit of 4
-    const q = query(historyRef, orderBy('timestamp', 'desc'));
-    const snapshot = await getDocs(q);
-    
-    if (snapshot.docs.length > 4) {
-      // Delete older ones
-      const docsToDelete = snapshot.docs.slice(4);
-      for (const d of docsToDelete) {
-        await deleteDoc(d.ref);
+    const snapshot = await getDocs(historyRef);
+    const allBackups = snapshot.docs.map(d => ({ ref: d.ref, data: d.data() }));
+
+    // Sort by timestamp desc
+    allBackups.sort((a, b) => (b.data.timestamp || 0) - (a.data.timestamp || 0));
+
+    // If total count exceeds 4, delete oldest unlocked ones
+    if (allBackups.length > 4) {
+      const excess = allBackups.length - 4;
+      // Get unlocked items sorted oldest first (smallest timestamp)
+      const unlockedCandidates = allBackups
+        .filter(b => !b.data.isLocked)
+        .sort((a, b) => (a.data.timestamp || 0) - (b.data.timestamp || 0));
+
+      const itemsToDelete = unlockedCandidates.slice(0, excess);
+      for (const item of itemsToDelete) {
+        await deleteDoc(item.ref);
       }
     }
   } catch (error) {
@@ -454,16 +554,90 @@ export async function saveManualBackup(email: string, appState: any, label: stri
   }
 }
 
+export async function deleteManualBackup(email: string, backupId: string) {
+  try {
+    if (!email || !backupId) return;
+    const cleanEmail = email.toLowerCase().trim();
+    const backupDocRef = doc(db, 'backups', cleanEmail, 'history', backupId);
+    await deleteDoc(backupDocRef);
+  } catch (error) {
+    console.error('deleteManualBackup error:', error);
+    throw error;
+  }
+}
+
+export async function toggleLockManualBackup(email: string, backupId: string, currentIsLocked: boolean) {
+  try {
+    if (!email || !backupId) return false;
+    const cleanEmail = email.toLowerCase().trim();
+    const backupDocRef = doc(db, 'backups', cleanEmail, 'history', backupId);
+    const nextLocked = !currentIsLocked;
+    await setDoc(backupDocRef, { isLocked: nextLocked }, { merge: true });
+    return nextLocked;
+  } catch (error) {
+    console.error('toggleLockManualBackup error:', error);
+    throw error;
+  }
+}
+
 export async function getManualBackups(email: string) {
   try {
     if (!email) return [];
-    const historyRef = collection(db, 'backups', email.toLowerCase().trim(), 'history');
-    const q = query(historyRef, orderBy('timestamp', 'desc'));
-    const snapshot = await getDocs(q);
+    const cleanEmail = email.toLowerCase().trim();
+    const historyRef = collection(db, 'backups', cleanEmail, 'history');
     
-    return snapshot.docs.map(doc => doc.data());
+    let historyDocs: any[] = [];
+    try {
+      const q = query(historyRef, orderBy('timestamp', 'desc'));
+      const snapshot = await getDocs(q);
+      historyDocs = snapshot.docs.map(doc => doc.data());
+    } catch (e) {
+      console.warn('Fallback history query without orderBy:', e);
+      const snapshot = await getDocs(historyRef);
+      historyDocs = snapshot.docs.map(doc => doc.data());
+      historyDocs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    }
+
+    let list: any[] = [...historyDocs];
+
+    // If history is empty, check primary document backup
+    if (list.length === 0) {
+      const primaryRef = doc(db, 'backups', cleanEmail);
+      const primarySnap = await getDoc(primaryRef);
+
+      if (primarySnap.exists()) {
+        const data = primarySnap.data();
+        if (data && data.dataPayload) {
+          const primaryTimestamp = data.updatedAt || new Date().toISOString();
+          const primaryEntry = {
+            id: 'primary',
+            label: `Respaldo Principal Sincronizado (${new Date(primaryTimestamp).toLocaleString('es-ES')})`,
+            timestamp: primaryTimestamp,
+            dataPayload: data.dataPayload,
+            isLocked: false,
+          };
+          list.unshift(primaryEntry);
+        }
+      }
+    }
+
+    return list;
   } catch (error) {
     console.error('getManualBackups error:', error);
+    try {
+      const backup = await restoreStateFromFirebase(email);
+      if (backup) {
+        return [{
+          id: 'emergency_backup',
+          label: `Respaldo de Emergencia Firebase (${new Date().toLocaleString('es-ES')})`,
+          timestamp: new Date().toISOString(),
+          dataPayload: backup,
+          isLocked: false
+        }];
+      }
+    } catch (e) {
+      console.error('Fallback restore error:', e);
+    }
     return [];
   }
 }

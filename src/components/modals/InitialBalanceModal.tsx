@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { calculateProjections, datesBetween, todayStr } from '../../utils/financialEngine';
-import { Wallet, Check, AlertTriangle } from 'lucide-react';
+import { Wallet, Check, AlertTriangle, X } from 'lucide-react';
 import { formatCurrency } from '../../utils/financialEngine';
 import { motion } from 'motion/react';
 
@@ -13,14 +13,13 @@ export const InitialBalanceModal: React.FC = () => {
   const [userBalance, setUserBalance] = useState<string>('');
 
   useEffect(() => {
-    if (profile.settings.openingBalance === undefined) {
+    // Only show during initial onboarding if openingBalance is undefined
+    if (profile.settings.openingBalance === undefined && !profile.settings.onboardingCompleted) {
       // Calculate first income date and required capital
       const startD = profile.settings.planStart || todayStr();
       const endD = profile.settings.planEnd || new Date(Date.now() + 86400000 * 60).toISOString().slice(0, 10);
       
       const allDatesList = datesBetween(startD, endD);
-      // We don't want to run the full engine, let's just run it with openingBalance=0 to see the deficit
-      // Actually, if we just use the calculated 'Fondo Requerido para Iniciar', it's in the plan.
       const testProfile = { ...profile, settings: { ...profile.settings, openingBalance: 0 } };
       const plan = calculateProjections(testProfile, exchangeRates);
       
@@ -39,7 +38,7 @@ export const InitialBalanceModal: React.FC = () => {
       for (const e of plan) {
           if (!e) continue;
           if (firstInc && e.date > firstInc) break;
-          if (e.label === 'Fondo Requerido para Iniciar') continue; // skip this injected one
+          if (e.label === 'Fondo Requerido para Iniciar') continue;
           
           if ((e.amt || 0) < 0 && e.type !== 'savings') {
               currentBal += e.amt;
@@ -64,9 +63,16 @@ export const InitialBalanceModal: React.FC = () => {
     } else {
       setIsOpen(false);
     }
-  }, [profile.settings.openingBalance, profile, exchangeRates]);
+  }, [profile.settings.openingBalance, profile.settings.onboardingCompleted, profile, exchangeRates]);
 
   if (!isOpen) return null;
+
+  const handleDismiss = () => {
+    updateProfileData(draft => {
+      draft.settings.openingBalance = 0;
+    });
+    setIsOpen(false);
+  };
 
   const handleConfirm = () => {
     const amt = parseFloat(userBalance);
@@ -85,9 +91,21 @@ export const InitialBalanceModal: React.FC = () => {
       <motion.div 
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-md h-[80vh] max-h-[80vh] shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col"
+        className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-md max-h-[85vh] shadow-2xl overflow-y-auto border border-slate-200 dark:border-slate-800 flex flex-col relative"
       >
-        <div className="p-6 text-center space-y-4">
+        {/* Close Button */}
+        <div className="flex justify-end p-4 pb-0">
+          <button
+            type="button"
+            onClick={handleDismiss}
+            className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            title="Cerrar"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 pt-2 text-center space-y-4">
           <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mx-auto mb-2">
             <Wallet className="w-8 h-8" />
           </div>

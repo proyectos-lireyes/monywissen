@@ -15,9 +15,12 @@ import {
   UserCheck,
   LogOut,
   LogIn,
-  Trash2, RotateCcw,
+  Trash2, RotateCcw, Clock,
 } from 'lucide-react';
 import { registerUserInFirebase, backupStateToFirebase, restoreStateFromFirebase, getManualBackups, saveManualBackup, saveUserProfileToFirestore } from '../../utils/firebase';
+import { DeleteAccountModal } from '../modals/DeleteAccountModal';
+import { CloudSyncAgreementModal } from '../modals/CloudSyncAgreementModal';
+import { RestoreBackupModal } from '../modals/RestoreBackupModal';
 
 declare const __APP_VERSION__: string;
 
@@ -33,6 +36,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
   const [resetOptions, setResetOptions] = useState({ incomes: true, expenses: true, debts: true, savings: true, accounts: true });
   const [showConfirmReset, setShowConfirmReset] = useState(false);
   const [confirmPendingReset, setConfirmPendingReset] = useState(false);
+  const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
 
   const handleResetData = () => {
     const updatedPaymentMethods = resetOptions.accounts ? [] : (profile.settings.paymentMethods || []);
@@ -122,7 +126,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
   const [displayCurrency, setDisplayCurrency] = useState(settings.displayCurrency || 'USD');
   const [paymentCurrency, setPaymentCurrency] = useState(settings.paymentCurrency || 'BS');
   const [enableAutoSavings, setEnableAutoSavings] = useState(settings.enableAutoSavings ?? false);
-  const [enableCloudSync, setEnableCloudSync] = useState(false);
+  const [enableCloudSync, setEnableCloudSync] = useState(settings.enableCloudSync ?? Boolean(state.authUser?.email));
+  const [showAgreementModal, setShowAgreementModal] = useState(false);
+
+  React.useEffect(() => {
+    if (typeof settings.enableCloudSync === 'boolean') {
+      setEnableCloudSync(settings.enableCloudSync);
+    } else if (state.authUser?.email) {
+      setEnableCloudSync(true);
+    }
+  }, [settings.enableCloudSync, state.authUser?.email]);
 
   // App Update States
   const [updateUrl, setUpdateUrl] = useState(window.location.origin);
@@ -323,7 +336,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
     reader.onload = event => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
-        if (parsed && parsed.profiles) {
+        if (parsed && (parsed.profiles || parsed.incomes || parsed.expenses || parsed.settings || parsed.dataPayload)) {
           importFullState(parsed);
         } else {
           showToast('Archivo de respaldo no válido', '❌');
@@ -533,9 +546,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                 <button
                   type="button"
                   onClick={() => {
-                    const next = !enableCloudSync;
-                    setEnableCloudSync(next);
-                    showToast(next ? 'Sincronización online activada' : 'Modo Solo Local activado', next ? '☁️' : '🔒');
+                    if (!enableCloudSync) {
+                      setShowAgreementModal(true);
+                    } else {
+                      setEnableCloudSync(false);
+                      updateProfileData(draft => {
+                        draft.settings.enableCloudSync = false;
+                      });
+                      showToast('Modo Solo Local (Lite) activado', '🔒');
+                    }
                   }}
                   className={`w-12 h-6 flex items-center rounded-full p-1 transition-colors shrink-0 ${
                     enableCloudSync ? 'bg-orange-600 justify-end' : 'bg-slate-300 dark:bg-slate-600 justify-start'
@@ -605,7 +624,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                     className="py-2.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-xs"
                   >
                     <Flame className="w-4 h-4" />
-                    {isFbBackupLoading ? 'Guardando...' : 'Respaldar en Firebase'}
+                    {isFbBackupLoading ? 'Guardando...' : 'Guardar Respaldo Manual Ahora'}
                   </button>
 
                   <button
@@ -615,7 +634,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                     className="py-2.5 bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-xs"
                   >
                     <Database className="w-4 h-4 text-orange-400" />
-                    {isFbBackupLoading ? 'Restaurando...' : 'Restaurar de Firebase'}
+                    {isFbBackupLoading ? 'Restaurando...' : 'Ver / Restaurar Respaldos'}
                   </button>
 
                   <button
@@ -628,6 +647,122 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                     {isForceUploading ? 'Limpiando y Subiendo...' : 'Limpiar Base de Datos y Subir Estado Local'}
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* Scheduled Automatic Backups Section */}
+            {enableCloudSync && (
+              <div className="p-4 bg-indigo-50/80 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900/40 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                    <h3 className="text-xs font-bold text-indigo-900 dark:text-indigo-200">
+                      Programar Respaldos Automáticos
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const currentSched = profile.settings.backupSchedule || { enabled: false, days: [1, 3, 5], time: '08:00' };
+                      const nextEnabled = !currentSched.enabled;
+                      updateProfileData(draft => {
+                        draft.settings.backupSchedule = { ...currentSched, enabled: nextEnabled };
+                      });
+                      showToast(
+                        nextEnabled ? 'Respaldos programados activados ⏰' : 'Respaldos programados desactivados',
+                        nextEnabled ? '⏰' : '⏸️'
+                      );
+                    }}
+                    className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
+                      profile.settings.backupSchedule?.enabled ? 'bg-indigo-600 justify-end' : 'bg-slate-300 dark:bg-slate-700 justify-start'
+                    }`}
+                  >
+                    <div className="w-4 h-4 rounded-full bg-white shadow-xs" />
+                  </button>
+                </div>
+
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  Configura días de la semana y una hora específica para guardar un respaldo automático en Firebase Cloud. Se conservan hasta 4 respaldos (al 5º se elimina el más antiguo no seguro 🔒).
+                </p>
+
+                {profile.settings.backupSchedule?.enabled && (
+                  <div className="space-y-3 pt-2 bg-white dark:bg-slate-900/80 p-3.5 rounded-xl border border-indigo-100 dark:border-indigo-900/50">
+                    {/* Days Selection */}
+                    <div>
+                      <label className="block text-[10px] font-extrabold uppercase text-slate-500 dark:text-slate-400 mb-1.5">
+                        Días de Ejecución:
+                      </label>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {[
+                          { label: 'Dom', day: 0 },
+                          { label: 'Lun', day: 1 },
+                          { label: 'Mar', day: 2 },
+                          { label: 'Mié', day: 3 },
+                          { label: 'Jue', day: 4 },
+                          { label: 'Vie', day: 5 },
+                          { label: 'Sáb', day: 6 },
+                        ].map(({ label, day }) => {
+                          const currentDays = profile.settings.backupSchedule?.days || [1, 3, 5];
+                          const isSelected = currentDays.includes(day);
+
+                          return (
+                            <button
+                              key={day}
+                              type="button"
+                              onClick={() => {
+                                const newDays = isSelected
+                                  ? currentDays.filter(d => d !== day)
+                                  : [...currentDays, day];
+                                
+                                if (newDays.length === 0) {
+                                  showToast('Selecciona al menos un día de la semana', '⚠️');
+                                  return;
+                                }
+
+                                updateProfileData(draft => {
+                                  if (!draft.settings.backupSchedule) {
+                                    draft.settings.backupSchedule = { enabled: true, days: newDays, time: '08:00' };
+                                  } else {
+                                    draft.settings.backupSchedule.days = newDays;
+                                  }
+                                });
+                              }}
+                              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                                isSelected
+                                  ? 'bg-indigo-600 text-white shadow-xs'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Time Picker */}
+                    <div>
+                      <label className="block text-[10px] font-extrabold uppercase text-slate-500 dark:text-slate-400 mb-1">
+                        Hora del Respaldo (Formato 24h):
+                      </label>
+                      <input
+                        type="time"
+                        value={profile.settings.backupSchedule?.time || '08:00'}
+                        onChange={e => {
+                          const timeVal = e.target.value;
+                          updateProfileData(draft => {
+                            if (!draft.settings.backupSchedule) {
+                              draft.settings.backupSchedule = { enabled: true, days: [1, 3, 5], time: timeVal };
+                            } else {
+                              draft.settings.backupSchedule.time = timeVal;
+                            }
+                          });
+                        }}
+                        className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -968,9 +1103,74 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                 )}
               </div>
             </div>
+
+            {/* Delete Account Card */}
+            <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-900/50 flex items-center justify-center text-red-600 dark:text-red-400">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-red-900 dark:text-red-100">Eliminar Mi Cuenta</h3>
+                  <p className="text-xs text-red-700/80 dark:text-red-300/80">
+                    Desvincula tu cuenta de usuario, respalda tus datos y programa el borrado en la nube con un margen de 7 días para recuperación.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!state.authUser) {
+                    showToast('Inicia sesión para gestionar o eliminar tu cuenta', '⚠️');
+                    if (onOpenAuth) onOpenAuth();
+                  } else {
+                    setShowDeleteAccountModal(true);
+                  }
+                }}
+                className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                {state.authUser ? `Eliminar Mi Cuenta (${state.authUser.email})` : 'Eliminar Mi Cuenta'}
+              </button>
+            </div>
           </div>
         )}
       </div>
+
+      {/* Delete Account Modal */}
+      <DeleteAccountModal
+        isOpen={showDeleteAccountModal}
+        onClose={() => setShowDeleteAccountModal(false)}
+        userEmail={state.authUser?.email || ''}
+      />
+
+      {/* Cloud Sync Agreement Modal */}
+      <CloudSyncAgreementModal
+        isOpen={showAgreementModal}
+        onClose={() => setShowAgreementModal(false)}
+        userEmail={state.authUser?.email}
+        onAccept={() => {
+          setEnableCloudSync(true);
+          updateProfileData(draft => {
+            draft.settings.enableCloudSync = true;
+          });
+          if (state.authUser?.email) {
+            backupStateToFirebase(state.authUser.email, state);
+          }
+          showToast('Sincronización en la Nube y Acuerdo de Confidencialidad Activados', '☁️');
+        }}
+      />
+
+      {/* Restore Backup Modal */}
+      <RestoreBackupModal
+        isOpen={showRestoreModal}
+        onClose={() => setShowRestoreModal(false)}
+        backups={availableBackups}
+        userEmail={state.authUser?.email}
+        onRestore={applyRestore}
+        onRefreshList={handleFirebaseRestore}
+      />
     </div>
   );
 };

@@ -230,38 +230,80 @@ return (
             <div className="space-y-2 max-h-60 overflow-y-auto">
               {platforms.map((p, idx) => (
                 <div key={p.id} className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl flex items-center justify-between group">
-                  <span className="text-xs font-bold text-slate-900 dark:text-slate-100">🌐 {p.name}</span>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button 
-                      onClick={() => {
-                        const newName = prompt('Editar nombre:', p.name);
-                        if (newName) {
-                          updateProfileData(draft => {
-                            if (draft.settings.savingPlatforms) {
-                               draft.settings.savingPlatforms[idx].name = newName;
+                  {editingPlatformId === p.id ? (
+                    <div className="flex items-center gap-2 flex-1 mr-2">
+                      <input
+                        type="text"
+                        value={editPlatformName}
+                        onChange={e => setEditPlatformName(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            if (editPlatformName.trim()) {
+                              updateProfileData(draft => {
+                                if (draft.settings.savingPlatforms) {
+                                  draft.settings.savingPlatforms[idx].name = editPlatformName.trim();
+                                }
+                              });
                             }
-                          });
-                        }
-                      }}
-                      className="p-1.5 text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded-lg"
-                    >
-                      ✎
-                    </button>
-                    <button 
-                      onClick={() => {
-                        if (true) {
-                          updateProfileData(draft => {
-                            if (draft.settings.savingPlatforms) {
-                              draft.settings.savingPlatforms.splice(idx, 1);
-                            }
-                          });
-                        }
-                      }}
-                      className="p-1.5 text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/40 rounded-lg"
-                    >
-                      🗑️
-                    </button>
-                  </div>
+                            setEditingPlatformId(null);
+                          }
+                          if (e.key === 'Escape') setEditingPlatformId(null);
+                        }}
+                        autoFocus
+                        className="px-2.5 py-1 text-xs font-bold rounded-lg border border-blue-500 bg-white dark:bg-slate-900 flex-1"
+                      />
+                      <button
+                        onClick={() => {
+                          if (editPlatformName.trim()) {
+                            updateProfileData(draft => {
+                              if (draft.settings.savingPlatforms) {
+                                draft.settings.savingPlatforms[idx].name = editPlatformName.trim();
+                              }
+                            });
+                          }
+                          setEditingPlatformId(null);
+                        }}
+                        className="px-2 py-1 bg-blue-600 text-white rounded-lg text-xs font-bold"
+                      >
+                        ✓
+                      </button>
+                      <button
+                        onClick={() => setEditingPlatformId(null)}
+                        className="px-2 py-1 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg text-xs font-bold"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100">🌐 {p.name}</span>
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button 
+                          onClick={() => {
+                            setEditingPlatformId(p.id);
+                            setEditPlatformName(p.name);
+                          }}
+                          className="p-1.5 text-blue-500 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded-lg"
+                          title="Editar"
+                        >
+                          ✎
+                        </button>
+                        <button 
+                          onClick={() => {
+                            updateProfileData(draft => {
+                              if (draft.settings.savingPlatforms) {
+                                draft.settings.savingPlatforms.splice(idx, 1);
+                              }
+                            });
+                          }}
+                          className="p-1.5 text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/40 rounded-lg"
+                          title="Eliminar"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               ))}
             </div>

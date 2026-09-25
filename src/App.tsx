@@ -22,15 +22,67 @@ import { AuthModal } from './components/auth/AuthModal';
 import { OnboardingModal } from './components/modals/OnboardingModal';
 import { InitialBalanceModal } from './components/modals/InitialBalanceModal';
 import { LoginScreen } from './components/auth/LoginScreen';
+import { AccountRecoveryModal } from './components/modals/AccountRecoveryModal';
+import { checkAccountDeletionStatus, saveManualBackup } from './utils/firebase';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { formatCurrency, calculateProjections, getRemainingDebtAmount } from './utils/financialEngine';
 
 const AppContent: React.FC = () => {
-  const { activeView, profile, showToast, state, exchangeRates, importFullState } = useApp();
+  const { activeView, profile, showToast, state, exchangeRates, importFullState, logoutUser, updateProfileData } = useApp();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
+  const [pendingDeletion, setPendingDeletion] = useState<{ email: string; remainingDays: number } | null>(null);
+
+  // Scheduled automatic cloud backup runner
+  useEffect(() => {
+    const checkScheduledBackup = () => {
+      const schedule = profile?.settings?.backupSchedule;
+      if (!schedule || !schedule.enabled || !state.authUser?.email) return;
+
+      const now = new Date();
+      const currentDay = now.getDay(); // 0 = Sunday, 1 = Monday...
+      const todayStr = now.toISOString().slice(0, 10); // YYYY-MM-DD
+      const currentHHMM = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+
+      if (Array.isArray(schedule.days) && schedule.days.includes(currentDay) && currentHHMM >= (schedule.time || '08:00')) {
+        if (schedule.lastRunDate !== todayStr) {
+          saveManualBackup(state.authUser.email, state, undefined, true)
+            .then(() => {
+              showToast('Respaldo automático programado ejecutado con éxito ⏰', '⏰');
+              updateProfileData(draft => {
+                if (draft.settings.backupSchedule) {
+                  draft.settings.backupSchedule.lastRunDate = todayStr;
+                }
+              });
+            })
+            .catch(err => {
+              console.error('Error executing scheduled backup:', err);
+            });
+        }
+      }
+    };
+
+    checkScheduledBackup();
+    const interval = setInterval(checkScheduledBackup, 60000);
+    return () => clearInterval(interval);
+  }, [profile?.settings?.backupSchedule, state.authUser?.email]);
+
+  useEffect(() => {
+    if (state.authUser?.email) {
+      checkAccountDeletionStatus(state.authUser.email).then(res => {
+        if (res && res.isPendingDeletion) {
+          setPendingDeletion({ email: state.authUser.email, remainingDays: res.remainingDays });
+        } else if (res && res.isExpiredDeletion) {
+          showToast('El período de gracia de 7 días ha finalizado. Tu cuenta ha sido eliminada.', '🗑️');
+          logoutUser();
+        }
+      });
+    } else {
+      setPendingDeletion(null);
+    }
+  }, [state.authUser?.email]);
 
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
@@ -297,6 +349,18 @@ const AppContent: React.FC = () => {
       {/* Onboarding Modal */}
       <OnboardingModal />
       <InitialBalanceModal />
+
+      {/* Account Deletion Recovery Modal */}
+      <AccountRecoveryModal
+        isOpen={pendingDeletion !== null}
+        userEmail={pendingDeletion?.email || ''}
+        remainingDays={pendingDeletion?.remainingDays || 7}
+        onSuccessRecover={() => setPendingDeletion(null)}
+        onLogout={() => {
+          logoutUser();
+          setPendingDeletion(null);
+        }}
+      />
     </div>
   );
 };

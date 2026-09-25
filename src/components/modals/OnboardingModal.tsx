@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
-import { User, Phone, Check, LogOut, Camera, Landmark, ShieldCheck, Database, HardDrive, FileText, ChevronDown, ChevronUp } from 'lucide-react';
+import { User, Phone, Check, LogOut, Camera, Landmark, ShieldCheck, Database, HardDrive, FileText, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { saveUserProfileToFirestore } from '../../utils/firebase';
 import { ImageCropperModal } from './ImageCropperModal';
 
@@ -24,14 +24,24 @@ export const OnboardingModal: React.FC = () => {
   const [showCropper, setShowCropper] = useState(false);
   
   useEffect(() => {
-    if (state.authUser && !profile.settings.onboardingCompleted) {
+    // If onboarding was already completed by any profile or saved previously, do not open
+    const hasAnyCompleted = Object.values(state.profiles).some((p: any) => p?.settings?.onboardingCompleted);
+    const localCompleted = localStorage.getItem('monywissen_onboarding_completed') === 'true';
+
+    if (state.authUser && !profile.settings.onboardingCompleted && !hasAnyCompleted && !localCompleted) {
       setIsOpen(true);
       setAlias(profile.settings.myAlias || state.authUser.alias || '');
       setPhone(profile.settings.myPhone || state.authUser.phone || '');
     } else {
       setIsOpen(false);
+      // Synchronize flag so it never triggers unexpectedly
+      if ((hasAnyCompleted || localCompleted) && !profile.settings.onboardingCompleted) {
+        updateProfileData(draft => {
+          draft.settings.onboardingCompleted = true;
+        });
+      }
     }
-  }, [state.authUser, profile.settings.onboardingCompleted]);
+  }, [state.authUser, profile.settings.onboardingCompleted, state.profiles]);
 
   if (!isOpen) return null;
 
@@ -107,7 +117,16 @@ export const OnboardingModal: React.FC = () => {
       }
     }
 
+    localStorage.setItem('monywissen_onboarding_completed', 'true');
     showToast(dataMode === 'cloud' ? '¡Perfil inicial y sincronización online configurados!' : '¡Perfil configurado en Modo Solo Local (Lite)!', '🎉');
+    setIsOpen(false);
+  };
+
+  const handleDismiss = () => {
+    updateProfileData(draft => {
+      draft.settings.onboardingCompleted = true;
+    });
+    localStorage.setItem('monywissen_onboarding_completed', 'true');
     setIsOpen(false);
   };
 
@@ -125,6 +144,14 @@ export const OnboardingModal: React.FC = () => {
               <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Información necesaria para comenzar</p>
             </div>
           </div>
+          <button
+            type="button"
+            onClick={handleDismiss}
+            className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            title="Cerrar"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Form Body */}
