@@ -230,6 +230,9 @@ export async function backupStateToFirebase(email: string, appState: any) {
     if (!email) return;
     
     const cleanPayload = cleanFirestoreData(appState);
+    if (!cleanPayload.lastUpdatedAt) {
+      cleanPayload.lastUpdatedAt = Date.now();
+    }
     const cleanEmail = email.toLowerCase().trim();
     
     // Main synced document (Cloud Sync)
@@ -238,6 +241,7 @@ export async function backupStateToFirebase(email: string, appState: any) {
       userEmail: cleanEmail,
       dataPayload: cleanPayload,
       updatedAt: new Date().toISOString(),
+      lastUpdatedAt: cleanPayload.lastUpdatedAt,
     });
     
     // Weekly Monday Backup

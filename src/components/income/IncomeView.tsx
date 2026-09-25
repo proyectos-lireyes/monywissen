@@ -199,6 +199,7 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
                 {accountBalances.map((acc) => {
+                  const isRequiredFundAccount = acc.id === 'required_starting_fund';
                   const realIndex = (profile.incomes || []).findIndex(i => i.id === acc.id);
                   const isExpanded = expandedAccountId === acc.id;
 
@@ -210,20 +211,31 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
 
                   return (
                     <React.Fragment key={acc.id}>
-                      <tr className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                      <tr className={`transition-colors ${isRequiredFundAccount ? 'bg-amber-50/40 dark:bg-amber-950/20 hover:bg-amber-50/70' : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'}`}>
                         <td
-                          onClick={() => onOpenEdit('income', realIndex)}
-                          className="py-3.5 px-4 cursor-pointer group"
-                          title="Toca para editar cuenta"
+                          onClick={() => {
+                            if (!isRequiredFundAccount) onOpenEdit('income', realIndex);
+                          }}
+                          className={`py-3.5 px-4 group ${!isRequiredFundAccount ? 'cursor-pointer' : ''}`}
+                          title={!isRequiredFundAccount ? 'Toca para editar cuenta' : 'Fondo Requerido del Plan'}
                         >
                           <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${isRequiredFundAccount ? 'bg-amber-500' : 'bg-emerald-500'}`} />
                             <div>
-                              <span className="font-bold text-slate-900 dark:text-slate-100 text-sm block group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                {acc.name}
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`font-bold text-sm block ${isRequiredFundAccount ? 'text-amber-900 dark:text-amber-200' : 'text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400'} transition-colors`}>
+                                  {acc.name}
+                                </span>
+                                {isRequiredFundAccount && (
+                                  <span className="text-[9px] font-black uppercase px-1.5 py-0.2 bg-amber-200 dark:bg-amber-800 text-amber-900 dark:text-amber-100 rounded-md">
+                                    Fondo Sistema
+                                  </span>
+                                )}
+                              </div>
                               <span className="text-[10px] text-slate-400 capitalize">
-                                {acc.freq === 'biweekly' ? `Quincenal (${acc.day || '15-30'})`
+                                {isRequiredFundAccount
+                                  ? 'Fondo inicial para cubrir gastos previos'
+                                  : acc.freq === 'biweekly' ? `Quincenal (${acc.day || '15-30'})`
                                   : acc.freq === 'weekly' ? `Semanal (Día ${acc.day || '1'})`
                                   : acc.freq === 'monthly' ? `Mensual (Día ${acc.day || '1'})`
                                   : acc.freq === 'bimonthly' ? `Bimensual (Día ${acc.day || '1'})`
@@ -238,9 +250,11 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
                         </td>
 
                         <td
-                          onClick={() => onOpenEdit('income', realIndex)}
-                          className="py-3.5 px-4 font-bold text-slate-700 dark:text-slate-300 cursor-pointer hover:text-blue-600 transition-colors"
-                          title="Toca para editar monto"
+                          onClick={() => {
+                            if (!isRequiredFundAccount) onOpenEdit('income', realIndex);
+                          }}
+                          className={`py-3.5 px-4 font-bold text-slate-700 dark:text-slate-300 ${!isRequiredFundAccount ? 'cursor-pointer hover:text-blue-600' : ''} transition-colors`}
+                          title={!isRequiredFundAccount ? 'Toca para editar monto' : 'Monto del fondo'}
                         >
                           {formatCurrency(convertAmount(acc.amount, acc.currency))}
                         </td>
@@ -268,7 +282,7 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
                             onClick={() => setExpandedAccountId(isExpanded ? null : acc.id)}
                             className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-[11px] transition-colors cursor-pointer"
                           >
-                            <span>{(acc.assignedItemsCount || 0)} asignados</span>
+                            <span>{(acc.assignedItemsCount || paidMovements.length || 0)} movimientos</span>
                             {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                           </button>
                         </td>
@@ -286,13 +300,17 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
 
                         <td className="py-3.5 px-4 text-right">
                           <div className="flex items-center justify-end gap-1">
-                            <button
-                              onClick={() => handleDelete(acc.id, acc.name)}
-                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
-                              title="Eliminar cuenta"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {!isRequiredFundAccount ? (
+                              <button
+                                onClick={() => handleDelete(acc.id, acc.name)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
+                                title="Eliminar cuenta"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <span className="text-xs text-amber-500 font-bold px-2 py-1">🪙</span>
+                            )}
                           </div>
                         </td>
                       </tr>

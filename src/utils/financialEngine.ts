@@ -4,7 +4,7 @@
  * debt installment schedules, and shared group expense balancing.
  */
 
-import { UserProfile, PlanOccurrence, SharedGroup, DebtItem, CustomDebtType, IncomePeriodCoverage, IncomeAccountBalance } from '../types';
+import { UserProfile, PlanOccurrence, SharedGroup, DebtItem, CustomDebtType, IncomePeriodCoverage, IncomeAccountBalance, CurrencyCode } from '../types';
 
 export function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
@@ -1123,6 +1123,7 @@ export function calculateProjections(
         type: 'income',
         amt: amtToInject,
         ref: { id: 'required_starting_fund', name: 'Fondo Requerido', effectiveColor: '#f59e0b' },
+        incomeId: 'required_starting_fund',
         originalDate: startD,
         targetDate: startD,
         done: isDone,
@@ -1685,7 +1686,7 @@ export function calculateIncomeAccountBalances(
   const initialOpeningBalance = Number(profile.settings?.openingBalance) || 0;
   const validIncomeIds = new Set(incomes.map(i => i.id));
 
-  return incomes.map((inc, index) => {
+  const results: IncomeAccountBalance[] = incomes.map((inc, index) => {
     // Initial opening balance is allocated to the primary/first income account by default
     const openingAmt = index === 0 ? initialOpeningBalance : 0;
     
@@ -1726,6 +1727,16 @@ export function calculateIncomeAccountBalances(
       const occUsd = Math.abs(occ.amt || 0);
 
       if (occ.type === 'income' || occ.type === 'rescate_ahorros') {
+        // Fondo Requerido is strictly isolated and goes to its own required fund account
+        if (
+          occ.ref?.id === 'required_starting_fund' ||
+          occ.incomeId === 'required_starting_fund' ||
+          occ.label === 'Fondo Requerido para Iniciar' ||
+          (typeof occ.label === 'string' && occ.label.toLowerCase().includes('fondo requerido'))
+        ) {
+          return;
+        }
+
         const occIncomeId = occ.incomeId || occ.ref?.incomeId;
         const isThisAccount = occ.ref?.id === inc.id || 
           occIncomeId === inc.id ||
@@ -1746,7 +1757,8 @@ export function calculateIncomeAccountBalances(
         const assignedId = occ.incomeId || occ.ref?.incomeId;
         const isAssignedToThis = assignedId === inc.id;
         // If unassigned or assigned to a non-existent account, attribute to primary account (index === 0)
-        const isFallbackToPrimary = index === 0 && (!assignedId || !validIncomeIds.has(assignedId));
+        // EXCEPTION: if assigned to required_starting_fund, do not attribute to primary account
+        const isFallbackToPrimary = index === 0 && (!assignedId || !validIncomeIds.has(assignedId)) && assignedId !== 'required_starting_fund';
 
         if ((isAssignedToThis || isFallbackToPrimary) && affectsCash) {
           totalProjectedOutflows += occUsd;
@@ -1789,6 +1801,78 @@ export function calculateIncomeAccountBalances(
       paidMovements
     };
   });
+
+  // Calculate separate account for Fondo Requerido if it exists in the projected plan
+  const reqFundOcc = (plan || []).find(occ => 
+    occ?.ref?.id === 'required_starting_fund' || 
+    occ?.incomeId === 'required_starting_fund' || 
+    occ?.label === 'Fondo Requerido para Iniciar' ||
+    (typeof occ?.label === 'string' && occ.label.toLowerCase().includes('fondo requerido'))
+  );
+
+  if (reqFundOcc) {
+    const isOccDone = !!reqFundOcc.done;
+    const occDate = reqFundOcc.date || reqFundOcc.targetDate || reqFundOcc.originalDate || today;
+    const isPastOrToday = occDate <= today || (reqFundOcc.targetDate && reqFundOcc.targetDate <= today);
+    const reqAmount = Math.abs(reqFundOcc.amt || 0);
+
+    let reqInflowsToDate = 0;
+    if (isOccDone && isPastOrToday) {
+      reqInflowsToDate = reqAmount;
+    }
+    const reqProjectedInflows = reqAmount;
+
+    let reqOutflowsToDate = 0;
+    let reqProjectedOutflows = 0;
+    const reqPaidMovements: Array<{
+      date: string;
+      label: string;
+      type: string;
+      amount: number;
+    }> = [];
+
+    (plan || []).forEach(occ => {
+      if (!occ || occ.type === 'income' || occ.type === 'opening_balance' || occ.type === 'rescate_ahorros') return;
+      const assignedId = occ.incomeId || occ.ref?.incomeId;
+      if (assignedId === 'required_starting_fund') {
+        const occUsd = Math.abs(occ.amt || 0);
+        reqProjectedOutflows += occUsd;
+        const occDone = !!occ.done;
+        const oDate = occ.date || occ.targetDate || occ.originalDate;
+        const oPast = oDate <= today || (occ.targetDate && occ.targetDate <= today);
+        if (occDone && oPast) {
+          reqOutflowsToDate += occUsd;
+          reqPaidMovements.push({
+            date: oDate,
+            label: occ.label ? occ.label.replace(/\s*\(✓.*?\)/g, '').trim() : 'Egreso',
+            type: occ.type,
+            amount: occUsd,
+          });
+        }
+      }
+    });
+
+    reqPaidMovements.sort((a, b) => b.date.localeCompare(a.date));
+
+    results.push({
+      id: 'required_starting_fund',
+      name: 'Fondo Requerido',
+      amount: reqAmount,
+      freq: 'one-time',
+      currency: (profile.settings?.minBalanceCurrency as CurrencyCode) || 'USD_BCV',
+      totalInflowsToDate: reqInflowsToDate,
+      totalOutflowsToDate: reqOutflowsToDate,
+      availableToday: reqInflowsToDate - reqOutflowsToDate,
+      totalProjectedInflows: reqProjectedInflows,
+      totalProjectedOutflows: reqProjectedOutflows,
+      projectedBalance: reqProjectedInflows - reqProjectedOutflows,
+      assignedItemsCount: 0,
+      nextIncomeDate: isOccDone ? null : occDate,
+      paidMovements: reqPaidMovements,
+    });
+  }
+
+  return results;
 }
 
 

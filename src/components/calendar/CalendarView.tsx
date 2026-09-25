@@ -27,7 +27,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
   const [currentCalDate, setCurrentCalDate] = useState<Date>(new Date());
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterDate, setFilterDate] = useState('');
   const [activeStateFilters, setActiveStateFilters] = useState<string[]>([]);
   const [activeOutflowFilters, setActiveOutflowFilters] = useState<string[]>([]);
   const [selectedDayEvents, setSelectedDayEvents] = useState<{ date: string; events: any[] } | null>(null);
@@ -97,7 +96,24 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
       };
     }
 
+    const isRequiredFund = e.ref?.id === 'required_starting_fund' || e.incomeId === 'required_starting_fund' || e.label === 'Fondo Requerido para Iniciar' || (typeof e.label === 'string' && e.label.toLowerCase().includes('fondo requerido'));
+    if (isRequiredFund) {
+      return {
+        label: `${e.done ? 'Depositado en' : 'Entra en'}: Fondo Requerido`,
+        icon: '🪙',
+        color: 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/50'
+      };
+    }
+
     const accountId = e.incomeId || e.ref?.incomeId;
+    if (accountId === 'required_starting_fund') {
+      return {
+        label: `${e.done ? 'Pagado desde' : 'Se debitará de'}: Fondo Requerido`,
+        icon: '🪙',
+        color: 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/50'
+      };
+    }
+
     const account = (profile.incomes || []).find(i => i.id === accountId);
     const primaryAccount = profile.incomes?.[0];
     const accountName = account?.name || (primaryAccount ? primaryAccount.name : 'Cuenta principal');
@@ -146,8 +162,19 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
       if (!match) return false;
     }
 
-    if (searchQuery && !e.label.toLowerCase().includes(searchQuery.toLowerCase())) {
-      return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      const [y, m, d] = (e.date || '').split('-');
+      const ddmmyyyy = `${d}/${m}/${y}`;
+      const ddmm = `${d}/${m}`;
+      const dayNum = String(parseInt(d || '0', 10));
+      const labelMatches = (e.label || '').toLowerCase().includes(q);
+      const accountInfo = getAccountSourceInfo(e)?.label?.toLowerCase() || '';
+      const dateMatches = (e.date || '').includes(q) || ddmmyyyy.includes(q) || ddmm.includes(q) || (q.length <= 2 && dayNum === q);
+      const accountMatches = accountInfo.includes(q);
+      if (!labelMatches && !dateMatches && !accountMatches) {
+        return false;
+      }
     }
 
     return true;
@@ -165,62 +192,65 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
             Cronograma Financiero
           </h2>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <button onClick={() => toggleStateFilter("hide_done")} className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${activeStateFilters.includes("hide_done") ? "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200" : "bg-emerald-100 text-emerald-800 shadow-xs dark:bg-emerald-900/30 dark:text-emerald-300"}`}><CheckCircle2 className="w-3.5 h-3.5" />{activeStateFilters.includes("hide_done") ? "👁️ Mostrar Listos" : "Ocultar Listos"}</button>
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-bold text-slate-500">Filtrar Día:</label>
-              <input
-                type="date"
-                value={filterDate}
-                onChange={(e) => {
-                  const d = e.target.value;
-                  setFilterDate(d);
-                  if (d) {
-                     const dEvents = plan.filter(ev => ev.date === d);
-                     setSelectedDayEvents({ date: d, events: dEvents });
-                     if (viewMode === 'calendar') {
-                        const [y, m] = d.split('-');
-                        setCurrentCalDate(new Date(parseInt(y), parseInt(m) - 1, 1));
-                     }
-                  } else {
-                     setSelectedDayEvents(null);
-                  }
-                }}
-                className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
-              />
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Solo 1 botón para Mostrar/Ocultar Listos */}
+            <button
+              onClick={() => toggleStateFilter("hide_done")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                activeStateFilters.includes("hide_done")
+                  ? "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200"
+                  : "bg-emerald-100 text-emerald-800 shadow-xs dark:bg-emerald-900/30 dark:text-emerald-300"
+              }`}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              {activeStateFilters.includes("hide_done") ? "👁️ Mostrar Listos" : "Ocultar Listos"}
+            </button>
 
-          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-            <button
-              onClick={() => {
-                setViewMode('calendar');
-                setActiveStateFilters(prev => prev.filter(f => f !== 'hide_done'));
-              }}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all ${
-                viewMode === 'calendar'
-                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
-                  : 'text-slate-500 dark:text-slate-400'
-              }`}
-            >
-              <CalendarIcon className="w-3.5 h-3.5" /> Calendario
-            </button>
-            <button
-              onClick={() => {
-                setViewMode('list');
-                setActiveStateFilters(prev => prev.includes('hide_done') ? prev : [...prev, 'hide_done']);
-              }}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all ${
-                viewMode === 'list'
-                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
-                  : 'text-slate-500 dark:text-slate-400'
-              }`}
-            >
-              <ListIcon className="w-3.5 h-3.5" /> Lista
-            </button>
-          </div>
+            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+              <button
+                onClick={() => setViewMode('calendar')}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all ${
+                  viewMode === 'calendar'
+                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
+                    : 'text-slate-500 dark:text-slate-400'
+                }`}
+              >
+                <CalendarIcon className="w-3.5 h-3.5" /> Calendario
+              </button>
+              <button
+                onClick={() => setViewMode('list')}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all ${
+                  viewMode === 'list'
+                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-xs'
+                    : 'text-slate-500 dark:text-slate-400'
+                }`}
+              >
+                <ListIcon className="w-3.5 h-3.5" /> Lista
+              </button>
+            </div>
           </div>
         </div>
 
+        {/* Buscador unificado: Permite filtrar por concepto, cuenta o por DÍA directamente */}
+        <div className="relative">
+          <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Buscar por concepto, cuenta o día (ej. 15, 01/09)..."
+            className="w-full pl-9 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5"
+              title="Borrar búsqueda"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
         
         <div className="flex items-center justify-between mb-4 bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
           <button
@@ -240,37 +270,37 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
           </button>
         </div>
 
-        {/* Monthly Summary Cards */}
+        {/* Monthly Summary Cards - Caben en 1 sola línea en versión móvil */}
         {(() => {
           const totalEgresos = mExp + mDebt;
           const netFlow = mInc - totalEgresos;
           return (
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-              <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-2xl text-center">
-                <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">Ingresos</span>
-                <p className="text-sm font-black text-emerald-700 dark:text-emerald-400 mt-0.5">{formatCurrency(mInc)}</p>
+            <div className="grid grid-cols-5 gap-1 sm:gap-2 pb-1 items-stretch w-full">
+              <div className="p-1 sm:p-2.5 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl sm:rounded-2xl text-center flex flex-col justify-center min-w-0">
+                <span className="text-[7.5px] xs:text-[8.5px] sm:text-[10px] font-bold text-emerald-600 uppercase tracking-tighter sm:tracking-wider block truncate">Ingresos</span>
+                <p className="text-[10px] xs:text-xs sm:text-sm font-black text-emerald-700 dark:text-emerald-400 mt-0.5 truncate whitespace-nowrap">{formatCurrency(mInc)}</p>
               </div>
-              <div className="p-2.5 bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40 rounded-2xl text-center">
-                <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider block">Gastos Fijos</span>
-                <p className="text-sm font-black text-blue-700 dark:text-blue-400 mt-0.5">{formatCurrency(mExp)}</p>
+              <div className="p-1 sm:p-2.5 bg-blue-50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40 rounded-xl sm:rounded-2xl text-center flex flex-col justify-center min-w-0">
+                <span className="text-[7.5px] xs:text-[8.5px] sm:text-[10px] font-bold text-blue-600 uppercase tracking-tighter sm:tracking-wider block truncate">Gastos Fijos</span>
+                <p className="text-[10px] xs:text-xs sm:text-sm font-black text-blue-700 dark:text-blue-400 mt-0.5 truncate whitespace-nowrap">{formatCurrency(mExp)}</p>
               </div>
-              <div className="p-2.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40 rounded-2xl text-center">
-                <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider block">Cuotas Deuda</span>
-                <p className="text-sm font-black text-amber-700 dark:text-amber-400 mt-0.5">{formatCurrency(mDebt)}</p>
+              <div className="p-1 sm:p-2.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40 rounded-xl sm:rounded-2xl text-center flex flex-col justify-center min-w-0">
+                <span className="text-[7.5px] xs:text-[8.5px] sm:text-[10px] font-bold text-amber-600 uppercase tracking-tighter sm:tracking-wider block truncate">Cuotas Deuda</span>
+                <p className="text-[10px] xs:text-xs sm:text-sm font-black text-amber-700 dark:text-amber-400 mt-0.5 truncate whitespace-nowrap">{formatCurrency(mDebt)}</p>
               </div>
-              <div className="p-2.5 bg-rose-50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/40 rounded-2xl text-center">
-                <span className="text-[10px] font-extrabold text-rose-600 uppercase tracking-wider block">Total Egresos</span>
-                <p className="text-sm font-black text-rose-700 dark:text-rose-400 mt-0.5">{formatCurrency(totalEgresos)}</p>
+              <div className="p-1 sm:p-2.5 bg-rose-50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/40 rounded-xl sm:rounded-2xl text-center flex flex-col justify-center min-w-0">
+                <span className="text-[7.5px] xs:text-[8.5px] sm:text-[10px] font-extrabold text-rose-600 uppercase tracking-tighter sm:tracking-wider block truncate">Total Egresos</span>
+                <p className="text-[10px] xs:text-xs sm:text-sm font-black text-rose-700 dark:text-rose-400 mt-0.5 truncate whitespace-nowrap">{formatCurrency(totalEgresos)}</p>
               </div>
-              <div className={`p-2.5 border rounded-2xl text-center col-span-2 sm:col-span-1 ${
+              <div className={`p-1 sm:p-2.5 border rounded-xl sm:rounded-2xl text-center flex flex-col justify-center min-w-0 ${
                 netFlow >= 0 
                   ? 'bg-emerald-100/60 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800' 
                   : 'bg-rose-100/60 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800'
               }`}>
-                <span className={`text-[10px] font-extrabold uppercase tracking-wider block ${netFlow >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'}`}>
-                  Flujo Neto Plan
+                <span className={`text-[7.5px] xs:text-[8.5px] sm:text-[10px] font-extrabold uppercase tracking-tighter sm:tracking-wider block truncate ${netFlow >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'}`}>
+                  Flujo Neto
                 </span>
-                <p className={`text-sm font-black mt-0.5 ${netFlow >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'}`}>
+                <p className={`text-[10px] xs:text-xs sm:text-sm font-black mt-0.5 truncate whitespace-nowrap ${netFlow >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'}`}>
                   {netFlow >= 0 ? '+' : ''}{formatCurrency(netFlow)}
                 </p>
               </div>
@@ -299,6 +329,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
               const dayNum = i + 1;
               const dateStr = `${prefixMonth}-${dayNum.toString().padStart(2, '0')}`;
               const isToday = dateStr === today;
+              const q = searchQuery.trim().toLowerCase();
+              const isSearchedDay = q.length > 0 && (q === String(dayNum) || q === dayNum.toString().padStart(2, '0') || dateStr.endsWith(`-${q.padStart(2, '0')}`));
               const actualEvents = plan.filter(e => e.date === dateStr && filterOccurrence(e));
               const ghostEvents: any[] = [];
               const dayEvents = [...actualEvents, ...ghostEvents];
@@ -312,13 +344,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                     }
                   }}
                   className={`min-h-16 p-1 rounded-xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
-                    isToday
+                    isSearchedDay
+                      ? 'ring-2 ring-blue-500 bg-blue-50/90 dark:bg-blue-950/60 dark:ring-blue-400 border-blue-400'
+                      : isToday
                       ? 'bg-blue-50/80 border-blue-400 dark:bg-blue-950/40 dark:border-blue-700'
                       : 'border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 hover:border-slate-300'
                   }`}
                 >
                   <div className="flex items-center justify-between text-[10px] font-bold">
-                    <span className={isToday ? 'text-blue-600 dark:text-blue-400 font-extrabold' : 'text-slate-600 dark:text-slate-300'}>
+                    <span className={isSearchedDay ? 'text-blue-700 dark:text-blue-300 font-black' : isToday ? 'text-blue-600 dark:text-blue-400 font-extrabold' : 'text-slate-600 dark:text-slate-300'}>
                       {dayNum}
                     </span>
                     {dayEvents.length > 0 && (
@@ -375,7 +409,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
       ) : (
         /* LIST VIEW */
         <div className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
+          <div className="pb-2 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <div>
               <span className="text-xs font-extrabold text-blue-600 dark:text-blue-400 block">
                 📆 Cronograma en Modo Lista
@@ -384,36 +418,29 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                 Proyección hasta el próximo mes ({monthNames[(month + 1) % 12]} {month === 11 ? year + 1 : year})
               </p>
             </div>
-
-            <button
-              onClick={() => toggleStateFilter('show_done')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                activeStateFilters.includes('show_done')
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200'
-              }`}
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              {activeStateFilters.includes('show_done') ? 'Ocultar Listos' : '👁️ Mostrar Listos'}
-            </button>
-          </div>
-
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Buscar concepto o movimiento..."
-              className="w-full pl-9 pr-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
-            />
+            {searchQuery && (
+              <span className="text-[10px] font-bold px-2 py-0.5 bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded-lg">
+                Filtro activo
+              </span>
+            )}
           </div>
 
           <div className="space-y-1.5 sm:space-y-2.5">
             {(() => {
+              const q = searchQuery.trim().toLowerCase();
               const filteredPlan = plan
                 .filter(e => {
-                  if (searchQuery) return true;
+                  if (q) {
+                    const [y, m, d] = (e.date || '').split('-');
+                    const ddmmyyyy = `${d}/${m}/${y}`;
+                    const ddmm = `${d}/${m}`;
+                    const dayNum = String(parseInt(d || '0', 10));
+                    const labelMatches = (e.label || '').toLowerCase().includes(q);
+                    const accountInfo = getAccountSourceInfo(e)?.label?.toLowerCase() || '';
+                    const dateMatches = (e.date || '').includes(q) || ddmmyyyy.includes(q) || ddmm.includes(q) || (q.length <= 2 && dayNum === q);
+                    const accountMatches = accountInfo.includes(q);
+                    return labelMatches || dateMatches || accountMatches;
+                  }
                   if (e.date.startsWith(prefixMonth)) return true;
                   if (showAllPrevious && e.date < prefixMonth) return true;
                   return false;

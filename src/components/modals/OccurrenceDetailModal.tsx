@@ -203,7 +203,8 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
       setPartialAmt('');
       const isNoAffectRecorded = overrideRecord.noAffectBalance === true || overrideRecord.externalPay === true || overrideRecord.paidPrior === true;
       setAffectBalance(!isNoAffectRecorded);
-      const defaultIncId = overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId || (profile.incomes?.[0]?.id || '');
+      const isReqFund = refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || occurrence?.label === 'Fondo Requerido para Iniciar';
+      const defaultIncId = isReqFund ? 'required_starting_fund' : (overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId || (profile.incomes?.[0]?.id || ''));
       setSelectedIncomeId(isNoAffectRecorded ? '__EXTERNAL__' : defaultIncId);
       if (originalDate) {
         setActualDate(planDate || originalDate);
@@ -923,7 +924,10 @@ return (
                   {overrideRecord.noAffectBalance
                     ? '🛡️ Fondos externos / Anteriores'
                     : (() => {
+                        const isReq = refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || occurrence?.label === 'Fondo Requerido para Iniciar' || (typeof occurrence?.label === 'string' && occurrence.label.toLowerCase().includes('fondo requerido'));
+                        if (isReq) return '🪙 Fondo Requerido';
                         const incId = overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId;
+                        if (incId === 'required_starting_fund') return '🪙 Fondo Requerido';
                         const foundInc = (profile.incomes || []).find(i => i.id === incId);
                         if (foundInc) return `🏦 ${foundInc.name}`;
                         if (incId) return '🏦 Histórico (Cuenta eliminada)';
@@ -941,7 +945,7 @@ return (
                   {isIncome ? 'Cambiar cuenta receptora para este ingreso:' : 'Cambiar cuenta de origen para este pago:'}
                 </label>
                 <select
-                  value={overrideRecord.noAffectBalance ? '__EXTERNAL__' : (overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId || profile.incomes?.[0]?.id || '')}
+                  value={overrideRecord.noAffectBalance ? '__EXTERNAL__' : (overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId || (refId === 'required_starting_fund' ? 'required_starting_fund' : (profile.incomes?.[0]?.id || '')))}
                   onChange={e => {
                     const val = e.target.value;
                     const finalAmountUsd = overrideRecord.amt !== undefined && overrideRecord.amt > 0 ? overrideRecord.amt : plannedUsdAmount;
@@ -954,6 +958,15 @@ return (
                         });
                       });
                       showToast('Cambiado a: Fondos externos / Anteriores', '🛡️');
+                    } else if (val === 'required_starting_fund') {
+                      updateProfileData(draft => {
+                        applyOverride(draft, {
+                          noAffectBalance: false,
+                          incomeId: 'required_starting_fund',
+                          amt: finalAmountUsd > 0 ? finalAmountUsd : plannedUsdAmount
+                        });
+                      });
+                      showToast('Cambiado a cuenta: Fondo Requerido', '🪙');
                     } else {
                       updateProfileData(draft => {
                         applyOverride(draft, {
@@ -968,6 +981,11 @@ return (
                   }}
                   className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-bold text-slate-800 dark:text-slate-200"
                 >
+                  {(refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || balanceMap['required_starting_fund'] !== undefined) && (
+                    <option value="required_starting_fund">
+                      🪙 Fondo Requerido — {formatCurrency(balanceMap['required_starting_fund'] ?? 0)}
+                    </option>
+                  )}
                   {(profile.incomes || []).map(inc => {
                     const bal = balanceMap[inc.id] ?? 0;
                     return (
@@ -1013,6 +1031,11 @@ return (
                 }}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs text-slate-800 dark:text-slate-100"
               >
+                {(refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || balanceMap['required_starting_fund'] !== undefined) && (
+                  <option value="required_starting_fund">
+                    🪙 Fondo Requerido — {formatCurrency(balanceMap['required_starting_fund'] ?? 0)}
+                  </option>
+                )}
                 {(profile.incomes || []).map(inc => {
                   const bal = balanceMap[inc.id] ?? 0;
                   return (

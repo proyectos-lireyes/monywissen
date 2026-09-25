@@ -12,6 +12,7 @@ import { verifyJWT } from '../utils/security';
 import {
   backupStateToFirebase,
   restoreStateFromFirebase,
+  subscribeToFirebaseState,
   saveDebtToFirestore,
   deleteDebtFromFirestore,
   saveCuotaToFirestore,
@@ -479,22 +480,51 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return rate ? amount * rate : amount;
   };
 
-  // Sync state to LocalStorage and Firebase
+  const currentProfileName = state.currentProfile && state.profiles && state.profiles[state.currentProfile]
+    ? state.currentProfile
+    : (state.profiles ? Object.keys(state.profiles)[0] : 'Personal') || 'Personal';
+
+  const rawProfile = (state.profiles && state.profiles[currentProfileName])
+    ? state.profiles[currentProfileName]
+    : getDefaultSeed().profiles.Personal;
+
+  const profile = useMemo(() => sanitizeProfile(rawProfile), [rawProfile]);
+
+  useEffect(() => {
+    // Check notifications every minute
+    const interval = setInterval(() => {
+      const notifEnabled = rawProfile.settings.notificationsEnabled !== false;
+      checkAndTriggerDailyReminder(
+        rawProfile.expenses,
+        rawProfile.debts,
+        notifEnabled,
+        rawProfile.settings.notifTime || '08:00'
+      );
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [rawProfile]);
+
+  // Sync state to LocalStorage and Firebase with fast debounce
   const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastLocalMutationTimeRef = useRef<number>(Date.now());
 
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      lastLocalMutationTimeRef.current = Date.now();
       
-      // Auto-sync to Firebase if logged in
-      if (state.authUser && state.authUser.email && isSyncReady.current) {
+      // Auto-sync to Firebase if logged in or cloud sync is active
+      const isCloudEnabled = Boolean(profile?.settings?.enableCloudSync || state.authUser?.email);
+      const userEmail = state.authUser?.email || profile?.settings?.userEmail;
+      
+      if (isCloudEnabled && userEmail && !isBulkOperationInProgress.current) {
          // Create a minimal clone without tokens for backup
          const stateToBackup = JSON.parse(JSON.stringify(state));
          delete stateToBackup.authToken;
+         stateToBackup.lastUpdatedAt = Date.now();
          
-         const stateBackupStr = JSON.stringify({ ...stateToBackup, authUser: undefined });
+         const stateBackupStr = JSON.stringify({ ...stateToBackup, authUser: undefined, lastUpdatedAt: undefined });
          if (lastServerPayloadRef.current === stateBackupStr) {
-           // Already matches the last loaded server payload. Do not loop write back.
            return;
          }
          
@@ -502,12 +532,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
            clearTimeout(syncTimeoutRef.current);
          }
          
-         // Debounce writes to avoid exhausting Firebase quota (10 seconds)
+         // Fast debounce: 250ms so user actions sync immediately across devices
          syncTimeoutRef.current = setTimeout(() => {
-           backupStateToFirebase(state.authUser.email, stateToBackup).catch(err => {
-               console.error('Error syncing to Firebase:', err);
+           backupStateToFirebase(userEmail, stateToBackup).then(() => {
+             lastServerPayloadRef.current = stateBackupStr;
+           }).catch(err => {
+             console.error('Error syncing to Firebase:', err);
            });
-         }, 5000);
+         }, 250);
       }
     } catch (e) {
       console.error('Error saving state:', e);
@@ -517,23 +549,50 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (syncTimeoutRef.current) {
         clearTimeout(syncTimeoutRef.current);
       }
-    }
-  }, [state]);
+    };
+  }, [state, profile?.settings?.enableCloudSync, profile?.settings?.userEmail]);
 
-  // Single initial load on user authentication (does not poll or overwrite continuously)
+  // Flush sync immediately when leaving tab or closing app
+  useEffect(() => {
+    const handleBeforeUnloadOrHide = () => {
+      const userEmail = state.authUser?.email || profile?.settings?.userEmail;
+      const isCloudEnabled = Boolean(profile?.settings?.enableCloudSync || state.authUser?.email);
+      if (isCloudEnabled && userEmail) {
+        if (syncTimeoutRef.current) {
+          clearTimeout(syncTimeoutRef.current);
+          syncTimeoutRef.current = null;
+        }
+        const stateToBackup = JSON.parse(JSON.stringify(state));
+        delete stateToBackup.authToken;
+        stateToBackup.lastUpdatedAt = Date.now();
+        backupStateToFirebase(userEmail, stateToBackup).catch(console.error);
+      }
+    };
+    document.addEventListener('visibilitychange', handleBeforeUnloadOrHide);
+    window.addEventListener('beforeunload', handleBeforeUnloadOrHide);
+    window.addEventListener('pagehide', handleBeforeUnloadOrHide);
+    return () => {
+      document.removeEventListener('visibilitychange', handleBeforeUnloadOrHide);
+      window.removeEventListener('beforeunload', handleBeforeUnloadOrHide);
+      window.removeEventListener('pagehide', handleBeforeUnloadOrHide);
+    };
+  }, [state, profile?.settings?.enableCloudSync, profile?.settings?.userEmail]);
+
+  // Initial load on user authentication
   const initialLoadedUserRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const userEmail = state.authUser?.email;
-    if (userEmail && initialLoadedUserRef.current !== userEmail && syncSessionId !== -1) {
+    const userEmail = state.authUser?.email || profile?.settings?.userEmail;
+    const isCloudEnabled = Boolean(profile?.settings?.enableCloudSync || state.authUser?.email);
+    if (isCloudEnabled && userEmail && initialLoadedUserRef.current !== userEmail && syncSessionId !== -1) {
       initialLoadedUserRef.current = userEmail;
       isSyncReady.current = false;
       
       restoreStateFromFirebase(userEmail).then(payload => {
         if (payload) {
           setState(prev => {
-            const prevStr = JSON.stringify({ ...prev, authToken: undefined, authUser: undefined });
-            const payloadStr = JSON.stringify({ ...payload, authToken: undefined, authUser: undefined });
+            const prevStr = JSON.stringify({ ...prev, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
+            const payloadStr = JSON.stringify({ ...payload, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
             if (prevStr === payloadStr) {
               isSyncReady.current = true;
               return prev;
@@ -554,7 +613,78 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         isSyncReady.current = true;
       });
     }
-  }, [state.authUser, syncSessionId]);
+  }, [state.authUser, profile?.settings?.enableCloudSync, profile?.settings?.userEmail, syncSessionId]);
+
+  // Real-time listener for changes from other devices
+  useEffect(() => {
+    const userEmail = state.authUser?.email || profile?.settings?.userEmail;
+    const isCloudEnabled = Boolean(profile?.settings?.enableCloudSync || state.authUser?.email);
+    if (!isCloudEnabled || !userEmail || syncSessionId === -1) return;
+
+    const unsubscribe = subscribeToFirebaseState(userEmail, (remotePayload, exists) => {
+      if (!exists || !remotePayload || isBulkOperationInProgress.current) return;
+
+      const remoteStr = JSON.stringify({ ...remotePayload, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
+      if (remoteStr === lastServerPayloadRef.current) return;
+
+      lastServerPayloadRef.current = remoteStr;
+      setState(prev => {
+        const currentStr = JSON.stringify({ ...prev, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
+        if (remoteStr === currentStr) return prev;
+
+        return {
+          ...remotePayload,
+          authToken: prev.authToken,
+          authUser: prev.authUser,
+          lastUpdatedAt: remotePayload.lastUpdatedAt || Date.now()
+        };
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [state.authUser?.email, profile?.settings?.enableCloudSync, profile?.settings?.userEmail, syncSessionId]);
+
+  // Tab focus / visibility auto-refresh: When user switches back to this tab or device, immediately fetch latest data
+  useEffect(() => {
+    const handleTabFocus = async () => {
+      const userEmail = state.authUser?.email || profile?.settings?.userEmail;
+      const isCloudEnabled = Boolean(profile?.settings?.enableCloudSync || state.authUser?.email);
+      if (document.visibilityState === 'visible' && isCloudEnabled && userEmail && !isBulkOperationInProgress.current) {
+        try {
+          const remotePayload = await restoreStateFromFirebase(userEmail);
+          if (remotePayload) {
+            const remoteStr = JSON.stringify({ ...remotePayload, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
+            if (remoteStr !== lastServerPayloadRef.current) {
+              lastServerPayloadRef.current = remoteStr;
+              setState(prev => {
+                const currentStr = JSON.stringify({ ...prev, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
+                if (currentStr === remoteStr) return prev;
+                return {
+                  ...remotePayload,
+                  authToken: prev.authToken,
+                  authUser: prev.authUser,
+                  lastUpdatedAt: remotePayload.lastUpdatedAt || Date.now()
+                };
+              });
+            }
+          }
+        } catch (e) {
+          console.error('Error refreshing on tab focus:', e);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleTabFocus);
+    window.addEventListener('focus', handleTabFocus);
+    window.addEventListener('pageshow', handleTabFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', handleTabFocus);
+      window.removeEventListener('focus', handleTabFocus);
+      window.removeEventListener('pageshow', handleTabFocus);
+    };
+  }, [profile?.settings?.enableCloudSync, profile?.settings?.userEmail, state.authUser?.email]);
 
   const showToast = (message: string, icon: string = '✅') => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -563,30 +693,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 3500);
   };
-
-  const currentProfileName = state.currentProfile && state.profiles && state.profiles[state.currentProfile]
-    ? state.currentProfile
-    : (state.profiles ? Object.keys(state.profiles)[0] : 'Personal') || 'Personal';
-
-  const rawProfile = (state.profiles && state.profiles[currentProfileName])
-    ? state.profiles[currentProfileName]
-    : getDefaultSeed().profiles.Personal;
-
-  useEffect(() => {
-    // Check notifications every minute
-    const interval = setInterval(() => {
-      const notifEnabled = rawProfile.settings.notificationsEnabled !== false;
-      checkAndTriggerDailyReminder(
-        rawProfile.expenses,
-        rawProfile.debts,
-        notifEnabled,
-        rawProfile.settings.notifTime || '08:00'
-      );
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [rawProfile]);
-
-  const profile = useMemo(() => sanitizeProfile(rawProfile), [rawProfile]);
 
   // Sync global formatting context for financialEngine so that formatCurrency() knows the display currency
   useEffect(() => {
