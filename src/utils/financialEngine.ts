@@ -287,60 +287,56 @@ export function getDebtTotalPaid(debt: DebtItem, overrides: Record<string, any> 
   const idStr = String(debt.id || '');
   const idWithout = idStr.replace(/^debt_/, '');
   const idWith = idStr.startsWith('debt_') ? idStr : 'debt_' + idStr;
+  const prefixCandidates = [idStr, idWithout, idWith];
 
-  // Track processed installments and dates to prevent duplicate counting between legacyKey and cuotaKey
-  const seenCuotaIndices = new Set<string>();
-  const seenDates = new Set<string>();
+  const freq = debt.freq || 'monthly';
+  let dueDay = debt.dueDay || '1';
+  let curr = parseDateSafe(debt.start);
+  if (freq !== 'one-time') {
+    snapDateFreq(curr, freq, dueDay);
+  }
 
-  Object.keys(overrides).forEach(k => {
-    const matchesDebt = k.startsWith(`${idStr}_`) || 
-                        k.startsWith(`${idWithout}_`) || 
-                        k.startsWith(`${idWith}_`);
-    if (!matchesDebt) return;
+  // Evaluate each installment index from 1 to inst exactly once to avoid double counting
+  for (let cIdx = 1; cIdx <= inst; cIdx++) {
+    const initPaidCount = parseInt(String(debt.initialPaidCuotas || 0), 10);
+    const isAutoPaid = cIdx <= initPaidCount;
+    const dateStr = toIsoDateSafe(curr);
 
-    // Check if this key specifies cuota index (e.g. debt_1_cuota_1 or 1_1)
-    const cuotaMatch = k.match(/(?:cuota_|_)?(\d+)$/);
-    if (cuotaMatch && !k.includes('-')) {
-      const idx = cuotaMatch[1];
-      if (seenCuotaIndices.has(idx)) return;
-      seenCuotaIndices.add(idx);
-    }
-    // Check if key specifies a date (e.g. debt_1_2026-10-15)
-    const dateMatch = k.match(/(\d{4}-\d{2}-\d{2})$/);
-    if (dateMatch) {
-      const dt = dateMatch[1];
-      if (seenDates.has(dt)) return;
-      seenDates.add(dt);
-    }
-
-    const ov = overrides[k];
-    const partialsSum = (ov.partials || []).reduce((sum: number, pt: any) => sum + getAmtInDebtCurrency(debt, parseFloat(String(pt?.amt)) || 0, pt.rawAmt, pt.currency, exchangeRates), 0);
+    let ov: any = null;
     
-    if (ov.done || ov.discarded || ov.isPaid) {
-      const isNoAffect = ov.noAffectBalance === true || ov.externalPay === true;
-      const amtUsd = (ov.amt !== undefined && !isNoAffect) ? parseFloat(String(ov.amt)) : undefined;
-      let finalAmt = 0;
-      if (amtUsd !== undefined && amtUsd > 0) {
-         finalAmt = getAmtInDebtCurrency(debt, amtUsd, ov.rawPayAmount, ov.payCurrency, exchangeRates);
-      } else {
-         finalAmt = Math.max(0, defaultPay - partialsSum);
-      }
-      paid += (finalAmt + partialsSum);
-    } else {
-      paid += partialsSum;
+    // Check candidate override keys for this specific cuota index or date
+    for (const p of prefixCandidates) {
+      if (overrides[`${p}_${cIdx}`]) { ov = overrides[`${p}_${cIdx}`]; break; }
+      if (overrides[`debt_${p}_cuota_${cIdx}`]) { ov = overrides[`debt_${p}_cuota_${cIdx}`]; break; }
+      if (overrides[`${p}_cuota_${cIdx}`]) { ov = overrides[`${p}_cuota_${cIdx}`]; break; }
+      if (overrides[`${p}_${dateStr}`]) { ov = overrides[`${p}_${dateStr}`]; break; }
+      if (overrides[`debt_${p}_${dateStr}`]) { ov = overrides[`debt_${p}_${dateStr}`]; break; }
     }
-  });
 
-  // Include initialPaidCuotas if any indices haven't been processed via overrides
-  const initPaidCount = parseInt(String(debt.initialPaidCuotas || 0), 10);
-  if (initPaidCount > 0) {
-    for (let cIdx = 1; cIdx <= initPaidCount; cIdx++) {
-      const idxStr = String(cIdx);
-      if (!seenCuotaIndices.has(idxStr)) {
-        paid += defaultPay;
-        seenCuotaIndices.add(idxStr);
+    if (ov) {
+      if (ov.explicitUnpaid) {
+        advanceDateFreq(curr, freq, dueDay);
+        continue;
       }
+      const partialsSum = (ov.partials || []).reduce((sum: number, pt: any) => sum + getAmtInDebtCurrency(debt, parseFloat(String(pt?.amt)) || 0, pt.rawAmt, pt.currency, exchangeRates), 0);
+      if (ov.done || ov.discarded) {
+        const isNoAffect = ov.noAffectBalance === true || ov.externalPay === true || ov.paidPrior === true;
+        const amtUsd = (ov.amt !== undefined && !isNoAffect) ? parseFloat(String(ov.amt)) : undefined;
+        let finalAmt = 0;
+        if (amtUsd !== undefined && amtUsd > 0) {
+          finalAmt = getAmtInDebtCurrency(debt, amtUsd, ov.rawPayAmount, ov.payCurrency, exchangeRates);
+        } else {
+          finalAmt = Math.max(0, defaultPay - partialsSum);
+        }
+        paid += (finalAmt + partialsSum);
+      } else {
+        paid += partialsSum;
+      }
+    } else if (isAutoPaid) {
+      paid += defaultPay;
     }
+
+    advanceDateFreq(curr, freq, dueDay);
   }
 
   return Math.round(paid * 100) / 100;
@@ -411,14 +407,29 @@ export function calculateAmortizationPlan(
   const idWithout = idStr.replace(/^debt_/, '');
   const idWith = idStr.startsWith('debt_') ? idStr : 'debt_' + idStr;
 
+  let currForKeys = parseDateSafe(debt.start);
+  if (freq !== 'one-time') {
+    snapDateFreq(currForKeys, freq, dueDay);
+  }
+
   const cuotaSpecificKeys = new Set<string>();
   for (let cIdx = 1; cIdx <= inst; cIdx++) {
+    const dStr = toIsoDateSafe(currForKeys);
     cuotaSpecificKeys.add(`${idStr}_${cIdx}`);
     cuotaSpecificKeys.add(`debt_${idStr}_cuota_${cIdx}`);
     cuotaSpecificKeys.add(`${idWithout}_${cIdx}`);
     cuotaSpecificKeys.add(`debt_${idWithout}_cuota_${cIdx}`);
     cuotaSpecificKeys.add(`${idWith}_${cIdx}`);
     cuotaSpecificKeys.add(`debt_${idWith}_cuota_${cIdx}`);
+
+    cuotaSpecificKeys.add(`${idStr}_${dStr}`);
+    cuotaSpecificKeys.add(`debt_${idStr}_${dStr}`);
+    cuotaSpecificKeys.add(`${idWithout}_${dStr}`);
+    cuotaSpecificKeys.add(`debt_${idWithout}_${dStr}`);
+    cuotaSpecificKeys.add(`${idWith}_${dStr}`);
+    cuotaSpecificKeys.add(`debt_${idWith}_${dStr}`);
+
+    advanceDateFreq(currForKeys, freq, dueDay);
   }
 
   // Only payments from overrides that are NOT tied to a specific cuota index should be in unallocatedPaid
@@ -433,7 +444,7 @@ export function calculateAmortizationPlan(
     if (cuotaMatch && !k.includes('-')) return;
 
     const ov = overrides[k];
-    if (ov.done || ov.discarded || ov.isPaid) {
+    if (ov.done || ov.discarded) {
       const isNoAffect = ov.noAffectBalance === true || ov.externalPay === true || ov.paidPrior === true;
       const amtUsd = (ov.amt !== undefined && !isNoAffect) ? parseFloat(String(ov.amt)) : undefined;
       const partialsSum = (ov.partials || []).reduce((sum: number, pt: any) => sum + getAmtInDebtCurrency(debt, parseFloat(String(pt?.amt)) || 0, pt.rawAmt, pt.currency, exchangeRates), 0);
@@ -504,8 +515,8 @@ export function calculateAmortizationPlan(
     }
     
     // Auto-mark cuotas as paid if within debt.initialPaidCuotas
-    if (debt.initialPaidCuotas && (i + 1) <= debt.initialPaidCuotas && !ov.explicitUnpaid && ov.done !== false && ov.isPaid !== false) {
-      ov = { ...ov, done: true, isPaid: true, paidPrior: true };
+    if (debt.initialPaidCuotas && (i + 1) <= debt.initialPaidCuotas && !ov.explicitUnpaid && ov.done !== false) {
+      ov = { ...ov, done: true, paidPrior: true };
     }
 
     let baseExpectedAmount = i < inst ? scheduleAmounts[i] : pay;
@@ -513,7 +524,7 @@ export function calculateAmortizationPlan(
     if (baseExpectedAmount === 0 && !isCard) baseExpectedAmount = pay; // fallback for one-time or 0
 
     // Recalculate remaining unpaid future cuotas dynamically based on remaining principal
-    if (ov.plannedAmt === undefined && ov.expectedAmount === undefined && !ov.done && !ov.isPaid) {
+    if (ov.plannedAmt === undefined && ov.expectedAmount === undefined && !ov.done) {
       const remainingUnpaidCount = Math.max(1, inst - i);
       const dynamicShare = Math.round((remainingPrincipal / remainingUnpaidCount) * 100) / 100;
       if (dynamicShare > 0) {
@@ -535,7 +546,7 @@ export function calculateAmortizationPlan(
     
     const partialsSum = (ov.partials || []).reduce((sum: number, pt: any) => sum + getAmtInDebtCurrency(debt, parseFloat(String(pt?.amt)) || 0, pt.rawAmt, pt.currency, exchangeRates), 0);
     
-    if ((ov.done === true || ov.isPaid === true) && !ov.explicitUnpaid) {
+    if (ov.done === true && !ov.explicitUnpaid) {
       isPaid = true;
       isCoveredByExplicit = true;
       const isNoAffect = ov.noAffectBalance === true || ov.externalPay === true || ov.paidPrior === true;
@@ -551,10 +562,10 @@ export function calculateAmortizationPlan(
       paidAmt = finalAmt + partialsSum;
       expectedAmount = Math.max(baseExpectedAmount, paidAmt);
     } else {
-      if (ov.done !== false && ov.isPaid !== false && !ov.explicitUnpaid && ov.paidAmount && parseFloat(String(ov.paidAmount)) > 0) {
+      if (ov.done !== false && !ov.explicitUnpaid && ov.paidAmount && parseFloat(String(ov.paidAmount)) > 0) {
         paidAmt += parseFloat(String(ov.paidAmount));
       }
-      const isExplicitlyPending = ov.done === false || ov.isPaid === false || ov.explicitUnpaid === true;
+      const isExplicitlyPending = ov.done === false || ov.explicitUnpaid === true;
       if (!isExplicitlyPending && unallocatedPaid > 0) {
         const canCover = Math.min(baseExpectedAmount, unallocatedPaid);
         if (canCover >= baseExpectedAmount - 0.01) {
@@ -573,9 +584,13 @@ export function calculateAmortizationPlan(
       if (paidAmt >= baseExpectedAmount - 0.01) {
         isPaid = true;
       } else {
-        requiredPay = Math.min(baseExpectedAmount - paidAmt, Math.max(0, remainingPrincipal));
-        if (!isCard && i === inst - 1) {
-          requiredPay = Math.max(0, remainingPrincipal);
+        if (i < inst) {
+          requiredPay = Math.max(0, baseExpectedAmount - paidAmt);
+        } else {
+          requiredPay = Math.min(baseExpectedAmount - paidAmt, Math.max(0, remainingPrincipal));
+          if (!isCard && i === inst - 1) {
+            requiredPay = Math.max(0, remainingPrincipal);
+          }
         }
         if (requiredPay < 0.01) {
           requiredPay = 0;
@@ -585,13 +600,11 @@ export function calculateAmortizationPlan(
       }
     }
     
-    if (!isPaid && expectedAmount <= 0) {
+    if (!isPaid && expectedAmount <= 0 && i >= inst) {
       break; 
     }
     
-    if (!isCard && i >= inst) break;
-    if (isCard && i >= inst) break;
-    if (i >= inst && remainingPrincipal <= 0.01 && unallocatedPaid <= 0.01) break;
+    if (i >= inst) break;
 
     const finalDate = ov.actualDate || dateStr;
 
@@ -710,7 +723,7 @@ export function getOverrideForItem(
         }
         if (ref.freq === 'one-time' || !ref.freq) {
           const ov = overrides[k];
-          if (ov && (ov.done || ov.isPaid || ov.discarded || ov.actualDate)) {
+          if (ov && (ov.done || ov.discarded || ov.actualDate)) {
             return ov;
           }
         }
@@ -752,6 +765,39 @@ export function calculateProjections(
   const endYear = new Date(endD + 'T12:00:00').getFullYear();
   const endMonth = new Date(endD + 'T12:00:00').getMonth();
 
+  // Find earliest real income date across profile incomes to correctly attribute expenses prior to first income to required_starting_fund
+  let firstRealIncomeDate: string | null = null;
+  (profile.incomes || []).forEach(inc => {
+    if (inc.id === 'required_starting_fund') return;
+    let d: string | null = null;
+    if (inc.freq === 'one-time') {
+      d = inc.date || null;
+    } else if (inc.freq === 'monthly') {
+      d = getDateInMonth(startYear, startMonth, Number(inc.day || 1));
+      if (d < startD) {
+        let mNext = startMonth + 1;
+        let yNext = startYear;
+        if (mNext > 11) { mNext = 0; yNext++; }
+        d = getDateInMonth(yNext, mNext, Number(inc.day || 1));
+      }
+    } else if (inc.freq === 'biweekly') {
+      const parts = String(inc.day || '15-30').split('-');
+      const v1 = parseInt(parts[0], 10) || 15;
+      d = getDateInMonth(startYear, startMonth, v1);
+      if (d < startD) {
+        const v2 = parts[1];
+        d = (v2 === '30' || v2 === 'EOM')
+          ? new Date(startYear, startMonth + 1, 0).toISOString().slice(0, 10)
+          : getDateInMonth(startYear, startMonth, parseInt(v2 || '30', 10));
+      }
+    } else if (inc.freq === 'weekly') {
+      d = startD;
+    }
+    if (d && (!firstRealIncomeDate || d < firstRealIncomeDate)) {
+      firstRealIncomeDate = d;
+    }
+  });
+
   const addOccurrence = (
     dateStr: string,
     label: string,
@@ -764,9 +810,10 @@ export function calculateProjections(
     const isDiscarded = !!(ov && ov.discarded);
     if (isDiscarded && !options?.includeDiscarded) return;
 
+    const isOneTimeItem = (ref.freq === 'one-time' || !ref.freq) && (!ref.installments || parseInt(String(ref.installments), 10) <= 1);
     let done = ov 
-      ? (ov.done !== undefined ? !!ov.done : !!ov.isPaid) 
-      : (ref.isPaid !== undefined ? !!ref.isPaid : (type === 'savings' && ref.status === 'completed'));
+      ? !!ov.done 
+      : (isOneTimeItem && ref.done !== undefined ? !!ref.done : (type === 'savings' && ref.status === 'completed'));
     
     let finalDate = dateStr;
     const userPostponed = ov ? !!ov.userPostponed : false;
@@ -774,6 +821,8 @@ export function calculateProjections(
     if (ov && ov.actualDate) {
       finalDate = ov.actualDate;
     }
+
+    const resolvedIncomeId = ov?.incomeId || ref.incomeId || (type === 'income' ? ref.id : undefined);
 
     const partials = (ov && ov.partials) ? ov.partials : [];
 
@@ -783,7 +832,7 @@ export function calculateProjections(
        if (cd && cd.color) effectiveColor = cd.color;
     }
 
-    const safeRef = { ...ref, effectiveColor };
+    const safeRef = { ...ref, effectiveColor, incomeId: resolvedIncomeId };
 
     const plannedAmt = Math.abs(amt);
     let remainingAmt = plannedAmt;
@@ -798,7 +847,7 @@ export function calculateProjections(
           label: `${label} (Abono ✓)`,
           type,
           amt: amt > 0 ? pt.amt : -pt.amt,
-          incomeId: pt.incomeId || ov?.incomeId || safeRef.incomeId || (type === 'income' ? safeRef.id : undefined),
+          incomeId: pt.incomeId || resolvedIncomeId,
           ref: safeRef,
           originalDate: pt.date,
           targetDate: pt.date,
@@ -848,12 +897,11 @@ export function calculateProjections(
         label: label + (isDiscarded ? ' (Descartada)' : (done ? ` (✓)${extraLabel}` : (partials.length > 0 ? ' (Restante)' : ''))),
         type,
         amt: isDiscarded ? 0 : (noAffectBalance ? 0 : (amt > 0 ? finalPaymentAmt : -finalPaymentAmt)),
-        incomeId: ov?.incomeId || safeRef.incomeId || (type === 'income' ? safeRef.id : undefined),
+        incomeId: resolvedIncomeId,
         ref: safeRef,
         originalDate: finalDate,
         targetDate: finalDate,
         done: isItemDone,
-        isPaid: isItemDone,
         discarded: isDiscarded,
         noAffectBalance,
         userPostponed,
@@ -1200,7 +1248,7 @@ export function calculateProjections(
             const ov = overrides[autoKey] || overrides[autoLegacyKey] || {};
 
             if (!ov || !ov.discarded) {
-              const isDone = ov ? (ov.done !== undefined ? !!ov.done : !!ov.isPaid) : false;
+              const isDone = Boolean(ov?.done);
               const actualDate = (ov && ov.actualDate) ? ov.actualDate : d;
               
               let saveAmt = excess;
@@ -1299,7 +1347,7 @@ export function calculateProjections(
           const ov = overrides[rescueKey] || overrides[rescueLegacyKey] || {};
 
           if (!ov || !ov.discarded) {
-            const isDone = ov ? (ov.done !== undefined ? !!ov.done : !!ov.isPaid) : false;
+            const isDone = Boolean(ov?.done);
             const actualDate = (ov && ov.actualDate) ? ov.actualDate : d;
             const finalRescueAmt = (ov && ov.amt !== undefined && ov.isCustomAmt)
               ? Math.abs(parseFloat(String(ov.amt)))
@@ -1355,7 +1403,7 @@ export function calculateProjections(
           const ov = overrides[fallbackKey] || overrides[fallbackLegacyKey] || {};
 
           if (!ov || !ov.discarded) {
-            const isDone = ov ? (ov.done !== undefined ? !!ov.done : !!ov.isPaid) : false;
+            const isDone = Boolean(ov?.done);
             const actualDate = (ov && ov.actualDate) ? ov.actualDate : d;
             const rescueAmt = (ov && ov.amt !== undefined && ov.isCustomAmt)
               ? Math.abs(parseFloat(String(ov.amt)))
@@ -1392,7 +1440,8 @@ export function calculateProjections(
       balance = Math.round(balance * 100) / 100;
       if (Math.abs(balance) < 0.001) balance = 0;
 
-      const isInsufficient = balance < -0.01;
+      const totalLiquidity = (savingsAccumulated || 0) + balance;
+      const isInsufficient = balance < -0.01 && totalLiquidity <= 0.001;
       const isBelowCush = targetMin > 0 && balance < targetMin && !isInsufficient;
 
       plan.push({
@@ -1415,8 +1464,11 @@ export function calculateProjections(
 /**
  * Calculates optimal debt settlements for a shared expense group
  */
-export function calculateSharedSettlement(acc: SharedGroup) {
-  const participants = acc.participants || [];
+export function calculateSharedSettlement(acc?: SharedGroup | null) {
+  if (!acc) {
+    return { total: 0, paid: {}, should: {}, transfers: [] };
+  }
+  const participants = Array.isArray(acc.participants) ? acc.participants : [];
   const n = participants.length;
   let total = 0;
   const paid: Record<string, number> = {};
@@ -1424,17 +1476,21 @@ export function calculateSharedSettlement(acc: SharedGroup) {
   participants.forEach(p => (paid[p] = 0));
 
   (acc.expenses || []).forEach(e => {
+    if (!e) return;
     const amt = parseFloat(String(e.amount || 0));
-    total += amt;
-    paid[e.paidBy] = (paid[e.paidBy] || 0) + amt;
+    const safeAmt = isNaN(amt) ? 0 : amt;
+    total += safeAmt;
+    if (e.paidBy) {
+      paid[e.paidBy] = (paid[e.paidBy] || 0) + safeAmt;
+    }
   });
 
   const should: Record<string, number> = {};
   if (acc.splitType === 'percentage') {
     const pcts = acc.percentages || {};
     participants.forEach(p => {
-      const pct = parseFloat(String(pcts[p] || (100 / n)));
-      should[p] = total * (pct / 100);
+      const pct = parseFloat(String(pcts[p] || (n > 0 ? 100 / n : 0)));
+      should[p] = total * ((isNaN(pct) ? 0 : pct) / 100);
     });
   } else {
     participants.forEach(p => {
@@ -1758,9 +1814,7 @@ export function calculateIncomeAccountBalances(
         const isAssignedToThis = assignedId === inc.id;
         // If unassigned or assigned to a non-existent account, attribute to primary account (index === 0)
         // EXCEPTION: if assigned to required_starting_fund, do not attribute to primary account
-        const isFallbackToPrimary = index === 0 && (!assignedId || !validIncomeIds.has(assignedId)) && assignedId !== 'required_starting_fund';
-
-        if ((isAssignedToThis || isFallbackToPrimary) && affectsCash) {
+        if (isAssignedToThis && affectsCash) {
           totalProjectedOutflows += occUsd;
           // Actual money subtracted from current balance: occurred when marked as done up to today
           if (isOccDone && isPastOrToday) {

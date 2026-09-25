@@ -142,7 +142,6 @@ export interface DebtItem {
   currency?: CurrencyCode;
   freq?: FrequencyType;
   done?: boolean;
-  isPaid?: boolean;
 }
 
 export interface SavingsPlatform {
@@ -227,7 +226,6 @@ export interface P2PLoan {
 
 export interface OverrideRecord {
   done?: boolean;
-  isPaid?: boolean;
   discarded?: boolean;
   actualDate?: string;
   amt?: number;
@@ -297,7 +295,6 @@ export interface PlanOccurrence {
   };
   originalDate: string;
   done: boolean;
-  isPaid?: boolean;
   isPartial?: boolean;
   strictDate?: boolean;
   userPostponed?: boolean;

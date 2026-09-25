@@ -76,7 +76,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
       draft.overrides = {};
       if (draft.savingsList) {
         draft.savingsList.forEach(s => {
-          if (s.status === 'completed') s.status = 'active';
+          s.status = 'pending';
+          s.delivered = false;
         });
       }
       if (draft.settings.customDebts) {
@@ -87,11 +88,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
       if (draft.debts) {
         draft.debts.forEach(d => {
           d.initialPaidCuotas = 0;
+          d.done = false;
         });
       }
       if (draft.incomes) {
         draft.incomes.forEach(inc => {
-          inc.isPaid = false;
           inc.done = false;
           if (inc.name) {
             inc.name = inc.name.replace(/\s*\([^)]*\)/g, '').replace(/[\✓\√\✔\✅]+/g, '').trim();
@@ -100,7 +101,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
       }
       if (draft.expenses) {
         draft.expenses.forEach(exp => {
-          exp.isPaid = false;
           exp.done = false;
           if (exp.name) {
             exp.name = exp.name.replace(/\s*\([^)]*\)/g, '').replace(/[\✓\√\✔\✅]+/g, '').trim();
@@ -109,7 +109,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
       }
     });
     setConfirmPendingReset(false);
-    showToast('¡Todos los pagos, gastos e ingresos se cambiaron a Pendiente!', '🔄');
+    showToast('¡Todos los ingresos, gastos, deudas y ahorros se cambiaron a Pendiente!', '🔄');
   };
 
   const settings = profile.settings;
@@ -975,7 +975,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                 <div>
                   <h3 className="text-sm font-bold text-amber-900 dark:text-amber-100">Restablecer Pagos a Pendiente</h3>
                   <p className="text-xs text-amber-700/80 dark:text-amber-300/80">
-                    Cambia el estado de todos los gastos, deudas e ingresos marcados como pagados de vuelta a PENDIENTE sin borrar tus registros.
+                    Cambia el estado de todos los ingresos, gastos, deudas y ahorros marcados como pagados o completados de vuelta a PENDIENTE sin borrar tus registros.
                   </p>
                 </div>
               </div>

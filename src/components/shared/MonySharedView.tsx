@@ -159,7 +159,13 @@ export const MonySharedView: React.FC = () => {
 
   const groups = profile.sharedAccounts || [];
   const loans = profile.p2p || [];
-  const contacts = profile.settings.contacts || [];
+  const contacts = profile.settings?.contacts || [];
+
+  React.useEffect(() => {
+    if (selectedGroupIdx !== null && (!groups[selectedGroupIdx] || selectedGroupIdx >= groups.length)) {
+      setSelectedGroupIdx(null);
+    }
+  }, [groups, selectedGroupIdx]);
 
   const activeLoans = loans.filter(l => l.status !== 'closed' && l.status !== 'rejected' && l.status !== 'offline_closed');
   const closedLoans = loans.filter(l => l.status === 'closed' || l.status === 'rejected' || l.status === 'offline_closed');
@@ -270,6 +276,9 @@ export const MonySharedView: React.FC = () => {
         const trimmed = name.trim();
         updateProfileData(draft => {
           if (draft.sharedAccounts && draft.sharedAccounts[groupIdx]) {
+            if (!Array.isArray(draft.sharedAccounts[groupIdx].participants)) {
+              draft.sharedAccounts[groupIdx].participants = [];
+            }
             if (!draft.sharedAccounts[groupIdx].participants.includes(trimmed)) {
               draft.sharedAccounts[groupIdx].participants.push(trimmed);
             }
@@ -290,6 +299,7 @@ export const MonySharedView: React.FC = () => {
         updateProfileData(draft => {
           if (draft.sharedAccounts && draft.sharedAccounts[groupIdx]) {
             const group = draft.sharedAccounts[groupIdx];
+            if (!Array.isArray(group.participants)) group.participants = [];
             const pIndex = group.participants.indexOf(oldName);
             if (pIndex !== -1) {
               group.participants[pIndex] = trimmed;
@@ -327,7 +337,7 @@ export const MonySharedView: React.FC = () => {
   };
 
   const handleRemoveParticipantFromGroup = (groupIdx: number, participantName: string) => {
-    const myAlias = profile.settings.myAlias || 'Yo';
+    const myAlias = profile.settings?.myAlias || 'Yo';
     if (participantName === myAlias) {
       showToast('No puedes eliminarte a ti mismo del grupo.', '⚠️');
       return;
@@ -339,7 +349,7 @@ export const MonySharedView: React.FC = () => {
         updateProfileData(draft => {
           if (draft.sharedAccounts && draft.sharedAccounts[groupIdx]) {
             const group = draft.sharedAccounts[groupIdx];
-            group.participants = group.participants.filter((p: string) => p !== participantName);
+            group.participants = (group.participants || []).filter((p: string) => p !== participantName);
             if (group.expenses) {
               group.expenses = group.expenses.filter((e: any) => e.paidBy !== participantName);
             }
@@ -360,7 +370,8 @@ export const MonySharedView: React.FC = () => {
     setGroupExpenseDesc('');
     setGroupExpenseAmount('');
     setGroupExpenseCurrency('USD_BCV');
-    setGroupExpensePaidBy(group.participants[0] || 'Yo');
+    const pList = Array.isArray(group.participants) ? group.participants : [];
+    setGroupExpensePaidBy(pList[0] || 'Yo');
     setShowGroupExpenseModal(true);
   };
 
@@ -876,8 +887,10 @@ export const MonySharedView: React.FC = () => {
               ) : (
                 <div className="space-y-2">
                   {groups.map((group, idx) => {
+                    if (!group) return null;
+                    const groupParticipants = Array.isArray(group.participants) ? group.participants : [];
                     const settlement = calculateSharedSettlement(group);
-                    const myAlias = profile.settings.myAlias || 'Yo';
+                    const myAlias = profile.settings?.myAlias || 'Yo';
                     const myStatus = group.participantStatus?.[myAlias];
                     const isPending = myStatus === 'pending';
 
@@ -893,10 +906,10 @@ export const MonySharedView: React.FC = () => {
                         <div className="flex items-center justify-between">
                           <div className="space-y-0.5">
                             <p className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                              {group.name} {isPending && <span className="ml-1 text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400 px-1.5 py-0.5 rounded-lg">Nueva Invitación</span>}
+                              {group.name || 'Grupo sin nombre'} {isPending && <span className="ml-1 text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400 px-1.5 py-0.5 rounded-lg">Nueva Invitación</span>}
                             </p>
                             <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                              👥 {group.participants.length} integrantes
+                              👥 {groupParticipants.length} integrantes
                             </p>
                           </div>
                           {!isPending && (
@@ -940,8 +953,24 @@ export const MonySharedView: React.FC = () => {
             /* Selected Group Detail */
             <div className="space-y-4">
               {(() => {
-                const group = groups[selectedGroupIdx];
+                const group = selectedGroupIdx !== null ? groups[selectedGroupIdx] : undefined;
+                if (!group) {
+                  return (
+                    <div className="p-6 text-center bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-3">
+                      <p className="text-xs text-slate-500 dark:text-slate-400">Este grupo ya no existe o fue eliminado.</p>
+                      <button
+                        onClick={() => setSelectedGroupIdx(null)}
+                        className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold"
+                      >
+                        ❮ Volver a Grupos
+                      </button>
+                    </div>
+                  );
+                }
                 const settlement = calculateSharedSettlement(group);
+                const groupParticipants = Array.isArray(group.participants) ? group.participants : [];
+                const groupExpenses = Array.isArray(group.expenses) ? group.expenses : [];
+
                 return (
                   <>
                     <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -953,14 +982,14 @@ export const MonySharedView: React.FC = () => {
                       </button>
                       <div className="flex items-center gap-2">
                         <h3 className="text-sm font-black text-slate-900 dark:text-slate-100">
-                          {group.name}
+                          {group.name || 'Grupo sin nombre'}
                         </h3>
-                        <button onClick={() => handleDeleteGroup(selectedGroupIdx)} className="p-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 dark:bg-rose-900/30 dark:hover:bg-rose-900/50 transition-colors" title="Eliminar Grupo">
+                        <button onClick={() => handleDeleteGroup(selectedGroupIdx!)} className="p-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 dark:bg-rose-900/30 dark:hover:bg-rose-900/50 transition-colors" title="Eliminar Grupo">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                       <button
-                        onClick={() => openAddGroupExpenseModal(selectedGroupIdx)}
+                        onClick={() => openAddGroupExpenseModal(selectedGroupIdx!)}
                         className="px-3 py-1.5 bg-blue-600 text-white rounded-xl text-xs font-semibold shadow-xs hover:bg-blue-700 transition-colors"
                       >
                         + Gasto
@@ -982,7 +1011,7 @@ export const MonySharedView: React.FC = () => {
                       </div>
                       <div className="text-right">
                         <span className="text-[10px] bg-white/20 backdrop-blur-xs text-white px-2.5 py-1 rounded-full font-bold">
-                          {group.expenses.length} {group.expenses.length === 1 ? 'Gasto' : 'Gastos'}
+                          {groupExpenses.length} {groupExpenses.length === 1 ? 'Gasto' : 'Gastos'}
                         </span>
                       </div>
                     </div>
@@ -990,17 +1019,17 @@ export const MonySharedView: React.FC = () => {
                     <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-slate-500 flex items-center gap-1">
-                          👥 Integrantes del Grupo ({group.participants.length})
+                          👥 Integrantes del Grupo ({groupParticipants.length})
                         </span>
                         <button
-                          onClick={() => handleAddParticipantToGroup(selectedGroupIdx)}
+                          onClick={() => handleAddParticipantToGroup(selectedGroupIdx!)}
                           className="px-2.5 py-1 bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-200 rounded-lg text-[11px] font-bold hover:bg-blue-200 transition-colors flex items-center gap-1"
                         >
                           <Plus className="w-3 h-3" /> Agregar Persona
                         </button>
                       </div>
                       <div className="flex flex-wrap gap-1.5">
-                        {group.participants.map((p, pIdx) => {
+                        {groupParticipants.map((p, pIdx) => {
                           const status = group.participantStatus?.[p];
                           let statusIcon = '';
                           let statusClass = '';
@@ -1016,15 +1045,15 @@ export const MonySharedView: React.FC = () => {
                             statusClass = ' border-rose-300 dark:border-rose-700/50';
                           }
                           
-                          const myAlias = profile.settings.myAlias || 'Yo';
+                          const myAlias = profile.settings?.myAlias || 'Yo';
                           const isMe = p === myAlias;
-                          const ctData = isMe ? profile : profile.settings.contacts?.find(c => c.alias === p);
+                          const ctData = isMe ? profile : profile.settings?.contacts?.find(c => c.alias === p);
                           const pAvatar = ctData?.avatar;
                           return (
                             <div key={pIdx} className={`px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 ${statusClass}`}>
                               {pAvatar && <img src={pAvatar} alt={p} className="w-4 h-4 rounded-full object-cover inline-block" />}
                               <span
-                                onClick={() => !isMe && handleEditParticipantInGroup(selectedGroupIdx, p)}
+                                onClick={() => !isMe && handleEditParticipantInGroup(selectedGroupIdx!, p)}
                                 className={!isMe ? 'cursor-pointer hover:text-blue-500 hover:underline' : ''}
                                 title={!isMe ? 'Toca para editar alias' : undefined}
                               >
@@ -1033,7 +1062,7 @@ export const MonySharedView: React.FC = () => {
                               <span className="text-[10px]">{statusIcon}</span>
                               {!isMe && (
                                 <div className="flex items-center gap-0.5 border-l border-slate-200 dark:border-slate-700 pl-1.5 ml-0.5">
-                                  <button onClick={() => handleRemoveParticipantFromGroup(selectedGroupIdx, p)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors cursor-pointer" title="Eliminar participante">
+                                  <button onClick={() => handleRemoveParticipantFromGroup(selectedGroupIdx!, p)} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-rose-500 rounded transition-colors cursor-pointer" title="Eliminar participante">
                                     <Trash2 className="w-3 h-3" />
                                   </button>
                                 </div>
@@ -1046,11 +1075,11 @@ export const MonySharedView: React.FC = () => {
 
                     <div className="space-y-2">
                       <h4 className="text-xs font-bold text-slate-400 uppercase">Compras y Pagos</h4>
-                      {group.expenses.length === 0 ? (
+                      {groupExpenses.length === 0 ? (
                         <p className="text-xs text-slate-400 py-4 text-center">Sin gastos en este grupo.</p>
                       ) : (
                         <div className="space-y-1.5">
-                          {group.expenses.map((e, eIdx) => (
+                          {groupExpenses.map((e, eIdx) => (
                             <div key={e.id || eIdx} className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl flex items-center justify-between text-xs">
                               <div>
                                 <p className="font-bold text-slate-900 dark:text-slate-100">{e.desc}</p>
@@ -1065,7 +1094,7 @@ export const MonySharedView: React.FC = () => {
 
                     <div className="space-y-2 pt-2">
                       <h4 className="text-xs font-bold text-slate-400 uppercase">Liquidación Final</h4>
-                      {settlement.transfers.length === 0 ? (
+                      {(!settlement.transfers || settlement.transfers.length === 0) ? (
                         <p className="text-xs text-emerald-600 font-bold bg-emerald-50 dark:bg-emerald-950/30 p-3 rounded-xl text-center">
                           ✅ ¡Cuentas claras! Nadie debe nada.
                         </p>
@@ -2080,7 +2109,7 @@ export const MonySharedView: React.FC = () => {
                   onChange={e => setGroupExpensePaidBy(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-slate-900 dark:text-slate-100"
                 >
-                  {(groups[groupExpenseGroupIdx]?.participants || ['Yo']).map(p => (
+                  {((groupExpenseGroupIdx !== null && groups[groupExpenseGroupIdx]?.participants) || ['Yo']).map(p => (
                     <option key={p} value={p}>{p}</option>
                   ))}
                 </select>

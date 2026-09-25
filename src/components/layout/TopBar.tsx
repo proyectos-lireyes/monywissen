@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { AvatarViewerModal } from '../modals/AvatarViewerModal';
 import { updateUserAvatar, saveUserProfileToFirestore } from '../../utils/firebase';
-import { Menu, Printer, Bell, ArrowRightLeft, X, ExternalLink, ShieldAlert, Clock, Handshake, Download } from 'lucide-react';
+import { Menu, Printer, Bell, ArrowRightLeft, X, ExternalLink, ShieldAlert, Clock, Handshake, Download, PiggyBank } from 'lucide-react';
 import { CurrencyModal } from '../modals/CurrencyModal';
 import { AppUpdaterModal } from '../updater/AppUpdaterModal';
 import { formatCurrency } from '../../utils/financialEngine';
@@ -18,7 +18,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenProfile,
   onExportPDF,
 }) => {
-  const { activeView, profile, currentProfileName, setActiveView, exchangeRates, state, updateState, updateProfileData } = useApp();
+  const { activeView, profile, currentProfileName, setActiveView, exchangeRates, state, updateState, updateProfileData, integrityReport } = useApp();
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
   const [avatarViewerOpen, setAvatarViewerOpen] = useState(false);
   const [showNotifMenu, setShowNotifMenu] = useState(false);
@@ -52,14 +52,16 @@ export const TopBar: React.FC<TopBarProps> = ({
   const sharedGroups = profile.sharedAccounts || [];
   const activeDebts = profile.debts || [];
   const upcomingDebts = activeDebts.filter(d => (d.balance ?? 0) > 0);
+  const savingsRescues = (integrityReport?.preventiveWarnings || []).filter(w => w.type === 'SAVINGS_RESCUE_INFO');
 
   const isUpdateAvailable = !!updateState?.hasUpdate && !updateState?.isCompleted && !dismissedAlerts.includes('update');
   const showP2PNotif = pendingP2P.length > 0 && !dismissedAlerts.includes('p2p');
   const showContactsNotif = pendingContacts.length > 0 && !dismissedAlerts.includes('contacts');
   const showSharedNotif = sharedGroups.length > 0 && !dismissedAlerts.includes('shared');
   const showDebtsNotif = upcomingDebts.length > 0 && !dismissedAlerts.includes('debts');
+  const showRescueNotif = savingsRescues.length > 0 && !dismissedAlerts.includes('rescues');
 
-  const totalNotifsCount = (isUpdateAvailable ? 1 : 0) + (showP2PNotif ? 1 : 0) + (showContactsNotif ? 1 : 0) + (showSharedNotif ? 1 : 0) + (showDebtsNotif ? 1 : 0);
+  const totalNotifsCount = (isUpdateAvailable ? 1 : 0) + (showP2PNotif ? 1 : 0) + (showContactsNotif ? 1 : 0) + (showSharedNotif ? 1 : 0) + (showDebtsNotif ? 1 : 0) + (showRescueNotif ? 1 : 0);
 
   const handleDismissAlert = (alertType: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -258,6 +260,36 @@ export const TopBar: React.FC<TopBarProps> = ({
                       <p className="text-[10px] text-amber-700 dark:text-amber-300 pr-4">
                         Tienes {upcomingDebts.length} compromiso(s) de pago vigentes.
                       </p>
+                    </div>
+                  )}
+
+                  {/* Informative Savings Rescues Notification */}
+                  {showRescueNotif && (
+                    <div className="p-2.5 bg-purple-50 dark:bg-purple-950/40 rounded-xl border border-purple-100 dark:border-purple-900/40 space-y-1 relative group">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-purple-900 dark:text-purple-200 text-[11px] flex items-center gap-1">
+                          <PiggyBank className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" /> Rescates de Ahorro Informativos ({savingsRescues.length})
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              setActiveView('calendar');
+                              setShowNotifMenu(false);
+                            }}
+                            className="text-[10px] text-purple-600 dark:text-purple-400 font-bold hover:underline flex items-center gap-0.5"
+                          >
+                            Ver <ExternalLink className="w-2.5 h-2.5" />
+                          </button>
+                          <button onClick={(e) => handleDismissAlert('rescues', e)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" title="Descartar">
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                      {savingsRescues.map(r => (
+                        <p key={r.id} className="text-[10px] text-purple-800 dark:text-purple-300 pr-4">
+                          • {r.message}
+                        </p>
+                      ))}
                     </div>
                   )}
 

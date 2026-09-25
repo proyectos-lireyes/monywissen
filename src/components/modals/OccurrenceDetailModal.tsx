@@ -203,8 +203,8 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
       setPartialAmt('');
       const isNoAffectRecorded = overrideRecord.noAffectBalance === true || overrideRecord.externalPay === true || overrideRecord.paidPrior === true;
       setAffectBalance(!isNoAffectRecorded);
-      const isReqFund = refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || occurrence?.label === 'Fondo Requerido para Iniciar';
-      const defaultIncId = isReqFund ? 'required_starting_fund' : (overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId || (profile.incomes?.[0]?.id || ''));
+      const isReqFund = refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || occurrence?.label === 'Fondo Requerido para Iniciar' || occurrence?.incomeId === 'required_starting_fund' || overrideRecord.incomeId === 'required_starting_fund';
+      const defaultIncId = isReqFund ? 'required_starting_fund' : (overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId || '');
       setSelectedIncomeId(isNoAffectRecorded ? '__EXTERNAL__' : defaultIncId);
       if (originalDate) {
         setActualDate(planDate || originalDate);
@@ -273,6 +273,19 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
       `${sanitizedId}_${originalDate}`,
     ].filter(Boolean) as string[]);
 
+    const cuotaIndex = occurrence?.ref?.index || occurrence?.index;
+    const idWith = rawId.startsWith('debt_') ? rawId : 'debt_' + rawId;
+    if (cuotaIndex !== undefined) {
+      keysToWrite.add(`${refId}_${cuotaIndex}`);
+      keysToWrite.add(`debt_${refId}_cuota_${cuotaIndex}`);
+      keysToWrite.add(`${idWithout}_${cuotaIndex}`);
+      keysToWrite.add(`debt_${idWithout}_cuota_${cuotaIndex}`);
+      keysToWrite.add(`${idWith}_${cuotaIndex}`);
+      keysToWrite.add(`debt_${idWith}_cuota_${cuotaIndex}`);
+      keysToWrite.add(`expense_${idWithout}_cuota_${cuotaIndex}`);
+      keysToWrite.add(`expense_${refId}_cuota_${cuotaIndex}`);
+    }
+
     if (effectiveUpdates.actualDate) {
       const actDate = effectiveUpdates.actualDate;
       keysToWrite.add(`${refId}_${actDate}`);
@@ -301,28 +314,34 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
       };
     });
 
-    // Update base item directly in draft.incomes / draft.expenses for single source of truth
+    // Update base item directly ONLY if it is a ONE-TIME non-installment item
     if (isIncome || type === 'income') {
       (draft.incomes || []).forEach((inc: any) => {
         if (inc.id === refId || inc.id === idWithout || inc.id === rawId || inc.name === rawName) {
-          if (effectiveUpdates.done !== undefined) {
-            inc.isPaid = effectiveUpdates.done;
-            inc.done = effectiveUpdates.done;
-          }
-          if (effectiveUpdates.actualDate && inc.freq === 'one-time') {
-            inc.date = effectiveUpdates.actualDate;
+          const isOneTime = inc.freq === 'one-time' || !inc.freq;
+          if (isOneTime) {
+            if (effectiveUpdates.done !== undefined) {
+              inc.isPaid = effectiveUpdates.done;
+              inc.done = effectiveUpdates.done;
+            }
+            if (effectiveUpdates.actualDate) {
+              inc.date = effectiveUpdates.actualDate;
+            }
           }
         }
       });
     } else if (type === 'expense' || occurrence?.type === 'expense') {
       (draft.expenses || []).forEach((exp: any) => {
         if (exp.id === refId || exp.id === idWithout || exp.id === rawId || exp.name === rawName) {
-          if (effectiveUpdates.done !== undefined) {
-            exp.isPaid = effectiveUpdates.done;
-            exp.done = effectiveUpdates.done;
-          }
-          if (effectiveUpdates.actualDate && exp.freq === 'one-time') {
-            exp.date = effectiveUpdates.actualDate;
+          const isOneTime = (exp.freq === 'one-time' || !exp.freq) && (!exp.installments || parseInt(String(exp.installments), 10) <= 1);
+          if (isOneTime) {
+            if (effectiveUpdates.done !== undefined) {
+              exp.isPaid = effectiveUpdates.done;
+              exp.done = effectiveUpdates.done;
+            }
+            if (effectiveUpdates.actualDate) {
+              exp.date = effectiveUpdates.actualDate;
+            }
           }
         }
       });
@@ -599,11 +618,15 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
         targetKeys.add(`debt_${idWithout}_cuota_${cuotaIndex}`);
       }
 
-      // Scan draft.overrides for ALL keys matching candidate IDs
+      // Scan draft.overrides ONLY for keys matching THIS SPECIFIC occurrence date or cuota index
       Object.keys(draft.overrides).forEach(k => {
-        for (const cid of candidateIds) {
-          if (cid && cid.length > 2 && k.includes(cid)) {
-            targetKeys.add(k);
+        const matchesDate = originalDate && k.endsWith(`_${originalDate}`);
+        const matchesCuota = cuotaIndex !== undefined && (k.endsWith(`_${cuotaIndex}`) || k.includes(`cuota_${cuotaIndex}`));
+        if (matchesDate || matchesCuota) {
+          for (const cid of candidateIds) {
+            if (cid && cid.length > 2 && k.includes(cid)) {
+              targetKeys.add(k);
+            }
           }
         }
       });
@@ -614,7 +637,7 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
         }
       });
 
-      // Update base item in incomes / expenses / debts
+      // Update base item in incomes / expenses / debts ONLY if it is a ONE-TIME non-installment item
       if (type === 'income' || occurrence?.type === 'income') {
         (draft.incomes || []).forEach((inc: any) => {
           if (
@@ -623,8 +646,11 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
             (cleanName && inc.name && inc.name.includes(cleanName)) ||
             sanitizeDocId(inc.name, inc.id) === sanitizedId
           ) {
-            inc.isPaid = false;
-            inc.done = false;
+            const isOneTime = inc.freq === 'one-time' || !inc.freq;
+            if (isOneTime) {
+              inc.isPaid = false;
+              inc.done = false;
+            }
             if (cleanName && inc.name && (inc.name.includes('(') || inc.name.includes('✓') || inc.name.includes('√'))) {
               inc.name = cleanName;
             }
@@ -638,8 +664,11 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
             (cleanName && exp.name && exp.name.includes(cleanName)) ||
             sanitizeDocId(exp.name, exp.id) === sanitizedId
           ) {
-            exp.isPaid = false;
-            exp.done = false;
+            const isOneTime = (exp.freq === 'one-time' || !exp.freq) && (!exp.installments || parseInt(String(exp.installments), 10) <= 1);
+            if (isOneTime) {
+              exp.isPaid = false;
+              exp.done = false;
+            }
             if (cleanName && exp.name && (exp.name.includes('(') || exp.name.includes('✓') || exp.name.includes('√'))) {
               exp.name = cleanName;
             }
@@ -945,7 +974,7 @@ return (
                   {isIncome ? 'Cambiar cuenta receptora para este ingreso:' : 'Cambiar cuenta de origen para este pago:'}
                 </label>
                 <select
-                  value={overrideRecord.noAffectBalance ? '__EXTERNAL__' : (overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId || (refId === 'required_starting_fund' ? 'required_starting_fund' : (profile.incomes?.[0]?.id || '')))}
+                  value={overrideRecord.noAffectBalance ? '__EXTERNAL__' : (overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId || (refId === 'required_starting_fund' ? 'required_starting_fund' : ''))}
                   onChange={e => {
                     const val = e.target.value;
                     const finalAmountUsd = overrideRecord.amt !== undefined && overrideRecord.amt > 0 ? overrideRecord.amt : plannedUsdAmount;
@@ -967,6 +996,15 @@ return (
                         });
                       });
                       showToast('Cambiado a cuenta: Fondo Requerido', '🪙');
+                    } else if (!val) {
+                      updateProfileData(draft => {
+                        applyOverride(draft, {
+                          noAffectBalance: false,
+                          incomeId: undefined,
+                          amt: finalAmountUsd > 0 ? finalAmountUsd : plannedUsdAmount
+                        });
+                      });
+                      showToast('Sin cuenta asignada', '❓');
                     } else {
                       updateProfileData(draft => {
                         applyOverride(draft, {
@@ -981,7 +1019,10 @@ return (
                   }}
                   className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-bold text-slate-800 dark:text-slate-200"
                 >
-                  {(refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || balanceMap['required_starting_fund'] !== undefined) && (
+                  <option value="">
+                    ❓ Sin cuenta especificada (indicar origen)
+                  </option>
+                  {(refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || occurrence?.incomeId === 'required_starting_fund' || overrideRecord.incomeId === 'required_starting_fund' || balanceMap['required_starting_fund'] !== undefined) && (
                     <option value="required_starting_fund">
                       🪙 Fondo Requerido — {formatCurrency(balanceMap['required_starting_fund'] ?? 0)}
                     </option>
@@ -1031,7 +1072,10 @@ return (
                 }}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs text-slate-800 dark:text-slate-100"
               >
-                {(refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || balanceMap['required_starting_fund'] !== undefined) && (
+                <option value="">
+                  ❓ Sin cuenta especificada (indicar origen)
+                </option>
+                {(refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || occurrence?.incomeId === 'required_starting_fund' || overrideRecord.incomeId === 'required_starting_fund' || balanceMap['required_starting_fund'] !== undefined) && (
                   <option value="required_starting_fund">
                     🪙 Fondo Requerido — {formatCurrency(balanceMap['required_starting_fund'] ?? 0)}
                   </option>

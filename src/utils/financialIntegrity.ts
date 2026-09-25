@@ -38,7 +38,7 @@ export interface DoubleEntryIssue {
 export interface PreventiveFlowWarning {
   id: string;
   date: string;
-  type: 'NEGATIVE_DEFICIT' | 'MIN_BALANCE_BREACH' | 'HIGH_DEBT_SERVICE_RATIO';
+  type: 'NEGATIVE_DEFICIT' | 'MIN_BALANCE_BREACH' | 'HIGH_DEBT_SERVICE_RATIO' | 'SAVINGS_RESCUE_INFO';
   projectedBalance: number;
   requiredCushion: number;
   causeLabel?: string;
@@ -218,8 +218,24 @@ export function detectPreventiveNegativeFlow(profile: UserProfile, exchangeRates
   let firstDeficitFound = false;
 
   plan.forEach((item, idx) => {
-    // 1. Negative Cash Flow Deficit
-    if (item.balance < 0) {
+    // 0. Savings Rescue Informative Notification
+    if (item.type === 'rescate_ahorros' && item.amt > 0) {
+      warnings.push({
+        id: `prev_rescue_${item.date}_${idx}`,
+        date: item.date,
+        type: 'SAVINGS_RESCUE_INFO',
+        projectedBalance: Math.round(item.balance * 100) / 100,
+        requiredCushion: minBalance,
+        causeLabel: 'Rescate de Ahorros',
+        causeAmount: item.amt,
+        message: `ℹ️ Rescate Informativo de Ahorros (${formatDateStr(item.date)}): Se destinaron ${formatCurrency(item.amt)} de tus ahorros acumulados para cubrir un compromiso en caja (Ahorros restantes: ${formatCurrency(item.savingsAccumulated || 0)}).`,
+        recommendedAction: `Aviso informativo: Tu liquidez se mantiene respaldada por tus ahorros. No representa un quiebre de caja.`,
+      });
+    }
+
+    // 1. Negative Cash Flow Deficit (Quiebre: cuando Ahorros + Ingresos <= 0)
+    const totalLiquidity = (item.savingsAccumulated || 0) + item.balance;
+    if (item.balance < -0.001 && totalLiquidity <= 0.001) {
       if (!firstDeficitFound) {
         firstDeficitFound = true;
       }
@@ -231,7 +247,7 @@ export function detectPreventiveNegativeFlow(profile: UserProfile, exchangeRates
         requiredCushion: minBalance,
         causeLabel: item.label,
         causeAmount: item?.amt,
-        message: `Iliquidez crítica proyectada para el ${item.date}: Saldo de ${formatCurrency(item.balance)}.`,
+        message: `Iliquidez crítica (Quiebre) proyectada para el ${item.date}: Saldo de ${formatCurrency(item.balance)} (Ahorros + Ingresos <= 0).`,
         recommendedAction: `Posponer "${item.label}" (${formatCurrency(Math.abs(item?.amt || 0))}) o inyectar ${formatCurrency(Math.abs(item.balance))} antes del ${item.date}.`,
       });
     }
@@ -396,12 +412,12 @@ export function evaluateCashBreaches(profile: UserProfile, exchangeRates: Record
   let inBreach = false;
 
   plan.forEach((p) => {
-    // A breach occurs if a savings rescue was required OR if the balance dropped below zero
-    const isRescue = p.type === 'rescate_ahorros';
-    const isUncoveredDeficit = p.balance < -0.001;
+    // A breach (quiebre) occurs ONLY when total available funds (ahorros + ingresos) <= 0
+    const totalLiquidity = (p.savingsAccumulated || 0) + p.balance;
+    const isUncoveredDeficit = p.balance < -0.001 && totalLiquidity <= 0.001;
 
-    if (isRescue || isUncoveredDeficit) {
-      const deficitAmt = isRescue ? Math.abs(p.amt || 0) : Math.abs(p.balance || 0);
+    if (isUncoveredDeficit) {
+      const deficitAmt = Math.abs(p.balance || 0);
       if (!inBreach) {
         inBreach = true;
         currentBreachMinBal = deficitAmt;

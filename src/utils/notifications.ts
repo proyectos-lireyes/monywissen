@@ -95,7 +95,7 @@ export function checkAndTriggerDailyReminder(
 
   // Find due payments for today
   const dueExpensesToday = expenses.filter(e => {
-    if ((e as any).isPaid || (e as any).done) return false;
+    if ((e as any).done) return false;
     if (e.freq === 'monthly' && Number(e.day) === dayOfMonth) return true;
     if (e.freq === 'one-time' && e.date === todayDateStr) return true;
     if (e.start === todayDateStr) return true;
@@ -103,7 +103,7 @@ export function checkAndTriggerDailyReminder(
   });
 
   const dueDebtsToday = debts.filter(d => {
-    if ((d as any).isPaid || (d as any).done) return false;
+    if ((d as any).done) return false;
     if (d.dueDay && Number(d.dueDay) === dayOfMonth) return true;
     if (d.start === todayDateStr) return true;
     return false;
@@ -111,7 +111,7 @@ export function checkAndTriggerDailyReminder(
 
   // Find overdue payments (retrasados)
   const overdueExpenses = expenses.filter(e => {
-    if ((e as any).isPaid || (e as any).done) return false;
+    if ((e as any).done) return false;
     if (e.freq === 'one-time' && e.date && e.date < todayDateStr) return true;
     if (e.freq === 'monthly' && Number(e.day) < dayOfMonth) return true;
     if (e.start && e.start < todayDateStr) return true;
@@ -119,7 +119,7 @@ export function checkAndTriggerDailyReminder(
   });
 
   const overdueDebts = debts.filter(d => {
-    if ((d as any).isPaid || (d as any).done) return false;
+    if ((d as any).done) return false;
     if (d.dueDay && Number(d.dueDay) < dayOfMonth) return true;
     if (d.start && d.start < todayDateStr) return true;
     return false;

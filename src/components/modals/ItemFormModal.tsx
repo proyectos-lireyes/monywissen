@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { FrequencyType, IncomeItem, ExpenseItem, DebtItem, SavingsItem } from '../../types';
-import { todayStr, formatCurrency, formatDateStr, advanceDateFreq, getRemainingDebtAmount, getDebtTotalPaid, calculateAmortizationPlan, calculateProjections, sanitizeDocId, getOverrideForItem } from '../../utils/financialEngine';
+import { todayStr, formatCurrency, formatDateStr, advanceDateFreq, getRemainingDebtAmount, getDebtTotalPaid, calculateAmortizationPlan, calculateProjections, calculateIncomeAccountBalances, sanitizeDocId, getOverrideForItem } from '../../utils/financialEngine';
 import { X, Trash2, CheckCircle, Check, RotateCcw, ChevronDown } from 'lucide-react';
 
 const CURRENCY_OPTIONS: CustomSelectOption[] = [
@@ -143,6 +143,9 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
   onClose,
 }) => {
   const { profile, updateProfileData, showToast, validateTransaction, convertAmount, exchangeRates } = useApp();
+
+  const projections = React.useMemo(() => calculateProjections(profile, exchangeRates), [profile, exchangeRates]);
+  const incomeBalances = React.useMemo(() => calculateIncomeAccountBalances(profile, projections, convertAmount), [profile, projections, convertAmount]);
 
   const formatCurrencyExt = (amt: number, curr?: string) => {
     let sym = '$';
@@ -611,7 +614,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       const ovKey = cuota.key;
       if (draft.overrides[ovKey]) {
         delete draft.overrides[ovKey].discarded;
-        if (!draft.overrides[ovKey].done && !draft.overrides[ovKey].isPaid && !draft.overrides[ovKey].userPostponed && !draft.overrides[ovKey].actualDate) {
+        if (!draft.overrides[ovKey].done && !draft.overrides[ovKey].userPostponed && !draft.overrides[ovKey].actualDate) {
           delete draft.overrides[ovKey];
         }
       }
@@ -629,7 +632,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
         delete draft.overrides[ovKey].plannedAmt;
         delete draft.overrides[ovKey].rawPayAmount;
         delete draft.overrides[ovKey].payCurrency;
-        if (!draft.overrides[ovKey].done && !draft.overrides[ovKey].isPaid && !draft.overrides[ovKey].discarded && (!draft.overrides[ovKey].partials || draft.overrides[ovKey].partials.length === 0)) {
+        if (!draft.overrides[ovKey].done && !draft.overrides[ovKey].discarded && (!draft.overrides[ovKey].partials || draft.overrides[ovKey].partials.length === 0)) {
           delete draft.overrides[ovKey];
         }
       }
@@ -734,7 +737,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
         const item = profile.incomes[editIndex];
         if (item && item.freq === 'one-time') {
            const ov = getOverrideForItem(profile.overrides || {}, 'income', item, item.date || planStartDate);
-           const isDone = ov ? (ov.done !== undefined ? !!ov.done : !!ov.isPaid) : !!(item.isPaid || (item as any).done);
+           const isDone = ov ? !!ov.done : !!(item as any).done;
            setMarkAsDone(isDone);
         }
         if (item) {
@@ -756,7 +759,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
         const item = profile.expenses[editIndex];
         if (item && item.freq === 'one-time') {
            const ov = getOverrideForItem(profile.overrides || {}, 'expense', item, item.date || planStartDate);
-           const isDone = ov ? (ov.done !== undefined ? !!ov.done : !!ov.isPaid) : !!(item.isPaid || (item as any).done);
+           const isDone = ov ? !!ov.done : !!(item as any).done;
            setMarkAsDone(isDone);
         }
         if (item) {
@@ -951,11 +954,9 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
               if (draft.overrides[k]) delete draft.overrides[k];
             });
           }
-          (item as any).isPaid = markAsDone;
           (item as any).done = markAsDone;
           draft.incomes[editIndex] = item;
         } else {
-          (item as any).isPaid = markAsDone;
           (item as any).done = markAsDone;
           draft.incomes.push(item);
         }
@@ -1011,11 +1012,9 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
               if (draft.overrides[k]) delete draft.overrides[k];
             });
           }
-          (item as any).isPaid = markAsDone;
           (item as any).done = markAsDone;
           draft.expenses[editIndex] = item;
         } else {
-          (item as any).isPaid = markAsDone;
           (item as any).done = markAsDone;
           draft.expenses.push(item);
         }
@@ -1112,13 +1111,11 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
             draft.overrides[ovKey] = {
               ...(draft.overrides[ovKey] || {}),
               done: true,
-              isPaid: true,
               paidPrior: true
             };
           } else {
             if (draft.overrides[ovKey]?.paidPrior) {
               delete draft.overrides[ovKey].done;
-              delete draft.overrides[ovKey].isPaid;
               delete draft.overrides[ovKey].paidPrior;
               if (Object.keys(draft.overrides[ovKey]).length === 0) {
                 delete draft.overrides[ovKey];
@@ -1126,7 +1123,6 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
             }
             if (draft.overrides[legacyKey]?.paidPrior) {
               delete draft.overrides[legacyKey].done;
-              delete draft.overrides[legacyKey].isPaid;
               delete draft.overrides[legacyKey].paidPrior;
               if (Object.keys(draft.overrides[legacyKey]).length === 0) {
                 delete draft.overrides[legacyKey];
@@ -1286,17 +1282,17 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
                 <div>
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Cuenta de Ingreso (¿De cuál cuenta saldrá este ahorro?)
+                    Cuenta de Origen (¿De cuál cuenta saldrá este dinero?)
                   </label>
                   <select
                     value={incomeId}
                     onChange={e => setIncomeId(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
                   >
-                    <option value="">(Sin cuenta fija / Indicar al momento de pagar)</option>
-                    {profile.incomes.map(inc => (
-                      <option key={inc.id} value={inc.id}>
-                        🏦 {inc.name} ({formatCurrencyExt(inc.amount, inc.currency)})
+                    <option value="">❓ Sin cuenta especificada (Indicar al momento de pagar)</option>
+                    {incomeBalances.map(b => (
+                      <option key={b.id} value={b.id}>
+                        {b.id === 'required_starting_fund' ? '🪙' : '🏦'} {b.name} — Disponible: {formatCurrencyExt(b.availableToday, b.currency || 'USD_BCV')}
                       </option>
                     ))}
                   </select>
@@ -1683,10 +1679,10 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                                 onChange={e => setIncomeId(e.target.value)}
                                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-900 dark:text-slate-100"
                               >
-                                <option value="">(Sin asignar / Indicar al momento de pagar cada cuota)</option>
-                                {profile.incomes.map(inc => (
-                                  <option key={inc.id} value={inc.id}>
-                                    🏦 {inc.name} ({formatCurrencyExt(inc.amount, inc.currency)})
+                                <option value="">❓ Sin cuenta especificada (Indicar al momento de pagar cada cuota)</option>
+                                {incomeBalances.map(b => (
+                                  <option key={b.id} value={b.id}>
+                                    {b.id === 'required_starting_fund' ? '🪙' : '🏦'} {b.name} — Disponible: {formatCurrencyExt(b.availableToday, b.currency || 'USD_BCV')}
                                   </option>
                                 ))}
                               </select>
@@ -1736,10 +1732,10 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                           onChange={e => setIncomeId(e.target.value)}
                           className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
                         >
-                          <option value="">(Sin asignar / Indicar al momento de pagar)</option>
-                          {profile.incomes.map(inc => (
-                            <option key={inc.id} value={inc.id}>
-                              🏦 {inc.name} ({formatCurrencyExt(inc.amount, inc.currency)})
+                          <option value="">❓ Sin cuenta especificada (Indicar al momento de pagar)</option>
+                          {incomeBalances.map(b => (
+                            <option key={b.id} value={b.id}>
+                              {b.id === 'required_starting_fund' ? '🪙' : '🏦'} {b.name} — Disponible: {formatCurrencyExt(b.availableToday, b.currency || 'USD_BCV')}
                             </option>
                           ))}
                         </select>

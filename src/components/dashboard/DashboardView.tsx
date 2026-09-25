@@ -542,7 +542,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           );
         }
         for (const ck of candidateKeys) {
-          if (ck && profile.overrides && profile.overrides[ck] && (profile.overrides[ck].done || profile.overrides[ck].isPaid || profile.overrides[ck].discarded)) {
+          if (ck && profile.overrides && profile.overrides[ck] && (profile.overrides[ck].done || profile.overrides[ck].discarded)) {
             return false;
           }
         }
@@ -1187,7 +1187,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         ) : (
           <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
             {upcomingList.map((u, idx) => {
-              const isOverdue = !u.done && !u.isPaid && u.date < today;
+              const isOverdue = !u.done && u.date < today;
               const isStartingFund = u.ref?.id === 'required_starting_fund';
 
               return (

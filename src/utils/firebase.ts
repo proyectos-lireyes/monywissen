@@ -407,7 +407,9 @@ export async function restoreStateFromFirebase(email: string) {
     if (!email) return null;
     const backupRef = doc(db, 'backups', email.toLowerCase().trim());
     const snap = await getDoc(backupRef);
-    let payload = snap.exists() ? snap.data()?.dataPayload : null;
+    const snapData = snap.exists() ? snap.data() : null;
+    let payload = snapData?.dataPayload;
+    const docTime = snapData?.lastUpdatedAt || (snapData?.updatedAt ? new Date(snapData.updatedAt).getTime() : 0);
     
     if (!payload && (await hasFirestoreSubcollectionsData(email))) {
       payload = {
@@ -418,6 +420,9 @@ export async function restoreStateFromFirebase(email: string) {
 
     if (payload) {
       payload = await mergeFirestoreCollectionsIntoPayload(email, payload);
+      if (!payload.lastUpdatedAt || payload.lastUpdatedAt < docTime) {
+        payload.lastUpdatedAt = docTime;
+      }
     }
     return payload || null;
   } catch (error) {
@@ -799,15 +804,14 @@ export async function loadDebtsAndCuotasFromFirestore(email: string): Promise<Re
           }
         }
         // Normalize: done is single source of truth for payment status
-        const isDone = cuotaData.done !== undefined ? Boolean(cuotaData.done) : (cuotaData.isPaid !== undefined ? Boolean(cuotaData.isPaid) : false);
+        const isDone = Boolean(cuotaData.done);
         const hasPayment = isDone || (cuotaData.paidAmount && parseFloat(String(cuotaData.paidAmount)) > 0) || (cuotaData.partials && cuotaData.partials.length > 0);
-        const hasCustom = cuotaData.userPostponed || cuotaData.discarded || Boolean(cuotaData.actualDate && cuotaData.actualDate !== cuotaData.originalDate);
+        const hasCustom = cuotaData.userPostponed || cuotaData.discarded || Boolean(cuotaData.actualDate && cuotaData.actualDate !== cuotaData.originalDate) || Boolean(cuotaData.incomeId) || cuotaData.noAffectBalance !== undefined || cuotaData.amt !== undefined;
 
         if (hasPayment || hasCustom) {
           data[pName].overrides[cuotaKey] = {
             ...cuotaData,
-            done: isDone,
-            isPaid: isDone
+            done: isDone
           };
         }
       });
@@ -859,9 +863,9 @@ export async function saveCalculatedCuotasToFirestore(
       const cuotaDocRef = doc(db, 'users', cleanEmail, 'debts', docId, 'cuotas', cuotaDbId);
       
       const ov = overrides[cuota.key] || overrides[`${debt.id}_${cuota.index}`] || {};
-      const ovHasPayment = ov.done === true || ov.isPaid === true || (ov.amt !== undefined && parseFloat(String(ov.amt)) > 0) || (ov.paidAmount !== undefined && parseFloat(String(ov.paidAmount)) > 0) || (ov.partials && ov.partials.length > 0);
+      const ovHasPayment = ov.done === true || (ov.amt !== undefined && parseFloat(String(ov.amt)) > 0) || (ov.paidAmount !== undefined && parseFloat(String(ov.paidAmount)) > 0) || (ov.partials && ov.partials.length > 0);
       
-      let isDone = Boolean(ov.done ?? ov.isPaid ?? cuota.isPaid);
+      let isDone = Boolean(ov.done ?? cuota.isPaid);
       let paidAmt = ov.amt !== undefined ? parseFloat(String(ov.amt)) : (ov.paidAmount !== undefined ? parseFloat(String(ov.paidAmount)) : cuota.paidAmount);
 
       // If neither local overrides nor calculation marks it as paid, check if Firestore already had this cuota marked as paid
@@ -870,7 +874,7 @@ export async function saveCalculatedCuotasToFirestore(
           const existingSnap = await getDoc(cuotaDocRef);
           if (existingSnap.exists()) {
             const existingData = existingSnap.data();
-            if (existingData?.done === true || existingData?.isPaid === true) {
+            if (existingData?.done === true) {
               isDone = true;
               paidAmt = existingData.paidAmount !== undefined ? parseFloat(String(existingData.paidAmount)) : (existingData.amt !== undefined ? parseFloat(String(existingData.amt)) : cuota.paidAmount);
             }
@@ -888,7 +892,6 @@ export async function saveCalculatedCuotasToFirestore(
         expectedAmount: cuota.expectedAmount,
         requiredPay: isDone ? 0 : cuota.requiredPay,
         done: isDone, // single source of truth
-        isPaid: isDone,
         paidAmount: isDone ? paidAmt : 0,
         paidCurrency: ov.payCurrency || cuota.paidCurrency || debt.currency || 'USD',
         updatedAt: new Date().toISOString()
@@ -897,6 +900,10 @@ export async function saveCalculatedCuotasToFirestore(
       if (ov.actualDate) cuotaPayload.actualDate = ov.actualDate;
       if (ov.partials) cuotaPayload.partials = ov.partials;
       if (ov.rawPayAmount) cuotaPayload.rawPayAmount = ov.rawPayAmount;
+      if (ov.incomeId !== undefined) cuotaPayload.incomeId = ov.incomeId;
+      if (ov.noAffectBalance !== undefined) cuotaPayload.noAffectBalance = ov.noAffectBalance;
+      if (ov.amt !== undefined) cuotaPayload.amt = ov.amt;
+      if (ov.payCurrency) cuotaPayload.payCurrency = ov.payCurrency;
 
       await setDoc(cuotaDocRef, cleanFirestoreData(cuotaPayload), { merge: true });
     }
@@ -926,12 +933,11 @@ export async function saveDebtToFirestore(
     // "Parent Debt Status Logic: Ensure a parent debt reflects paid: false if any child quota is done: false."
     const cuotas = calculateAmortizationPlan(debt, overrides, customDebts, undefined, exchangeRates);
     const anyChildUnpaid = cuotas.some(c => !c.isPaid);
-    const isDone = cuotas.length > 0 ? !anyChildUnpaid : (debt.done !== undefined ? Boolean(debt.done) : (debt.isPaid !== undefined ? Boolean(debt.isPaid) : false));
+    const isDone = cuotas.length > 0 ? !anyChildUnpaid : Boolean(debt.done);
 
     await setDoc(debtDocRef, cleanFirestoreData({
       ...debt,
       done: isDone,
-      isPaid: isDone,
       profileName,
       updatedAt: new Date().toISOString()
     }));
@@ -973,11 +979,10 @@ export async function saveCuotaToFirestore(email: string, debtId: string, cuotaK
     const cleanEmail = email.toLowerCase().trim();
     const dbDocId = cuotaKey;
 
-    const isDone = cuotaData.done !== undefined ? Boolean(cuotaData.done) : (cuotaData.isPaid !== undefined ? Boolean(cuotaData.isPaid) : false);
+    const isDone = Boolean(cuotaData.done);
     const mergedData = { 
       ...cuotaData,
       done: isDone,
-      isPaid: isDone,
       key: cuotaKey,
       updatedAt: new Date().toISOString()
     };
@@ -997,7 +1002,7 @@ export async function saveCuotaToFirestore(email: string, debtId: string, cuotaK
     } else {
       cuotasSnap.forEach(snap => {
         const cData = snap.data();
-        const cDone = snap.id === dbDocId ? isDone : (cData.done !== undefined ? Boolean(cData.done) : (cData.isPaid !== undefined ? Boolean(cData.isPaid) : false));
+        const cDone = snap.id === dbDocId ? isDone : Boolean(cData.done);
         if (!cDone) {
           allChildrenDone = false;
         }
@@ -1006,7 +1011,6 @@ export async function saveCuotaToFirestore(email: string, debtId: string, cuotaK
 
     await setDoc(debtDocRef, cleanFirestoreData({
       done: allChildrenDone,
-      isPaid: allChildrenDone,
       updatedAt: new Date().toISOString()
     }), { merge: true });
   } catch (error) {

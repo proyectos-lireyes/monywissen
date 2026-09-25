@@ -114,29 +114,38 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
       };
     }
 
-    const account = (profile.incomes || []).find(i => i.id === accountId);
-    const primaryAccount = profile.incomes?.[0];
-    const accountName = account?.name || (primaryAccount ? primaryAccount.name : 'Cuenta principal');
+    const account = accountId ? (profile.incomes || []).find(i => i.id === accountId) : null;
 
     if (e.type === 'income') {
+      const incName = account ? account.name : 'Cuenta de ingresos';
       return {
-        label: `${e.done ? 'Depositado en' : 'Entra en'}: ${accountName}`,
+        label: `${e.done ? 'Depositado en' : 'Entra en'}: ${incName}`,
         icon: '📥',
         color: 'text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/50'
       };
     }
 
+    if (account) {
+      return {
+        label: `${e.done ? 'Pagado desde' : 'Se debitará de'}: ${account.name}`,
+        icon: '🏦',
+        color: e.done
+          ? 'text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800/50'
+          : 'text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+      };
+    }
+
     return {
-      label: `${e.done ? 'Pagado desde' : 'Se debitará de'}: ${accountName}`,
-      icon: '🏦',
+      label: e.done ? 'Pagado (sin cuenta indicada)' : 'Sin cuenta asignada (indicar origen)',
+      icon: '❓',
       color: e.done
-        ? 'text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800/50'
-        : 'text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+        ? 'text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+        : 'text-amber-700 dark:text-amber-300 bg-amber-50/60 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/50 font-medium'
     };
   };
 
   const filterOccurrence = (e: any) => {
-    const isDone = Boolean(e.done || e.isPaid);
+    const isDone = Boolean(e.done);
     const isOverdue = !isDone && e.date < today;
     const isPostponed = !isDone && (e.userPostponed || (e.originalDate && e.originalDate < e.date && !e.insufficientFunds));
     const isDeficit = !isDone && e.insufficientFunds && e.amt < 0;

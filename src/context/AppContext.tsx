@@ -82,11 +82,10 @@ function sanitizeProfile(raw: any): UserProfile {
   const debts = rawDebts.map(debt => {
     try {
       const cuotas = calculateAmortizationPlan(debt, overrides, customDebts, undefined, undefined);
-      const isPaid = cuotas.length > 0 && cuotas.every(c => c.isPaid);
+      const isDone = cuotas.length > 0 && cuotas.every(c => c.isPaid);
       return {
         ...debt,
-        isPaid,
-        done: isPaid
+        done: isDone
       };
     } catch (e) {
       return debt;
@@ -517,11 +516,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const isCloudEnabled = Boolean(profile?.settings?.enableCloudSync || state.authUser?.email);
       const userEmail = state.authUser?.email || profile?.settings?.userEmail;
       
-      if (isCloudEnabled && userEmail && !isBulkOperationInProgress.current) {
+      if (isCloudEnabled && userEmail && !isBulkOperationInProgress.current && isSyncReady.current) {
          // Create a minimal clone without tokens for backup
          const stateToBackup = JSON.parse(JSON.stringify(state));
          delete stateToBackup.authToken;
-         stateToBackup.lastUpdatedAt = Date.now();
+         if (!stateToBackup.lastUpdatedAt) {
+           stateToBackup.lastUpdatedAt = Date.now();
+         }
          
          const stateBackupStr = JSON.stringify({ ...stateToBackup, authUser: undefined, lastUpdatedAt: undefined });
          if (lastServerPayloadRef.current === stateBackupStr) {
@@ -557,14 +558,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const handleBeforeUnloadOrHide = () => {
       const userEmail = state.authUser?.email || profile?.settings?.userEmail;
       const isCloudEnabled = Boolean(profile?.settings?.enableCloudSync || state.authUser?.email);
-      if (isCloudEnabled && userEmail) {
+      if (isCloudEnabled && userEmail && isSyncReady.current) {
         if (syncTimeoutRef.current) {
           clearTimeout(syncTimeoutRef.current);
           syncTimeoutRef.current = null;
         }
         const stateToBackup = JSON.parse(JSON.stringify(state));
         delete stateToBackup.authToken;
-        stateToBackup.lastUpdatedAt = Date.now();
+        if (!stateToBackup.lastUpdatedAt) stateToBackup.lastUpdatedAt = Date.now();
         backupStateToFirebase(userEmail, stateToBackup).catch(console.error);
       }
     };
@@ -591,20 +592,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       restoreStateFromFirebase(userEmail).then(payload => {
         if (payload) {
           setState(prev => {
-            const prevStr = JSON.stringify({ ...prev, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
+            const remoteTime = Number(payload.lastUpdatedAt || 0);
+            const localTime = Number(prev.lastUpdatedAt || 0);
             const payloadStr = JSON.stringify({ ...payload, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
-            if (prevStr === payloadStr) {
-              isSyncReady.current = true;
-              return prev;
-            }
-            
             lastServerPayloadRef.current = payloadStr;
-            return {
-              ...payload,
-              authToken: prev.authToken,
-              authUser: prev.authUser,
-              lastUpdatedAt: payload.lastUpdatedAt || prev.lastUpdatedAt || Date.now()
-            };
+
+            // Last-Write-Wins: if remote payload is newer or equal, or local has no timestamp, accept remote
+            if (remoteTime >= localTime || !prev.lastUpdatedAt) {
+              return {
+                ...payload,
+                authToken: prev.authToken,
+                authUser: prev.authUser,
+                lastUpdatedAt: remoteTime || Date.now()
+              };
+            }
+            return prev;
           });
         }
         isSyncReady.current = true;
@@ -627,17 +629,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const remoteStr = JSON.stringify({ ...remotePayload, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
       if (remoteStr === lastServerPayloadRef.current) return;
 
-      lastServerPayloadRef.current = remoteStr;
       setState(prev => {
         const currentStr = JSON.stringify({ ...prev, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
         if (remoteStr === currentStr) return prev;
 
-        return {
-          ...remotePayload,
-          authToken: prev.authToken,
-          authUser: prev.authUser,
-          lastUpdatedAt: remotePayload.lastUpdatedAt || Date.now()
-        };
+        const remoteTime = Number(remotePayload.lastUpdatedAt || 0);
+        const localTime = Number(prev.lastUpdatedAt || 0);
+
+        // Accept remote change if remote is newer or equal to local
+        if (remoteTime >= localTime || !prev.lastUpdatedAt) {
+          lastServerPayloadRef.current = remoteStr;
+          return {
+            ...remotePayload,
+            authToken: prev.authToken,
+            authUser: prev.authUser,
+            lastUpdatedAt: remoteTime || Date.now()
+          };
+        }
+        return prev;
       });
     });
 
@@ -657,16 +666,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (remotePayload) {
             const remoteStr = JSON.stringify({ ...remotePayload, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
             if (remoteStr !== lastServerPayloadRef.current) {
-              lastServerPayloadRef.current = remoteStr;
               setState(prev => {
                 const currentStr = JSON.stringify({ ...prev, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
                 if (currentStr === remoteStr) return prev;
-                return {
-                  ...remotePayload,
-                  authToken: prev.authToken,
-                  authUser: prev.authUser,
-                  lastUpdatedAt: remotePayload.lastUpdatedAt || Date.now()
-                };
+
+                const remoteTime = Number(remotePayload.lastUpdatedAt || 0);
+                const localTime = Number(prev.lastUpdatedAt || 0);
+
+                if (remoteTime >= localTime || !prev.lastUpdatedAt) {
+                  lastServerPayloadRef.current = remoteStr;
+                  return {
+                    ...remotePayload,
+                    authToken: prev.authToken,
+                    authUser: prev.authUser,
+                    lastUpdatedAt: remoteTime || Date.now()
+                  };
+                }
+                return prev;
               });
             }
           }
