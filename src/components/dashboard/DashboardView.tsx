@@ -170,6 +170,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const lastOccurrence = plan[plan.length - 1];
   const projectedBalance = lastOccurrence ? lastOccurrence.balance : (plan.length > 0 ? plan[0].balance : (profile.settings.openingBalance || 0));
+  const currentSavings = (profile.savings?.current || 0) + (profile.savings?.digital || 0);
+  const finalSavings = lastOccurrence ? (lastOccurrence.savingsAccumulated || 0) : currentSavings;
   const totalDebt = (profile.debts || []).reduce((acc, d) => acc + convertAmount(getRemainingDebtAmount(d, profile.overrides, exchangeRates), d.currency), 0);
 
   // Prepare Recharts Data
@@ -819,18 +821,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div
             onClick={() => handleSelectChartMode(3)}
             className="sm:text-right border-t sm:border-t-0 sm:border-l border-slate-100 dark:border-slate-800 pt-3 sm:pt-0 sm:pl-4 cursor-pointer hover:opacity-90 transition-opacity"
-            title="Haz clic para ver el Gráfico de Flujo de Caja Neto"
+            title="Haz clic para ver el Gráfico de Flujo de Caja y Ahorros"
           >
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center sm:justify-end gap-1">
-              Flujo de Caja Neto (Proyección) <span className="text-emerald-600 text-[10px] font-extrabold bg-emerald-50 dark:bg-emerald-950/50 px-1.5 py-0.5 rounded-md">Ver Gráfica 📈</span>
+              Ahorros Totales (Fin del Plan) <span className="text-sky-600 text-[10px] font-extrabold bg-sky-50 dark:bg-sky-950/50 px-1.5 py-0.5 rounded-md">Ver Gráfica 📈</span>
             </span>
-            <div className={`text-3xl sm:text-4xl font-black tracking-tight mt-1 ${
-              (totalIncome - totalExpense) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
-            }`}>
-              {(totalIncome - totalExpense) >= 0 ? '+' : ''}{formatCurrency(totalIncome - totalExpense)}
+            <div className="text-3xl sm:text-4xl font-black tracking-tight mt-1 text-sky-600 dark:text-sky-400">
+              {formatCurrency(finalSavings)}
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Ingresos ({formatCurrency(totalIncome)}) - Gastos ({formatCurrency(totalExpense)})
+              Ahorro actual: {formatCurrency(currentSavings)} • Incremento: +{formatCurrency(Math.max(0, finalSavings - currentSavings))}
             </p>
           </div>
         </div>

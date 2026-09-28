@@ -27,7 +27,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
   const [currentCalDate, setCurrentCalDate] = useState<Date>(new Date());
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeStateFilters, setActiveStateFilters] = useState<string[]>([]);
+  const [activeStateFilters, setActiveStateFilters] = useState<string[]>(['hide_done']);
   const [activeOutflowFilters, setActiveOutflowFilters] = useState<string[]>([]);
   const [selectedDayEvents, setSelectedDayEvents] = useState<{ date: string; events: any[] } | null>(null);
 
