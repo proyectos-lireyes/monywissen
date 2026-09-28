@@ -29,9 +29,10 @@ import {
   deleteSavingsFromFirestore,
   sanitizeDocId,
   forceUploadStateToFirestore,
-  logoutFirebase
+  logoutFirebase,
+  handleFirestoreError
 } from '../utils/firebase';
-import { checkAndTriggerDailyReminder } from '../utils/notifications';
+import { checkAndTriggerDailyReminder, scheduleNativeDailyReminder } from '../utils/notifications';
 
 declare const __APP_VERSION__: string;
 
@@ -489,218 +490,36 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const profile = useMemo(() => sanitizeProfile(rawProfile), [rawProfile]);
 
+  // Schedule Native Android Notifications on load & whenever notification settings change
   useEffect(() => {
-    // Check notifications every minute
+    const notifEnabled = rawProfile.settings.notificationsEnabled !== false;
+    const notifTime = rawProfile.settings.notifTime || '08:00';
+    
+    scheduleNativeDailyReminder(notifTime, notifEnabled);
+
+    // Active session interval reminder (when app is open)
     const interval = setInterval(() => {
-      const notifEnabled = rawProfile.settings.notificationsEnabled !== false;
       checkAndTriggerDailyReminder(
         rawProfile.expenses,
         rawProfile.debts,
         notifEnabled,
-        rawProfile.settings.notifTime || '08:00'
+        notifTime
       );
     }, 60000);
     return () => clearInterval(interval);
-  }, [rawProfile]);
+  }, [rawProfile.settings.notificationsEnabled, rawProfile.settings.notifTime, rawProfile.expenses, rawProfile.debts]);
 
-  // Sync state to LocalStorage and Firebase with fast debounce
-  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Persist state strictly to LocalStorage on changes
   const lastLocalMutationTimeRef = useRef<number>(Date.now());
 
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       lastLocalMutationTimeRef.current = Date.now();
-      
-      // Auto-sync to Firebase if logged in or cloud sync is active
-      const isCloudEnabled = Boolean(profile?.settings?.enableCloudSync || state.authUser?.email);
-      const userEmail = state.authUser?.email || profile?.settings?.userEmail;
-      
-      if (isCloudEnabled && userEmail && !isBulkOperationInProgress.current && isSyncReady.current) {
-         // Create a minimal clone without tokens for backup
-         const stateToBackup = JSON.parse(JSON.stringify(state));
-         delete stateToBackup.authToken;
-         if (!stateToBackup.lastUpdatedAt) {
-           stateToBackup.lastUpdatedAt = Date.now();
-         }
-         
-         const stateBackupStr = JSON.stringify({ ...stateToBackup, authUser: undefined, lastUpdatedAt: undefined });
-         if (lastServerPayloadRef.current === stateBackupStr) {
-           return;
-         }
-         
-         if (syncTimeoutRef.current) {
-           clearTimeout(syncTimeoutRef.current);
-         }
-         
-         // Fast debounce: 250ms so user actions sync immediately across devices
-         syncTimeoutRef.current = setTimeout(() => {
-           backupStateToFirebase(userEmail, stateToBackup).then(() => {
-             lastServerPayloadRef.current = stateBackupStr;
-           }).catch(err => {
-             console.error('Error syncing to Firebase:', err);
-           });
-         }, 250);
-      }
     } catch (e) {
-      console.error('Error saving state:', e);
+      console.error('Error saving state locally:', e);
     }
-    
-    return () => {
-      if (syncTimeoutRef.current) {
-        clearTimeout(syncTimeoutRef.current);
-      }
-    };
-  }, [state, profile?.settings?.enableCloudSync, profile?.settings?.userEmail]);
-
-  // Flush sync immediately when leaving tab or closing app
-  useEffect(() => {
-    const handleBeforeUnloadOrHide = () => {
-      const userEmail = state.authUser?.email || profile?.settings?.userEmail;
-      const isCloudEnabled = Boolean(profile?.settings?.enableCloudSync || state.authUser?.email);
-      if (isCloudEnabled && userEmail && isSyncReady.current) {
-        if (syncTimeoutRef.current) {
-          clearTimeout(syncTimeoutRef.current);
-          syncTimeoutRef.current = null;
-        }
-        const stateToBackup = JSON.parse(JSON.stringify(state));
-        delete stateToBackup.authToken;
-        if (!stateToBackup.lastUpdatedAt) stateToBackup.lastUpdatedAt = Date.now();
-        backupStateToFirebase(userEmail, stateToBackup).catch(console.error);
-      }
-    };
-    document.addEventListener('visibilitychange', handleBeforeUnloadOrHide);
-    window.addEventListener('beforeunload', handleBeforeUnloadOrHide);
-    window.addEventListener('pagehide', handleBeforeUnloadOrHide);
-    return () => {
-      document.removeEventListener('visibilitychange', handleBeforeUnloadOrHide);
-      window.removeEventListener('beforeunload', handleBeforeUnloadOrHide);
-      window.removeEventListener('pagehide', handleBeforeUnloadOrHide);
-    };
-  }, [state, profile?.settings?.enableCloudSync, profile?.settings?.userEmail]);
-
-  // Initial load on user authentication
-  const initialLoadedUserRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const userEmail = state.authUser?.email || profile?.settings?.userEmail;
-    const isCloudEnabled = Boolean(profile?.settings?.enableCloudSync || state.authUser?.email);
-    if (isCloudEnabled && userEmail && initialLoadedUserRef.current !== userEmail && syncSessionId !== -1) {
-      initialLoadedUserRef.current = userEmail;
-      isSyncReady.current = false;
-      
-      restoreStateFromFirebase(userEmail).then(payload => {
-        if (payload) {
-          setState(prev => {
-            const remoteTime = Number(payload.lastUpdatedAt || 0);
-            const localTime = Number(prev.lastUpdatedAt || 0);
-            const payloadStr = JSON.stringify({ ...payload, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
-            lastServerPayloadRef.current = payloadStr;
-
-            // Last-Write-Wins: if remote payload is newer or equal, or local has no timestamp, accept remote
-            if (remoteTime >= localTime || !prev.lastUpdatedAt) {
-              return {
-                ...payload,
-                authToken: prev.authToken,
-                authUser: prev.authUser,
-                lastUpdatedAt: remoteTime || Date.now()
-              };
-            }
-            return prev;
-          });
-        }
-        isSyncReady.current = true;
-      }).catch(err => {
-        console.error('Error loading initial state from Firebase:', err);
-        isSyncReady.current = true;
-      });
-    }
-  }, [state.authUser, profile?.settings?.enableCloudSync, profile?.settings?.userEmail, syncSessionId]);
-
-  // Real-time listener for changes from other devices
-  useEffect(() => {
-    const userEmail = state.authUser?.email || profile?.settings?.userEmail;
-    const isCloudEnabled = Boolean(profile?.settings?.enableCloudSync || state.authUser?.email);
-    if (!isCloudEnabled || !userEmail || syncSessionId === -1) return;
-
-    const unsubscribe = subscribeToFirebaseState(userEmail, (remotePayload, exists) => {
-      if (!exists || !remotePayload || isBulkOperationInProgress.current) return;
-
-      const remoteStr = JSON.stringify({ ...remotePayload, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
-      if (remoteStr === lastServerPayloadRef.current) return;
-
-      setState(prev => {
-        const currentStr = JSON.stringify({ ...prev, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
-        if (remoteStr === currentStr) return prev;
-
-        const remoteTime = Number(remotePayload.lastUpdatedAt || 0);
-        const localTime = Number(prev.lastUpdatedAt || 0);
-
-        // Accept remote change if remote is newer or equal to local
-        if (remoteTime >= localTime || !prev.lastUpdatedAt) {
-          lastServerPayloadRef.current = remoteStr;
-          return {
-            ...remotePayload,
-            authToken: prev.authToken,
-            authUser: prev.authUser,
-            lastUpdatedAt: remoteTime || Date.now()
-          };
-        }
-        return prev;
-      });
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [state.authUser?.email, profile?.settings?.enableCloudSync, profile?.settings?.userEmail, syncSessionId]);
-
-  // Tab focus / visibility auto-refresh: When user switches back to this tab or device, immediately fetch latest data
-  useEffect(() => {
-    const handleTabFocus = async () => {
-      const userEmail = state.authUser?.email || profile?.settings?.userEmail;
-      const isCloudEnabled = Boolean(profile?.settings?.enableCloudSync || state.authUser?.email);
-      if (document.visibilityState === 'visible' && isCloudEnabled && userEmail && !isBulkOperationInProgress.current) {
-        try {
-          const remotePayload = await restoreStateFromFirebase(userEmail);
-          if (remotePayload) {
-            const remoteStr = JSON.stringify({ ...remotePayload, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
-            if (remoteStr !== lastServerPayloadRef.current) {
-              setState(prev => {
-                const currentStr = JSON.stringify({ ...prev, authToken: undefined, authUser: undefined, lastUpdatedAt: undefined });
-                if (currentStr === remoteStr) return prev;
-
-                const remoteTime = Number(remotePayload.lastUpdatedAt || 0);
-                const localTime = Number(prev.lastUpdatedAt || 0);
-
-                if (remoteTime >= localTime || !prev.lastUpdatedAt) {
-                  lastServerPayloadRef.current = remoteStr;
-                  return {
-                    ...remotePayload,
-                    authToken: prev.authToken,
-                    authUser: prev.authUser,
-                    lastUpdatedAt: remoteTime || Date.now()
-                  };
-                }
-                return prev;
-              });
-            }
-          }
-        } catch (e) {
-          console.error('Error refreshing on tab focus:', e);
-        }
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleTabFocus);
-    window.addEventListener('focus', handleTabFocus);
-    window.addEventListener('pageshow', handleTabFocus);
-    return () => {
-      document.removeEventListener('visibilitychange', handleTabFocus);
-      window.removeEventListener('focus', handleTabFocus);
-      window.removeEventListener('pageshow', handleTabFocus);
-    };
-  }, [profile?.settings?.enableCloudSync, profile?.settings?.userEmail, state.authUser?.email]);
+  }, [state]);
 
   const showToast = (message: string, icon: string = '✅') => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -714,203 +533,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     setGlobalFormattingContext(profile.settings.displayCurrency || 'USD', exchangeRates);
   }, [profile.settings.displayCurrency, exchangeRates]);
-
-  // Automated incremental Firestore sync for user-saved changes (debts, incomes, expenses, savings, overrides)
-  const prevDebtsRef = useRef<any[]>([]);
-  const prevIncomesRef = useRef<any[]>([]);
-  const prevExpensesRef = useRef<any[]>([]);
-  const prevOverridesRef = useRef<Record<string, any>>({});
-  const prevSavingsRef = useRef<any[]>([]);
-  const lastUserRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const email = state.authUser?.email;
-    if (!email) {
-      prevDebtsRef.current = [];
-      prevIncomesRef.current = [];
-      prevExpensesRef.current = [];
-      prevOverridesRef.current = {};
-      prevSavingsRef.current = [];
-      lastUserRef.current = null;
-      return;
-    }
-
-    const currentDebts = profile.debts || [];
-    const currentIncomes = profile.incomes || [];
-    const currentExpenses = profile.expenses || [];
-    const currentSavings = profile.savingsList || [];
-    const currentOverrides = profile.overrides || {};
-
-    // Initialize refs if the user just logged in or switched to avoid redundant writes of existing records
-    if (lastUserRef.current !== email) {
-      prevDebtsRef.current = JSON.parse(JSON.stringify(currentDebts));
-      prevIncomesRef.current = JSON.parse(JSON.stringify(currentIncomes));
-      prevExpensesRef.current = JSON.parse(JSON.stringify(currentExpenses));
-      prevOverridesRef.current = JSON.parse(JSON.stringify(currentOverrides));
-      prevSavingsRef.current = JSON.parse(JSON.stringify(currentSavings));
-      lastUserRef.current = email;
-      return;
-    }
-
-    // Guard against overwriting during initial database download
-    if (!isSyncReady.current) {
-      prevDebtsRef.current = JSON.parse(JSON.stringify(currentDebts));
-      prevIncomesRef.current = JSON.parse(JSON.stringify(currentIncomes));
-      prevExpensesRef.current = JSON.parse(JSON.stringify(currentExpenses));
-      prevOverridesRef.current = JSON.parse(JSON.stringify(currentOverrides));
-      prevSavingsRef.current = JSON.parse(JSON.stringify(currentSavings));
-      return;
-    }
-
-    const prevDebts = prevDebtsRef.current;
-    const prevIncomes = prevIncomesRef.current;
-    const prevExpenses = prevExpensesRef.current;
-    const prevOverrides = prevOverridesRef.current;
-    const prevSavings = prevSavingsRef.current;
-
-    // --- DEBTS SYNC ---
-    // Detect deleted debts
-    prevDebts.forEach(prevD => {
-      if (!currentDebts.some(d => d.id === prevD.id)) {
-        deleteDebtFromFirestore(email, prevD.id, prevD.name);
-      }
-    });
-    // Detect added or modified debts
-    currentDebts.forEach(d => {
-      const prevD = prevDebts.find(p => p.id === d.id);
-      if (!prevD || JSON.stringify(prevD) !== JSON.stringify(d)) {
-        if (prevD && prevD.name !== d.name) {
-          deleteDebtFromFirestore(email, prevD.id, prevD.name);
-        }
-        saveDebtToFirestore(email, d, currentProfileName, currentOverrides, profile.settings?.customDebts || [], state.exchangeRates);
-      }
-    });
-
-    // --- INCOMES SYNC ---
-    // Detect deleted incomes
-    prevIncomes.forEach(prevInc => {
-      if (!currentIncomes.some(inc => inc.id === prevInc.id)) {
-        deleteIncomeFromFirestore(email, prevInc.id, prevInc.name);
-      }
-    });
-    // Detect added or modified incomes
-    currentIncomes.forEach(inc => {
-      const prevInc = prevIncomes.find(p => p.id === inc.id);
-      if (!prevInc || JSON.stringify(prevInc) !== JSON.stringify(inc)) {
-        if (prevInc && prevInc.name !== inc.name) {
-          deleteIncomeFromFirestore(email, prevInc.id, prevInc.name);
-        }
-        saveIncomeToFirestore(email, inc, currentProfileName);
-      }
-    });
-
-    // --- EXPENSES SYNC ---
-    // Detect deleted expenses
-    prevExpenses.forEach(prevExp => {
-      if (!currentExpenses.some(exp => exp.id === prevExp.id)) {
-        deleteExpenseFromFirestore(email, prevExp.id, prevExp.name);
-      }
-    });
-    // Detect added or modified expenses
-    currentExpenses.forEach(exp => {
-      const prevExp = prevExpenses.find(p => p.id === exp.id);
-      if (!prevExp || JSON.stringify(prevExp) !== JSON.stringify(exp)) {
-        if (prevExp && prevExp.name !== exp.name) {
-          deleteExpenseFromFirestore(email, prevExp.id, prevExp.name);
-        }
-        saveExpenseToFirestore(email, exp, currentProfileName);
-      }
-    });
-
-    // --- SAVINGS SYNC ---
-    // Detect deleted savings
-    prevSavings.forEach(prevS => {
-      if (!currentSavings.some(s => s.id === prevS.id)) {
-        deleteSavingsFromFirestore(email, prevS.id, prevS.person);
-      }
-    });
-    // Detect added or modified savings
-    currentSavings.forEach(s => {
-      const prevS = prevSavings.find(p => p.id === s.id);
-      if (!prevS || JSON.stringify(prevS) !== JSON.stringify(s)) {
-        if (prevS && prevS.person !== s.person) {
-          deleteSavingsFromFirestore(email, prevS.id, prevS.person);
-        }
-        saveSavingsToFirestore(email, s, currentProfileName);
-      }
-    });
-
-    // --- OVERRIDES SYNC (cuotas / overrides) ---
-    // Detect deleted overrides
-    Object.keys(prevOverrides).forEach(key => {
-      if (!currentOverrides[key]) {
-        const { type: overrideType, entityId } = parseOverrideKey(key);
-        if (entityId) {
-          if (overrideType === 'debt') {
-            const parent = prevDebts.find(d => d.id === entityId || d.id === 'debt_' + entityId || ('debt_' + d.id) === entityId || sanitizeDocId(d.name, d.id) === entityId) || currentDebts.find(d => d.id === entityId || d.id === 'debt_' + entityId || ('debt_' + d.id) === entityId || sanitizeDocId(d.name, d.id) === entityId);
-            deleteCuotaFromFirestore(email, entityId, key, parent?.name);
-          } else if (overrideType === 'income') {
-            const parent = prevIncomes.find(inc => inc.id === entityId || sanitizeDocId(inc.name, inc.id) === entityId) || currentIncomes.find(inc => inc.id === entityId || sanitizeDocId(inc.name, inc.id) === entityId);
-            deleteIncomeOverrideFromFirestore(email, entityId, key, parent?.name);
-          } else if (overrideType === 'expense') {
-            const parent = prevExpenses.find(exp => exp.id === entityId || sanitizeDocId(exp.name, exp.id) === entityId) || currentExpenses.find(exp => exp.id === entityId || sanitizeDocId(exp.name, exp.id) === entityId);
-            deleteExpenseOverrideFromFirestore(email, entityId, key, parent?.name);
-          }
-        }
-      }
-    });
-
-    // Detect added or modified overrides
-    Object.keys(currentOverrides).forEach(key => {
-      const { type: overrideType, entityId } = parseOverrideKey(key);
-      const val = currentOverrides[key];
-      const prevVal = prevOverrides[key];
-      if (entityId) {
-        let forceWrite = false;
-        if (overrideType === 'debt') {
-          const prevParent = prevDebts.find(d => d.id === entityId || d.id === 'debt_' + entityId || ('debt_' + d.id) === entityId || sanitizeDocId(d.name, d.id) === entityId);
-          const currParent = currentDebts.find(d => d.id === entityId || d.id === 'debt_' + entityId || ('debt_' + d.id) === entityId || sanitizeDocId(d.name, d.id) === entityId);
-          if (prevParent && currParent && prevParent.name !== currParent.name) {
-            forceWrite = true;
-          }
-        } else if (overrideType === 'income') {
-          const prevParent = prevIncomes.find(inc => inc.id === entityId || sanitizeDocId(inc.name, inc.id) === entityId);
-          const currParent = currentIncomes.find(inc => inc.id === entityId || sanitizeDocId(inc.name, inc.id) === entityId);
-          if (prevParent && currParent && prevParent.name !== currParent.name) {
-            forceWrite = true;
-          }
-        } else if (overrideType === 'expense') {
-          const prevParent = prevExpenses.find(exp => exp.id === entityId || sanitizeDocId(exp.name, exp.id) === entityId);
-          const currParent = currentExpenses.find(exp => exp.id === entityId || sanitizeDocId(exp.name, exp.id) === entityId);
-          if (prevParent && currParent && prevParent.name !== currParent.name) {
-            forceWrite = true;
-          }
-        }
-
-        if (forceWrite || !prevVal || JSON.stringify(prevVal) !== JSON.stringify(val)) {
-          if (overrideType === 'debt') {
-            const parent = currentDebts.find(d => d.id === entityId || d.id === 'debt_' + entityId || ('debt_' + d.id) === entityId || sanitizeDocId(d.name, d.id) === entityId);
-            saveCuotaToFirestore(email, entityId, key, val, parent?.name);
-          } else if (overrideType === 'income') {
-            const parent = currentIncomes.find(inc => inc.id === entityId || sanitizeDocId(inc.name, inc.id) === entityId);
-            saveIncomeOverrideToFirestore(email, entityId, key, val, parent?.name);
-          } else if (overrideType === 'expense') {
-            const parent = currentExpenses.find(exp => exp.id === entityId || sanitizeDocId(exp.name, exp.id) === entityId);
-            saveExpenseOverrideToFirestore(email, entityId, key, val, parent?.name);
-          }
-        }
-      }
-    });
-
-    // Update refs for next change detection loop
-    prevDebtsRef.current = JSON.parse(JSON.stringify(currentDebts));
-    prevIncomesRef.current = JSON.parse(JSON.stringify(currentIncomes));
-    prevExpensesRef.current = JSON.parse(JSON.stringify(currentExpenses));
-    prevSavingsRef.current = JSON.parse(JSON.stringify(currentSavings));
-    prevOverridesRef.current = JSON.parse(JSON.stringify(currentOverrides));
-  }, [profile.debts, profile.incomes, profile.expenses, profile.savingsList, profile.overrides, state.authUser, currentProfileName]);
-
-
 
   // Budget Threshold Check
   useEffect(() => {
@@ -1186,28 +808,38 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const forceUploadLocalToCloud = async () => {
-    if (!state.authUser?.email) {
-      showToast('Inicia sesión para subir datos a Firebase', '⚠️');
+    const userEmail = state.authUser?.email || profile.settings.userEmail;
+    if (!userEmail) {
+      showToast('Inicia sesión para sincronizar datos con Firebase', '⚠️');
+      return;
+    }
+
+    if (localStorage.getItem('mony_firestore_quota_exceeded') === 'true') {
+      showToast('La cuota gratuita diaria de Firebase está agotada. Tus datos están seguros en este dispositivo.', '⚠️');
       return;
     }
     
+    showToast('Sincronizando datos con Firebase...', '☁️');
     setSyncSessionId(-1);
     isBulkOperationInProgress.current = true;
     isSyncReady.current = false;
     try {
       const stateToBackup = JSON.parse(JSON.stringify(state));
       delete stateToBackup.authToken;
+      stateToBackup.lastUpdatedAt = Date.now();
       
-      await forceUploadStateToFirestore(state.authUser.email, stateToBackup);
-      showToast('¡Nube sobrescrita con tus datos locales con éxito!', '🔥');
-    } catch (e) {
-      console.error(e);
-      showToast('Error al forzar la subida a Firebase', '❌');
+      await forceUploadStateToFirestore(userEmail, stateToBackup);
+      showToast('¡Sincronización con Firebase completada con éxito! ☁️', '✅');
+    } catch (e: any) {
+      handleFirestoreError(e, 'Error al sincronizar con Firebase:');
+      if (localStorage.getItem('mony_firestore_quota_exceeded') === 'true') {
+        showToast('Cuota gratuita diaria de Firebase alcanzada. Tus datos están guardados en tu dispositivo.', '⚠️');
+      } else {
+        showToast('Error al sincronizar con Firebase: ' + (e?.message || e), '❌');
+      }
     } finally {
       isSyncReady.current = true;
-      // Re-enable snapshot stream
       setSyncSessionId(Date.now());
-      // Delay releasing the lock to let all deletion/update snapshots settle
       setTimeout(() => {
         isBulkOperationInProgress.current = false;
       }, 1500);

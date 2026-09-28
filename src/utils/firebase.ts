@@ -23,6 +23,40 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
+let quotaToastShown = false;
+
+export function isQuotaCurrentlyBlocked(): boolean {
+  return typeof window !== 'undefined' && localStorage.getItem('mony_firestore_quota_exceeded') === 'true';
+}
+
+export function isQuotaExceededError(error: any): boolean {
+  if (!error) return false;
+  const code = error?.code || error?.error?.code || '';
+  const msg = String(error?.message || error?.error?.message || error || '').toLowerCase();
+  return (
+    code === 'resource-exhausted' ||
+    msg.includes('quota exceeded') ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('quota limit exceeded') ||
+    msg.includes('free daily write units') ||
+    msg.includes('free daily read units')
+  );
+}
+
+export function handleFirestoreError(error: any, contextMessage: string) {
+  if (isQuotaExceededError(error)) {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('mony_firestore_quota_exceeded', 'true');
+    }
+    if (!quotaToastShown) {
+      quotaToastShown = true;
+      console.warn('⚠️ Límite de cuota diaria de Firestore alcanzado. La app continuará funcionando guardando tus cambios localmente en este dispositivo.');
+    }
+  } else {
+    console.error(contextMessage, error);
+  }
+}
+
 /**
  * Full logout from Firebase Auth and Capacitor GoogleAuth
  */
@@ -185,7 +219,7 @@ export async function checkAccountDeletionStatus(email: string) {
     }
     return null;
   } catch (error) {
-    console.error('Error checking deletion status:', error);
+    handleFirestoreError(error, 'Error checking deletion status:');
     return null;
   }
 }
@@ -227,7 +261,7 @@ export async function permanentlyDeleteUserAccount(email: string) {
  */
 export async function backupStateToFirebase(email: string, appState: any) {
   try {
-    if (!email) return;
+    if (!email || isQuotaCurrentlyBlocked()) return;
     
     const cleanPayload = cleanFirestoreData(appState);
     if (!cleanPayload.lastUpdatedAt) {
@@ -258,7 +292,7 @@ export async function backupStateToFirebase(email: string, appState: any) {
     }
     
   } catch (error) {
-    console.error('Firebase backupState error:', error);
+    handleFirestoreError(error, 'Firebase backupState error:');
   }
 }
 
@@ -426,7 +460,7 @@ export async function restoreStateFromFirebase(email: string) {
     }
     return payload || null;
   } catch (error) {
-    console.error('Firebase restoreState error:', error);
+    handleFirestoreError(error, 'Firebase restoreState error:');
     return null;
   }
 }
@@ -465,10 +499,14 @@ export function subscribeToFirebaseState(email: string, onUpdate: (data: any, ex
         onUpdate(null, false);
       }
     } catch (e) {
-      console.error('Subscription reload error:', e);
+      handleFirestoreError(e, 'Subscription reload error:');
     } finally {
       isUpdating = false;
     }
+  };
+
+  const onErr = (err: any) => {
+    handleFirestoreError(err, 'Snapshot listener error:');
   };
 
   const unsubBackup = onSnapshot(backupRef, (docSnap) => {
@@ -478,27 +516,27 @@ export function subscribeToFirebaseState(email: string, onUpdate: (data: any, ex
       currentBackupPayload = null;
     }
     triggerUpdate();
-  });
+  }, onErr);
 
   const unsubDebts = onSnapshot(debtsRef, () => {
     triggerUpdate();
-  });
+  }, onErr);
 
   const unsubIncomes = onSnapshot(incomesRef, () => {
     triggerUpdate();
-  });
+  }, onErr);
 
   const unsubExpenses = onSnapshot(expensesRef, () => {
     triggerUpdate();
-  });
+  }, onErr);
 
   const unsubSavings = onSnapshot(savingsRef, () => {
     triggerUpdate();
-  });
+  }, onErr);
 
   const unsubUnique = onSnapshot(uniqueTransactionsRef, () => {
     triggerUpdate();
-  });
+  }, onErr);
 
   return () => {
     unsubBackup();
@@ -764,7 +802,7 @@ export async function saveUserProfileToFirestore(
       updatedAt: new Date().toISOString()
     }), { merge: true });
   } catch (error) {
-    console.error('Error saving user profile to Firestore users collection:', error);
+    handleFirestoreError(error, 'Error saving user profile to Firestore users collection:');
   }
 }
 
@@ -819,7 +857,7 @@ export async function loadDebtsAndCuotasFromFirestore(email: string): Promise<Re
 
     return data;
   } catch (error) {
-    console.error('Error loading debts and cuotas from Firestore:', error);
+    handleFirestoreError(error, 'Error loading debts and cuotas from Firestore:');
     return data;
   }
 }
@@ -851,7 +889,7 @@ export async function saveCalculatedCuotasToFirestore(
   exchangeRates?: Record<string, number>
 ) {
   try {
-    if (!email || !debt || !debt.id) return;
+    if (!email || !debt || !debt.id || isQuotaCurrentlyBlocked()) return;
     const docId = sanitizeDocId(debt.name, debt.id);
     const cleanEmail = email.toLowerCase().trim();
     
@@ -859,30 +897,17 @@ export async function saveCalculatedCuotasToFirestore(
     const cuotas = calculateAmortizationPlan(debt, overrides, customDebts, undefined, exchangeRates);
     
     for (const cuota of cuotas) {
+      const ov = overrides[cuota.key] || overrides[`${debt.id}_${cuota.index}`] || {};
+      const ovHasPayment = ov.done === true || (ov.amt !== undefined && parseFloat(String(ov.amt)) > 0) || (ov.paidAmount !== undefined && parseFloat(String(ov.paidAmount)) > 0) || (ov.partials && ov.partials.length > 0) || ov.actualDate !== undefined || ov.noAffectBalance !== undefined || cuota.isPaid === true;
+
+      // Only write cuotas that have active user overrides or payments to avoid sweeping dozens of unmodified default cuotas
+      if (!ovHasPayment && !ov.done) continue;
+
       const cuotaDbId = cuota.key || `${debt.id}_${cuota.index}`;
       const cuotaDocRef = doc(db, 'users', cleanEmail, 'debts', docId, 'cuotas', cuotaDbId);
       
-      const ov = overrides[cuota.key] || overrides[`${debt.id}_${cuota.index}`] || {};
-      const ovHasPayment = ov.done === true || (ov.amt !== undefined && parseFloat(String(ov.amt)) > 0) || (ov.paidAmount !== undefined && parseFloat(String(ov.paidAmount)) > 0) || (ov.partials && ov.partials.length > 0);
-      
-      let isDone = Boolean(ov.done ?? cuota.isPaid);
-      let paidAmt = ov.amt !== undefined ? parseFloat(String(ov.amt)) : (ov.paidAmount !== undefined ? parseFloat(String(ov.paidAmount)) : cuota.paidAmount);
-
-      // If neither local overrides nor calculation marks it as paid, check if Firestore already had this cuota marked as paid
-      if (!isDone && !ovHasPayment) {
-        try {
-          const existingSnap = await getDoc(cuotaDocRef);
-          if (existingSnap.exists()) {
-            const existingData = existingSnap.data();
-            if (existingData?.done === true) {
-              isDone = true;
-              paidAmt = existingData.paidAmount !== undefined ? parseFloat(String(existingData.paidAmount)) : (existingData.amt !== undefined ? parseFloat(String(existingData.amt)) : cuota.paidAmount);
-            }
-          }
-        } catch {
-          // ignore offline getDoc errors
-        }
-      }
+      const isDone = Boolean(ov.done ?? cuota.isPaid);
+      const paidAmt = ov.amt !== undefined ? parseFloat(String(ov.amt)) : (ov.paidAmount !== undefined ? parseFloat(String(ov.paidAmount)) : cuota.paidAmount);
 
       const cuotaPayload: any = {
         index: cuota.index,
@@ -908,7 +933,7 @@ export async function saveCalculatedCuotasToFirestore(
       await setDoc(cuotaDocRef, cleanFirestoreData(cuotaPayload), { merge: true });
     }
   } catch (error) {
-    console.error('Error saving calculated cuotas to Firestore:', error);
+    handleFirestoreError(error, 'Error saving calculated cuotas to Firestore:');
   }
 }
 
@@ -924,7 +949,7 @@ export async function saveDebtToFirestore(
   exchangeRates?: Record<string, number>
 ) {
   try {
-    if (!email || !debt || !debt.id) return;
+    if (!email || !debt || !debt.id || isQuotaCurrentlyBlocked()) return;
     const docId = sanitizeDocId(debt.name, debt.id);
     const cleanEmail = email.toLowerCase().trim();
     const debtDocRef = doc(db, 'users', cleanEmail, 'debts', docId);
@@ -944,7 +969,7 @@ export async function saveDebtToFirestore(
     // Write out all calculated amortization installments (cuotas) as subcollection documents
     await saveCalculatedCuotasToFirestore(email, debt, overrides, customDebts, exchangeRates);
   } catch (error) {
-    console.error('Error saving debt to Firestore:', error);
+    handleFirestoreError(error, 'Error saving debt to Firestore:');
   }
 }
 
@@ -953,7 +978,7 @@ export async function saveDebtToFirestore(
  */
 export async function deleteDebtFromFirestore(email: string, debtId: string, debtName?: string) {
   try {
-    if (!email || !debtId) return;
+    if (!email || !debtId || isQuotaCurrentlyBlocked()) return;
     const docId = debtName ? sanitizeDocId(debtName, debtId) : debtId;
     const debtDocRef = doc(db, 'users', email.toLowerCase().trim(), 'debts', docId);
     await deleteDoc(debtDocRef);
@@ -965,7 +990,7 @@ export async function deleteDebtFromFirestore(email: string, debtId: string, deb
       await deleteDoc(d.ref);
     }
   } catch (error) {
-    console.error('Error deleting debt from Firestore:', error);
+    handleFirestoreError(error, 'Error deleting debt from Firestore:');
   }
 }
 
@@ -974,7 +999,7 @@ export async function deleteDebtFromFirestore(email: string, debtId: string, deb
  */
 export async function saveCuotaToFirestore(email: string, debtId: string, cuotaKey: string, cuotaData: any, debtName?: string) {
   try {
-    if (!email || !debtId || !cuotaKey) return;
+    if (!email || !debtId || !cuotaKey || isQuotaCurrentlyBlocked()) return;
     const docId = debtName ? sanitizeDocId(debtName, debtId) : sanitizeDocId(debtId, debtId);
     const cleanEmail = email.toLowerCase().trim();
     const dbDocId = cuotaKey;
@@ -990,31 +1015,16 @@ export async function saveCuotaToFirestore(email: string, debtId: string, cuotaK
     const cuotaDocRef = doc(db, 'users', cleanEmail, 'debts', docId, 'cuotas', dbDocId);
     await setDoc(cuotaDocRef, cleanFirestoreData(mergedData), { merge: true });
 
-    // User rule: "el padre sera false si uno de sus hijos esta paid false"
-    // Check all cuotas of this parent debt
+    // Update parent debt status efficiently: if this cuota is not done, parent debt is not done
     const debtDocRef = doc(db, 'users', cleanEmail, 'debts', docId);
-    const cuotasRef = collection(db, 'users', cleanEmail, 'debts', docId, 'cuotas');
-    const cuotasSnap = await getDocs(cuotasRef);
-    
-    let allChildrenDone = true;
-    if (cuotasSnap.empty) {
-      allChildrenDone = isDone;
-    } else {
-      cuotasSnap.forEach(snap => {
-        const cData = snap.data();
-        const cDone = snap.id === dbDocId ? isDone : Boolean(cData.done);
-        if (!cDone) {
-          allChildrenDone = false;
-        }
-      });
+    if (!isDone) {
+      await setDoc(debtDocRef, {
+        done: false,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
     }
-
-    await setDoc(debtDocRef, cleanFirestoreData({
-      done: allChildrenDone,
-      updatedAt: new Date().toISOString()
-    }), { merge: true });
   } catch (error) {
-    console.error('Error saving cuota to Firestore:', error);
+    handleFirestoreError(error, 'Error saving cuota to Firestore:');
   }
 }
 
@@ -1023,7 +1033,7 @@ export async function saveCuotaToFirestore(email: string, debtId: string, cuotaK
  */
 export async function deleteCuotaFromFirestore(email: string, debtId: string, cuotaKey: string, debtName?: string) {
   try {
-    if (!email || !debtId || !cuotaKey) return;
+    if (!email || !debtId || !cuotaKey || isQuotaCurrentlyBlocked()) return;
     const docId = debtName ? sanitizeDocId(debtName, debtId) : debtId;
     
     const dbDocId = cuotaKey;
@@ -1031,7 +1041,7 @@ export async function deleteCuotaFromFirestore(email: string, debtId: string, cu
     const cuotaDocRef = doc(db, 'users', email.toLowerCase().trim(), 'debts', docId, 'cuotas', dbDocId);
     await deleteDoc(cuotaDocRef);
   } catch (error) {
-    console.error('Error deleting cuota from Firestore:', error);
+    handleFirestoreError(error, 'Error deleting cuota from Firestore:');
   }
 }
 
@@ -1068,20 +1078,17 @@ export async function loadIncomesAndOverridesFromFirestore(email: string): Promi
 
     return data;
   } catch (error) {
-    console.error('Error loading incomes and overrides from Firestore:', error);
+    handleFirestoreError(error, 'Error loading incomes and overrides from Firestore:');
     return data;
   }
 }
 
 /**
- * Save a single income to Firestore
- */
-/**
  * Save a single income to Firestore. One-time transactions go to 'unique_transactions' while recurring go to 'incomes'.
  */
 export async function saveIncomeToFirestore(email: string, income: any, profileName: string) {
   try {
-    if (!email || !income || !income.id) return;
+    if (!email || !income || !income.id || isQuotaCurrentlyBlocked()) return;
     const docId = sanitizeDocId(income.name, income.id);
     const cleanEmail = email.toLowerCase().trim();
 
@@ -1110,7 +1117,7 @@ export async function saveIncomeToFirestore(email: string, income: any, profileN
       await deleteDoc(utDocRef);
     }
   } catch (error) {
-    console.error('Error saving income to Firestore:', error);
+    handleFirestoreError(error, 'Error saving income to Firestore:');
   }
 }
 
@@ -1119,7 +1126,7 @@ export async function saveIncomeToFirestore(email: string, income: any, profileN
  */
 export async function deleteIncomeFromFirestore(email: string, incomeId: string, incomeName?: string) {
   try {
-    if (!email || !incomeId) return;
+    if (!email || !incomeId || isQuotaCurrentlyBlocked()) return;
     const docId = incomeName ? sanitizeDocId(incomeName, incomeId) : incomeId;
     const cleanEmail = email.toLowerCase().trim();
 
@@ -1136,7 +1143,7 @@ export async function deleteIncomeFromFirestore(email: string, incomeId: string,
       await deleteDoc(d.ref);
     }
   } catch (error) {
-    console.error('Error deleting income from Firestore:', error);
+    handleFirestoreError(error, 'Error deleting income from Firestore:');
   }
 }
 
@@ -1145,7 +1152,7 @@ export async function deleteIncomeFromFirestore(email: string, incomeId: string,
  */
 export async function saveIncomeOverrideToFirestore(email: string, incomeId: string, overrideKey: string, overrideData: any, incomeName?: string) {
   try {
-    if (!email || !incomeId || !overrideKey) return;
+    if (!email || !incomeId || !overrideKey || isQuotaCurrentlyBlocked()) return;
     const cleanEmail = email.toLowerCase().trim();
     const docId = incomeName ? sanitizeDocId(incomeName, incomeId) : incomeId;
 
@@ -1167,7 +1174,7 @@ export async function saveIncomeOverrideToFirestore(email: string, incomeId: str
       updatedAt: new Date().toISOString()
     }));
   } catch (error) {
-    console.error('Error saving income override to Firestore:', error);
+    handleFirestoreError(error, 'Error saving income override to Firestore:');
   }
 }
 
@@ -1176,12 +1183,12 @@ export async function saveIncomeOverrideToFirestore(email: string, incomeId: str
  */
 export async function deleteIncomeOverrideFromFirestore(email: string, incomeId: string, overrideKey: string, incomeName?: string) {
   try {
-    if (!email || !incomeId || !overrideKey) return;
+    if (!email || !incomeId || !overrideKey || isQuotaCurrentlyBlocked()) return;
     const docId = incomeName ? sanitizeDocId(incomeName, incomeId) : incomeId;
     const overrideDocRef = doc(db, 'users', email.toLowerCase().trim(), 'incomes', docId, 'overrides', overrideKey);
     await deleteDoc(overrideDocRef);
   } catch (error) {
-    console.error('Error deleting income override from Firestore:', error);
+    handleFirestoreError(error, 'Error deleting income override from Firestore:');
   }
 }
 
@@ -1216,7 +1223,7 @@ export async function loadExpensesAndOverridesFromFirestore(email: string): Prom
 
     return data;
   } catch (error) {
-    console.error('Error loading expenses and overrides from Firestore:', error);
+    handleFirestoreError(error, 'Error loading expenses and overrides from Firestore:');
     return data;
   }
 }
@@ -1226,7 +1233,7 @@ export async function loadExpensesAndOverridesFromFirestore(email: string): Prom
  */
 export async function saveExpenseToFirestore(email: string, expense: any, profileName: string) {
   try {
-    if (!email || !expense || !expense.id) return;
+    if (!email || !expense || !expense.id || isQuotaCurrentlyBlocked()) return;
     const docId = sanitizeDocId(expense.name, expense.id);
     const cleanEmail = email.toLowerCase().trim();
 
@@ -1255,7 +1262,7 @@ export async function saveExpenseToFirestore(email: string, expense: any, profil
       await deleteDoc(utDocRef);
     }
   } catch (error) {
-    console.error('Error saving expense to Firestore:', error);
+    handleFirestoreError(error, 'Error saving expense to Firestore:');
   }
 }
 
@@ -1264,7 +1271,7 @@ export async function saveExpenseToFirestore(email: string, expense: any, profil
  */
 export async function deleteExpenseFromFirestore(email: string, expenseId: string, expenseName?: string) {
   try {
-    if (!email || !expenseId) return;
+    if (!email || !expenseId || isQuotaCurrentlyBlocked()) return;
     const docId = expenseName ? sanitizeDocId(expenseName, expenseId) : expenseId;
     const cleanEmail = email.toLowerCase().trim();
 
@@ -1281,7 +1288,7 @@ export async function deleteExpenseFromFirestore(email: string, expenseId: strin
       await deleteDoc(d.ref);
     }
   } catch (error) {
-    console.error('Error deleting expense from Firestore:', error);
+    handleFirestoreError(error, 'Error deleting expense from Firestore:');
   }
 }
 
@@ -1290,7 +1297,7 @@ export async function deleteExpenseFromFirestore(email: string, expenseId: strin
  */
 export async function saveExpenseOverrideToFirestore(email: string, expenseId: string, overrideKey: string, overrideData: any, expenseName?: string) {
   try {
-    if (!email || !expenseId || !overrideKey) return;
+    if (!email || !expenseId || !overrideKey || isQuotaCurrentlyBlocked()) return;
     const docId = expenseName ? sanitizeDocId(expenseName, expenseId) : expenseId;
     const overrideDocRef = doc(db, 'users', email.toLowerCase().trim(), 'expenses', docId, 'overrides', overrideKey);
     await setDoc(overrideDocRef, cleanFirestoreData({
@@ -1299,7 +1306,7 @@ export async function saveExpenseOverrideToFirestore(email: string, expenseId: s
       updatedAt: new Date().toISOString()
     }));
   } catch (error) {
-    console.error('Error saving expense override to Firestore:', error);
+    handleFirestoreError(error, 'Error saving expense override to Firestore:');
   }
 }
 
@@ -1308,12 +1315,12 @@ export async function saveExpenseOverrideToFirestore(email: string, expenseId: s
  */
 export async function deleteExpenseOverrideFromFirestore(email: string, expenseId: string, overrideKey: string, expenseName?: string) {
   try {
-    if (!email || !expenseId || !overrideKey) return;
+    if (!email || !expenseId || !overrideKey || isQuotaCurrentlyBlocked()) return;
     const docId = expenseName ? sanitizeDocId(expenseName, expenseId) : expenseId;
     const overrideDocRef = doc(db, 'users', email.toLowerCase().trim(), 'expenses', docId, 'overrides', overrideKey);
     await deleteDoc(overrideDocRef);
   } catch (error) {
-    console.error('Error deleting expense override from Firestore:', error);
+    handleFirestoreError(error, 'Error deleting expense override from Firestore:');
   }
 }
 
@@ -1322,7 +1329,7 @@ export async function deleteExpenseOverrideFromFirestore(email: string, expenseI
  */
 export async function saveSavingsToFirestore(email: string, saving: any, profileName: string) {
   try {
-    if (!email || !saving || !saving.id) return;
+    if (!email || !saving || !saving.id || isQuotaCurrentlyBlocked()) return;
     const docId = sanitizeDocId(saving.person || 'saving', saving.id);
     const savingDocRef = doc(db, 'users', email.toLowerCase().trim(), 'savings', docId);
     await setDoc(savingDocRef, cleanFirestoreData({
@@ -1331,7 +1338,7 @@ export async function saveSavingsToFirestore(email: string, saving: any, profile
       updatedAt: new Date().toISOString()
     }));
   } catch (error) {
-    console.error('Error saving savings item to Firestore:', error);
+    handleFirestoreError(error, 'Error saving savings item to Firestore:');
   }
 }
 
@@ -1340,12 +1347,12 @@ export async function saveSavingsToFirestore(email: string, saving: any, profile
  */
 export async function deleteSavingsFromFirestore(email: string, savingId: string, personName?: string) {
   try {
-    if (!email || !savingId) return;
+    if (!email || !savingId || isQuotaCurrentlyBlocked()) return;
     const docId = personName ? sanitizeDocId(personName, savingId) : savingId;
     const savingDocRef = doc(db, 'users', email.toLowerCase().trim(), 'savings', docId);
     await deleteDoc(savingDocRef);
   } catch (error) {
-    console.error('Error deleting savings item from Firestore:', error);
+    handleFirestoreError(error, 'Error deleting savings item from Firestore:');
   }
 }
 
@@ -1370,7 +1377,7 @@ export async function loadSavingsFromFirestore(email: string): Promise<Record<st
     }
     return data;
   } catch (error) {
-    console.error('Error loading savings from Firestore:', error);
+    handleFirestoreError(error, 'Error loading savings from Firestore:');
     return data;
   }
 }
@@ -1400,7 +1407,7 @@ export async function loadUniqueTransactionsFromFirestore(email: string): Promis
     }
     return data;
   } catch (error) {
-    console.error('Error loading unique transactions from Firestore:', error);
+    handleFirestoreError(error, 'Error loading unique transactions from Firestore:');
     return data;
   }
 }
@@ -1410,7 +1417,7 @@ export async function loadUniqueTransactionsFromFirestore(email: string): Promis
  */
 export async function forceUploadStateToFirestore(email: string, appState: any) {
   try {
-    if (!email || !appState) return;
+    if (!email || !appState || isQuotaCurrentlyBlocked()) return;
     const cleanEmail = email.toLowerCase().trim();
 
     // 1. Delete all debts and their subcollections
@@ -1534,7 +1541,7 @@ export async function forceUploadStateToFirestore(email: string, appState: any) 
     // 6. Save primary backup payload
     await backupStateToFirebase(cleanEmail, appState);
   } catch (error) {
-    console.error('Error in forceUploadStateToFirestore:', error);
+    handleFirestoreError(error, 'Error in forceUploadStateToFirestore:');
     throw error;
   }
 }
@@ -1553,7 +1560,7 @@ export async function publishDebtTemplateToFirestore(template: any) {
     });
     return { success: true };
   } catch (error) {
-    console.error('Error publishing template:', error);
+    handleFirestoreError(error, 'Error publishing template:');
     return { success: false, error: 'Failed to publish to MonyStore' };
   }
 }
@@ -1568,7 +1575,7 @@ export async function loadDebtTemplatesFromFirestore(): Promise<any[]> {
     const snap = await getDocs(q);
     return snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
   } catch (error) {
-    console.error('Error loading templates:', error);
+    handleFirestoreError(error, 'Error loading templates:');
     return [];
   }
 }

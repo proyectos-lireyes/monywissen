@@ -34,6 +34,21 @@ const AppContent: React.FC = () => {
   const [profileOpen, setProfileOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [pendingDeletion, setPendingDeletion] = useState<{ email: string; remainingDays: number } | null>(null);
+  const [quotaExceeded, setQuotaExceeded] = useState(() => {
+    return localStorage.getItem('mony_firestore_quota_exceeded') === 'true';
+  });
+
+  useEffect(() => {
+    const checkQuota = () => {
+      setQuotaExceeded(localStorage.getItem('mony_firestore_quota_exceeded') === 'true');
+    };
+    window.addEventListener('storage', checkQuota);
+    const interval = setInterval(checkQuota, 3000);
+    return () => {
+      window.removeEventListener('storage', checkQuota);
+      clearInterval(interval);
+    };
+  }, []);
 
   // Scheduled automatic cloud backup runner
   useEffect(() => {
@@ -265,6 +280,35 @@ const AppContent: React.FC = () => {
         onOpenProfile={() => setProfileOpen(true)}
         onExportPDF={handleExportPDF}
       />
+
+      {quotaExceeded && (
+        <div className="bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 text-xs text-amber-900 dark:text-amber-200 flex items-center justify-between z-30 shadow-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-bold shrink-0">⚠️ Cuota gratuita diaria de Firestore alcanzada:</span>
+            <span>Tus datos están guardados localmente de forma 100% segura. La sincronización en la nube se reanudará cuando la cuota se reinicie.</span>
+          </div>
+          <div className="flex items-center gap-3 shrink-0 ml-2">
+            <a
+              href="https://firebase.google.com/pricing#cloud-firestore"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline font-semibold hover:text-amber-950 dark:hover:text-amber-100"
+            >
+              Ver Cuotas
+            </a>
+            <button
+              onClick={() => {
+                localStorage.removeItem('mony_firestore_quota_exceeded');
+                setQuotaExceeded(false);
+              }}
+              className="text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-200 font-bold text-sm px-1.5 py-0.5 rounded"
+              title="Descartar aviso"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Slide-out Drawer */}
       <DrawerNav isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} onExportPDF={handleExportPDF} />
