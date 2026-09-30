@@ -637,6 +637,14 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
         }
       });
 
+      if (refId === 'required_starting_fund' || idStr.includes('required_starting_fund')) {
+        Object.keys(draft.overrides).forEach(k => {
+          if (k.startsWith('income_required_starting_fund_')) {
+            delete draft.overrides[k];
+          }
+        });
+      }
+
       // Update base item in incomes / expenses / debts ONLY if it is a ONE-TIME non-installment item
       if (type === 'income' || occurrence?.type === 'income') {
         (draft.incomes || []).forEach((inc: any) => {

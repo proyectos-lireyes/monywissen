@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { getUserProfileByEmail } from '../../utils/firebase';
+import { getUserProfileByEmail, sendFriendRequest, respondFriendRequest, saveP2PLoanToCloud, updateP2PLoanCloudStatus } from '../../utils/firebase';
 import { calculateSharedSettlement, formatCurrency, formatDateStr, todayStr } from '../../utils/financialEngine';
 import { QRCodeImage } from '../common/QRCodeImage';
 import { QRScanner } from '../common/QRScanner';
@@ -30,7 +30,7 @@ import { db } from '../../utils/firebase';
 import { collection, query, where, getDocs, limit } from 'firebase/firestore';
 
 export const MonySharedView: React.FC = () => {
-  const { profile, updateProfileData, showToast, convertAmount, currentProfileName } = useApp();
+  const { profile, updateProfileData, showToast, convertAmount, currentProfileName, state, friendRequests, sharedLoans } = useApp();
   const [tab, setTab] = useState<'groups' | 'p2p' | 'agenda'>('groups');
   const [selectedGroupIdx, setSelectedGroupIdx] = useState<number | null>(null);
   const [showQRModal, setShowQRModal] = useState(false);
@@ -157,9 +157,34 @@ export const MonySharedView: React.FC = () => {
   };
 
 
+  const myEmail = state.authUser?.email?.toLowerCase().trim() || '';
+
+  // Get accepted friends from cloud real-time friend requests
+  const acceptedFriendsList = friendRequests
+    .filter(req => req.status === 'accepted')
+    .map(req => {
+      const isSender = req.senderEmail?.toLowerCase().trim() === myEmail;
+      return {
+        alias: isSender ? (req.receiverAlias || req.receiverEmail.split('@')[0]) : (req.senderAlias || req.senderEmail.split('@')[0]),
+        email: isSender ? req.receiverEmail : req.senderEmail,
+        phone: '',
+        isCloudFriend: true
+      };
+    });
+
   const groups = profile.sharedAccounts || [];
-  const loans = profile.p2p || [];
-  const contacts = profile.settings?.contacts || [];
+  
+  // Merge local contacts with real-time cloud friends
+  const contacts = [
+    ...(profile.settings?.contacts || []),
+    ...acceptedFriendsList.filter(f => !(profile.settings?.contacts || []).some((c: any) => c.email?.toLowerCase() === f.email.toLowerCase()))
+  ];
+
+  // Merge local loans with real-time shared cloud loans
+  const loansMap = new Map<string, any>();
+  (profile.p2p || []).forEach((l: any) => loansMap.set(l.id, l));
+  sharedLoans.forEach((l: any) => loansMap.set(l.id, l));
+  const loans = Array.from(loansMap.values());
 
   React.useEffect(() => {
     if (selectedGroupIdx !== null && (!groups[selectedGroupIdx] || selectedGroupIdx >= groups.length)) {
@@ -483,31 +508,39 @@ export const MonySharedView: React.FC = () => {
     if (newStatus === 'rejected') showToast('Invitación rechazada', '❌');
   };
 
-  const handleNetworkStatusChange = (loanId: string, newStatus: 'sent' | 'active' | 'rejected') => {
+  const handleNetworkStatusChange = async (loanId: string, newStatus: any, additionalFields: any = {}) => {
     updateProfileData(draft => {
       if (draft.p2p) {
         const loan = draft.p2p.find(l => l.id === loanId);
         if (loan) {
           loan.status = newStatus;
+          Object.assign(loan, additionalFields);
         }
       }
     });
-    if (newStatus === 'sent') showToast('Marcado como enviado', '✅');
-    if (newStatus === 'active') showToast('Préstamo activado', '✅');
-    if (newStatus === 'rejected') showToast('Solicitud rechazada', '❌');
+
+    const matchingLoan = loans.find(l => l.id === loanId);
+    if (matchingLoan && !matchingLoan.offline) {
+      await updateP2PLoanCloudStatus(loanId, newStatus, additionalFields);
+    }
+
+    if (newStatus === 'payment_pending') showToast('Acuerdo de préstamo aceptado', '🤝');
+    if (newStatus === 'payment_sent') showToast('Préstamo marcado como enviado', '💸');
+    if (newStatus === 'active') showToast('Recepción de dinero confirmada', '✅');
+    if (newStatus === 'repayment_sent') showToast('Reembolso enviado al prestamista', '📤');
+    if (newStatus === 'closed') showToast('Préstamo completado y cerrado', '🎉');
+    if (newStatus === 'rejected') showToast('Propuesta de préstamo rechazada', '❌');
   };
 
   const handleDeleteLoan = (loanId: string) => {
-    if (true) {
-      updateProfileData(draft => {
-        if (draft.p2p) {
-          draft.p2p = draft.p2p.filter(l => l.id !== loanId);
-        }
-        if (draft.expenses) draft.expenses = draft.expenses.filter(e => e.id !== loanId);
-        if (draft.incomes) draft.incomes = draft.incomes.filter(i => i.id !== loanId);
-      });
-      showToast('Préstamo P2P eliminado', '🗑️');
-    }
+    updateProfileData(draft => {
+      if (draft.p2p) {
+        draft.p2p = draft.p2p.filter(l => l.id !== loanId);
+      }
+      if (draft.expenses) draft.expenses = draft.expenses.filter(e => e.id !== loanId);
+      if (draft.incomes) draft.incomes = draft.incomes.filter(i => i.id !== loanId);
+    });
+    showToast('Préstamo P2P eliminado', '🗑️');
   };
 
   const handleDeleteContact = (contact: Contact) => {
@@ -519,7 +552,7 @@ export const MonySharedView: React.FC = () => {
     showToast('Contacto eliminado', '🗑️');
   };
 
-  const saveP2PLoan = () => {
+  const saveP2PLoan = async () => {
     const rawNum = parseFloat(p2pForm.amount);
     if (!p2pForm.person || !rawNum || rawNum <= 0) {
       showToast("Datos inválidos", "❌");
@@ -547,10 +580,23 @@ export const MonySharedView: React.FC = () => {
           loan.receiptImg = p2pForm.receiptImg || undefined;
         }
       });
+      const matchingLoan = loans.find(l => l.id === editingLoanId);
+      if (matchingLoan && !matchingLoan.offline) {
+        await saveP2PLoanToCloud({
+          ...matchingLoan,
+          amount: usdVal,
+          rawAmount: rawNum,
+          currency: p2pForm.currency,
+          pendingBalance: usdVal,
+          dueDate: p2pForm.dueDate || undefined,
+          desc: p2pForm.desc || undefined,
+          receiptImg: p2pForm.receiptImg || undefined,
+        });
+      }
       showToast('Préstamo P2P actualizado', '✏️');
     } else {
       const initialStatus = isNetworkUser
-        ? (p2pFormType === 'borrow' ? 'requested' : 'sent')
+        ? (p2pFormType === 'borrow' ? 'pending_agreement_borrow' : 'pending_agreement_lend')
         : 'offline_active';
 
       const selectedPayAccount = profile.settings.paymentMethods?.find(p => p.id === p2pForm.borrowerAccountId) || profile.settings.paymentMethods?.[0] || null;
@@ -578,35 +624,39 @@ export const MonySharedView: React.FC = () => {
         draft.p2p = draft.p2p || [];
         draft.p2p.push(newLoan);
         
-        if (p2pFormType === 'lend') {
-          draft.expenses = draft.expenses || [];
-          draft.expenses.push({
-            id: newLoan.id,
-            name: `Préstamo a ${newLoan.borrowerAlias}`,
-            amount: usdVal,
-            freq: 'one-time',
-            date: todayStr(),
-            flex: false,
-            receiptImg: p2pForm.receiptImg || undefined,
-          });
-          draft.overrides = draft.overrides || {};
-          draft.overrides[`expense_${newLoan.id}_${todayStr()}`] = { actualDate: todayStr(), done: true };
-        } else {
-          draft.incomes = draft.incomes || [];
-          draft.incomes.push({
-            id: newLoan.id,
-            name: `Préstamo de ${newLoan.lenderAlias}`,
-            amount: usdVal,
-            freq: 'one-time',
-            date: todayStr()
-          });
-          draft.overrides = draft.overrides || {};
-          draft.overrides[`income_${newLoan.id}_${todayStr()}`] = { actualDate: todayStr(), done: true };
+        // Local representation in budget projections
+        if (!isNetworkUser) {
+          if (p2pFormType === 'lend') {
+            draft.expenses = draft.expenses || [];
+            draft.expenses.push({
+              id: newLoan.id,
+              name: `Préstamo a ${newLoan.borrowerAlias}`,
+              amount: usdVal,
+              freq: 'one-time',
+              date: todayStr(),
+              flex: false,
+              receiptImg: p2pForm.receiptImg || undefined,
+            });
+            draft.overrides = draft.overrides || {};
+            draft.overrides[`expense_${newLoan.id}_${todayStr()}`] = { actualDate: todayStr(), done: true };
+          } else {
+            draft.incomes = draft.incomes || [];
+            draft.incomes.push({
+              id: newLoan.id,
+              name: `Préstamo de ${newLoan.lenderAlias}`,
+              amount: usdVal,
+              freq: 'one-time',
+              date: todayStr()
+            });
+            draft.overrides = draft.overrides || {};
+            draft.overrides[`income_${newLoan.id}_${todayStr()}`] = { actualDate: todayStr(), done: true };
+          }
         }
       });
 
       if (isNetworkUser) {
-        showToast(`Solicitud enviada a ${matchingContact.alias} en la red MonyShared 🌐`, '🚀');
+        await saveP2PLoanToCloud(newLoan);
+        showToast(`Propuesta de préstamo enviada a ${matchingContact.alias}. Esperando acuerdo... 🌐`, '🚀');
       } else {
         showToast(`Préstamo registrado localmente (Offline)`, '💸');
       }
@@ -806,21 +856,21 @@ export const MonySharedView: React.FC = () => {
     setIsSearching(false);
   };
 
-  const addFromCloud = (user: any) => {
-    updateProfileData(draft => {
-      draft.settings.contacts = draft.settings.contacts || [];
-      const exists = draft.settings.contacts.find(c => c.email?.toLowerCase() === user.email?.toLowerCase() || c.alias.toLowerCase() === user.alias.toLowerCase());
-      if (!exists) {
-        draft.settings.contacts.push({
-          alias: user.alias,
-          email: user.email,
-          phone: user.phone || '',
-          avatar: user.avatar || undefined,
-          paymentMethods: user.paymentMethods || []
-        });
-      }
-    });
-    showToast(`Contacto ${user.alias} guardado en tu agenda`, '✅');
+  const addFromCloud = async (user: any) => {
+    const myEmail = state.authUser?.email;
+    const myAlias = profile.settings.myAlias || 'Yo';
+    if (!myEmail) {
+      showToast('Inicia sesión para enviar solicitudes de amistad', '⚠️');
+      return;
+    }
+
+    showToast('Enviando solicitud de amistad...', '✉️');
+    const res = await sendFriendRequest(myEmail, myAlias, user.email);
+    if (res.success) {
+      showToast(`Solicitud de amistad enviada a ${user.alias}. Debe aceptarla para ser tu amigo.`, '🚀');
+    } else {
+      showToast(res.error || 'No se pudo enviar la solicitud', '❌');
+    }
     setShowSearchModal(false);
   };
 
@@ -1150,6 +1200,33 @@ export const MonySharedView: React.FC = () => {
                 const pending = loan.pendingBalance ?? loan.amount;
                 const currLabel = loan.currency === 'BS' ? 'Bs' : (loan.currency === 'EUR_BCV' ? '€' : (loan.currency === 'USDT' ? 'USDT' : '$'));
                 
+                // Detailed custom text for status description
+                const getStatusText = () => {
+                  if (loan.offline) {
+                    return isBorrower ? 'Le debes (Local Offline)' : 'Te debe (Local Offline)';
+                  }
+                  switch (loan.status) {
+                    case 'pending_agreement_borrow':
+                      return isBorrower ? `Solicitaste préstamo a ${otherParty} (Esperando acuerdo)` : `${otherParty} te solicita un préstamo de ${formatCurrency(loan.amount)}`;
+                    case 'pending_agreement_lend':
+                      return isBorrower ? `${otherParty} te ofrece/envió un préstamo de ${formatCurrency(loan.amount)}` : `Ofreciste préstamo a ${otherParty} (Esperando acuerdo)`;
+                    case 'payment_pending':
+                      return isBorrower ? `🤝 Acuerdo aceptado. Esperando que ${otherParty} envíe la transferencia...` : `🤝 Acuerdo aceptado. Por favor realiza la transferencia de ${formatCurrency(loan.amount)} y pulsa enviar`;
+                    case 'payment_sent':
+                      return isBorrower ? `💸 ${otherParty} envió el dinero. Por favor confirma la recepción en tu cuenta.` : `📤 Enviaste el préstamo. Esperando que ${otherParty} confirme recepción...`;
+                    case 'active':
+                      return isBorrower ? `Le debes a ${otherParty}` : `${otherParty} te debe`;
+                    case 'repayment_sent':
+                      return isBorrower ? `📤 Enviaste el reembolso. Esperando confirmación de ${otherParty}...` : `📥 ${otherParty} indica que envió el reembolso. Por favor confirma en tu cuenta.`;
+                    case 'closed':
+                      return '🎉 Préstamo cerrado y completado';
+                    case 'rejected':
+                      return '❌ Propuesta rechazada';
+                    default:
+                      return isBorrower ? `Le debes a ${otherParty}` : `${otherParty} te debe`;
+                  }
+                };
+
                 return (
                   <div key={loan.id} className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 relative overflow-hidden space-y-2">
                     <div className={`absolute left-0 top-0 bottom-0 w-1 ${isBorrower ? 'bg-rose-500' : 'bg-emerald-500'}`} />
@@ -1160,12 +1237,7 @@ export const MonySharedView: React.FC = () => {
                         title="Toca para editar préstamo"
                       >
                         <p className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 group-hover:text-indigo-600 transition-colors">
-                          {loan.status === 'requested' 
-                            ? (isBorrower ? 'Solicitaste a ' : 'Te solicitó ')
-                            : loan.status === 'sent'
-                            ? (isBorrower ? 'Te envió ' : 'Enviaste a ')
-                            : (isBorrower ? 'Le debes a ' : 'Te debe ')
-                          }{otherParty}
+                          {getStatusText()}
                           {!loan.offline && (
                             <span className="text-[9px] bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-extrabold px-1.5 py-0.5 rounded-md">
                               🌐 Red MonyShared
@@ -1173,7 +1245,7 @@ export const MonySharedView: React.FC = () => {
                           )}
                         </p>
                         <p className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1">
-                          <span>Total Original: <b>{formatCurrency(loan.amount)}</b></span>
+                          <span>Monto: <b>{formatCurrency(loan.amount)}</b></span>
                           {loan.rawAmount && loan.currency !== 'USD_BCV' && (
                             <span className="text-slate-400 font-semibold">
                               ({loan.rawAmount.toLocaleString()} {currLabel})
@@ -1181,52 +1253,108 @@ export const MonySharedView: React.FC = () => {
                           )}
                           {loan.desc && <span>• {loan.desc}</span>}
                         </p>
-                        {loan.status === 'requested' && (
-                          <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-0.5">
-                            ⏳ Solicitud enviada en red (Pendiente confirmación)
-                          </p>
-                        )}
-                        {loan.status === 'sent' && (
-                          <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400 mt-0.5">
-                            📲 Transferencia enviada (Notificado)
-                          </p>
-                        )}
                         {loan.dueDate && (
                           <p className="text-[10px] font-semibold text-rose-500 mt-1 flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 inline-block"></span> Vence: {loan.dueDate}
                           </p>
                         )}
 
-                        {/* Action buttons based on status */}
-                        {loan.status === 'requested' && !isBorrower && !loan.offline && (
-                          <div className="flex gap-2 mt-2">
-                            <button
-                              onClick={() => handleNetworkStatusChange(loan.id, 'rejected')}
-                              className="flex-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 rounded-lg text-xs font-bold text-center"
-                            >
-                              Rechazar
-                            </button>
-                            <button
-                              onClick={() => handleNetworkStatusChange(loan.id, 'sent')}
-                              className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold text-center"
-                            >
-                              Enviar
-                            </button>
+                        {/* Interactive Social Buttons */}
+                        {!loan.offline && (
+                          <div className="mt-3 space-y-1.5">
+                            {/* Receiver answers proposal */}
+                            {loan.status === 'pending_agreement_borrow' && !isBorrower && (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleNetworkStatusChange(loan.id, 'rejected'); }}
+                                  className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold"
+                                >
+                                  Rechazar Solicitud
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleNetworkStatusChange(loan.id, 'payment_pending'); }}
+                                  className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold"
+                                >
+                                  Aceptar Acuerdo
+                                </button>
+                              </div>
+                            )}
+
+                            {loan.status === 'pending_agreement_lend' && isBorrower && (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleNetworkStatusChange(loan.id, 'rejected'); }}
+                                  className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold"
+                                >
+                                  Rechazar Propuesta
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleNetworkStatusChange(loan.id, 'payment_pending'); }}
+                                  className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold"
+                                >
+                                  Aceptar Préstamo
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Lender marks as sent */}
+                            {loan.status === 'payment_pending' && !isBorrower && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleNetworkStatusChange(loan.id, 'payment_sent'); }}
+                                className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1"
+                              >
+                                💸 Realicé pago: Marcar como enviado
+                              </button>
+                            )}
+
+                            {/* Borrower confirms receipt */}
+                            {loan.status === 'payment_sent' && isBorrower && (
+                              <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40 rounded-xl space-y-2">
+                                <p className="text-[10px] text-amber-800 dark:text-amber-200">
+                                  <b>Cuentas de pago de {otherParty} para reembolsarle:</b>
+                                </p>
+                                <div className="text-[10px] text-slate-600 dark:text-slate-300 font-semibold space-y-1">
+                                  {loan.borrowerAccountData ? (
+                                    <div>• {loan.borrowerAccountData.bankName || 'Banco'}: {loan.borrowerAccountData.number || loan.borrowerAccountData.alias}</div>
+                                  ) : (
+                                    <div>Consúltale a tu amigo por chat o tarjeta de contacto.</div>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleNetworkStatusChange(loan.id, 'active'); }}
+                                  className="w-full py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold"
+                                >
+                                  💰 Confirmar: Dinero recibido
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Repayment triggers */}
+                            {loan.status === 'active' && isBorrower && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleNetworkStatusChange(loan.id, 'repayment_sent'); }}
+                                className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold"
+                              >
+                                📤 Marcar reembolso como enviado
+                              </button>
+                            )}
+
+                            {/* Lender confirms repayment completion */}
+                            {loan.status === 'repayment_sent' && !isBorrower && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleNetworkStatusChange(loan.id, 'closed', { pendingBalance: 0 }); }}
+                                className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold"
+                              >
+                                ✅ Dinero Recibido: Marcar como completado
+                              </button>
+                            )}
                           </div>
-                        )}
-                        {loan.status === 'sent' && isBorrower && !loan.offline && (
-                          <button
-                            onClick={() => handleNetworkStatusChange(loan.id, 'active')}
-                            className="mt-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold w-full text-center"
-                          >
-                            Confirmar Recepción
-                          </button>
                         )}
 
                         {/* Receipt badge if available */}
                         {loan.receiptImg && (
                           <button
-                            onClick={() => setPreviewReceiptImg(loan.receiptImg!)}
+                            onClick={(e) => { e.stopPropagation(); setPreviewReceiptImg(loan.receiptImg!); }}
                             className="mt-1 px-2 py-0.5 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded-lg text-[10px] font-bold flex items-center gap-1"
                           >
                             <ImageIcon className="w-3 h-3 text-indigo-600" />
@@ -1270,6 +1398,43 @@ export const MonySharedView: React.FC = () => {
       {/* TAB 3: AGENDA */}
       {tab === 'agenda' && (
         <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+          
+          {/* Solicitudes de Amistad Pendientes */}
+          {friendRequests.filter(req => req.receiverEmail?.toLowerCase() === myEmail && req.status === 'pending').length > 0 && (
+            <div className="p-4 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/50 rounded-2xl space-y-3">
+              <h4 className="text-xs font-black text-blue-700 dark:text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
+                Solicitudes de Amistad Recibidas
+              </h4>
+              <div className="space-y-2">
+                {friendRequests
+                  .filter(req => req.receiverEmail?.toLowerCase() === myEmail && req.status === 'pending')
+                  .map(req => (
+                    <div key={req.id} className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700 flex items-center justify-between text-xs gap-3">
+                      <div>
+                        <p className="font-bold text-slate-800 dark:text-slate-100">{req.senderAlias || req.senderEmail.split('@')[0]}</p>
+                        <p className="text-[10px] text-slate-400">{req.senderEmail}</p>
+                      </div>
+                      <div className="flex gap-1.5 shrink-0">
+                        <button
+                          onClick={() => respondFriendRequest(req.id, 'rejected')}
+                          className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300 rounded-lg font-bold"
+                        >
+                          Rechazar
+                        </button>
+                        <button
+                          onClick={() => respondFriendRequest(req.id, 'accepted')}
+                          className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold"
+                        >
+                          Aceptar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Mis Contactos</h3>
             <div className="flex items-center gap-1.5">

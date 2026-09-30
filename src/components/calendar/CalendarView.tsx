@@ -41,6 +41,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
     'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
   ];
   const [showAllPrevious, setShowAllPrevious] = useState(false);
+  const [showTypeDropdown, setShowTypeDropdown] = useState(false);
+  const [showStateDropdown, setShowStateDropdown] = useState(false);
 
   const prefixMonth = `${year}-${(month + 1).toString().padStart(2, '0')}`;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -166,6 +168,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
     if (activeOutflowFilters.length > 0) {
       const match = activeOutflowFilters.some(filterType => {
         if (filterType === 'egresos') return e.type === 'expense' || e.type === 'debt';
+        if (filterType === 'rescue_covered') return !!e.isRescueCovered;
         return e.type === filterType;
       });
       if (!match) return false;
@@ -316,6 +319,159 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
             </div>
           );
         })()}
+      </div>
+
+      {/* Filter Chips Bar (Compact Row with Dropdowns and Badges) */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-800">
+        <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-300">
+          <span className="text-[10px] text-slate-400 uppercase tracking-wider shrink-0 mr-1">Filtrar por:</span>
+          
+          {/* Dropdown 1: Tipo de Movimiento */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => { setShowTypeDropdown(!showTypeDropdown); setShowStateDropdown(false); }}
+              className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center gap-1.5 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-xs"
+            >
+              <span>🔍 Tipo de Movimiento</span>
+              <span className="px-1.5 py-0.2 text-[10px] bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 rounded font-black">
+                {activeOutflowFilters.length === 0 ? 'Todos' : activeOutflowFilters.length}
+              </span>
+              <span className="text-[9px] text-slate-400">▼</span>
+            </button>
+            
+            {showTypeDropdown && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowTypeDropdown(false)} />
+                <div className="absolute left-0 mt-1.5 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl z-20 p-2.5 space-y-1">
+                  {[
+                    { id: 'income', label: '💚 Solo Ingresos' },
+                    { id: 'expense', label: '💳 Solo Gastos Fijos' },
+                    { id: 'debt', label: '🏦 Solo Deudas' },
+                    { id: 'egresos', label: '🔴 Todos los Egresos (Gastos + Deudas)' },
+                    { id: 'savings', label: '🛡️ Solo Ahorros' },
+                    { id: 'rescate_ahorros', label: '🛟 Solo Rescates' },
+                    { id: 'rescue_covered', label: '🪂 Solo con Ahorro' },
+                  ].map(f => {
+                    const isActive = activeOutflowFilters.includes(f.id);
+                    return (
+                      <label
+                        key={f.id}
+                        className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl cursor-pointer text-xs font-bold text-slate-700 dark:text-slate-300 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isActive}
+                          onChange={() => toggleOutflowFilter(f.id)}
+                          className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5"
+                        />
+                        <span>{f.label}</span>
+                      </label>
+                    );
+                  })}
+                  {activeOutflowFilters.length > 0 && (
+                    <div className="pt-1.5 border-t border-slate-100 dark:border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => { setActiveOutflowFilters([]); setShowTypeDropdown(false); }}
+                        className="w-full py-1 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 text-[10px] font-extrabold rounded-lg transition-colors text-center"
+                      >
+                        Limpiar tipos
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Dropdown 2: Estado */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => { setShowStateDropdown(!showStateDropdown); setShowTypeDropdown(false); }}
+              className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center gap-1.5 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-xs"
+            >
+              <span>🏷️ Estado</span>
+              <span className="px-1.5 py-0.2 text-[10px] bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 rounded font-black">
+                {activeStateFilters.filter(f => f !== 'hide_done').length === 0 ? 'Todos' : activeStateFilters.filter(f => f !== 'hide_done').length}
+              </span>
+              <span className="text-[9px] text-slate-400">▼</span>
+            </button>
+            
+            {showStateDropdown && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowStateDropdown(false)} />
+                <div className="absolute left-0 mt-1.5 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl z-20 p-2.5 space-y-1">
+                  {[
+                    { id: 'pending', label: '🔴 Pendientes' },
+                    { id: 'overdue', label: '⚠️ Atrasados' },
+                    { id: 'postponed', label: '🔄 Pospuestos' },
+                    { id: 'deficit', label: '🚨 Quiebre' },
+                  ].map(f => {
+                    const isActive = activeStateFilters.includes(f.id);
+                    return (
+                      <label
+                        key={f.id}
+                        className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl cursor-pointer text-xs font-bold text-slate-700 dark:text-slate-300 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isActive}
+                          onChange={() => toggleStateFilter(f.id)}
+                          className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5"
+                        />
+                        <span>{f.label}</span>
+                      </label>
+                    );
+                  })}
+                  {activeStateFilters.filter(f => f !== 'hide_done').length > 0 && (
+                    <div className="pt-1.5 border-t border-slate-100 dark:border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => { setActiveStateFilters(prev => prev.filter(f => f === 'hide_done')); setShowStateDropdown(false); }}
+                        className="w-full py-1 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 text-[10px] font-extrabold rounded-lg transition-colors text-center"
+                      >
+                        Limpiar estados
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Active Filters Display Chips inside the same line */}
+        <div className="flex flex-wrap gap-1 items-center">
+          {activeOutflowFilters.map(id => {
+            const label = id === 'egresos' ? 'Gastos + Deudas' : id === 'income' ? 'Ingresos' : id === 'expense' ? 'Gastos Fijos' : id === 'debt' ? 'Deudas' : id === 'savings' ? 'Ahorros' : id === 'rescue_covered' ? 'Con Ahorro' : 'Rescates';
+            return (
+              <span key={id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 text-[10px] font-black border border-blue-100 dark:border-blue-900/40">
+                {label}
+                <button type="button" onClick={() => toggleOutflowFilter(id)} className="hover:text-rose-600 text-slate-400 text-[11px] font-black">✕</button>
+              </span>
+            );
+          })}
+          {activeStateFilters.filter(f => f !== 'hide_done').map(id => {
+            const label = id === 'pending' ? 'Pendientes' : id === 'overdue' ? 'Atrasados' : id === 'postponed' ? 'Pospuestos' : 'Quiebre';
+            return (
+              <span key={id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-black border border-slate-200 dark:border-slate-700">
+                {label}
+                <button type="button" onClick={() => toggleStateFilter(id)} className="hover:text-rose-600 text-slate-400 text-[11px] font-black">✕</button>
+              </span>
+            );
+          })}
+          {(activeOutflowFilters.length > 0 || activeStateFilters.filter(f => f !== 'hide_done').length > 0) && (
+            <button
+              type="button"
+              onClick={() => { setActiveOutflowFilters([]); setActiveStateFilters(prev => prev.filter(f => f === 'hide_done')); }}
+              className="text-[10px] font-extrabold text-rose-600 hover:underline px-1.5 shrink-0"
+            >
+              Limpiar Todo
+            </button>
+          )}
+        </div>
       </div>
 
       {/* CALENDAR VIEW */}
@@ -513,6 +669,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                              </span>
                           )}
                           
+                          {e.isRescueCovered && (
+                            <span className="text-[9px] bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0 flex items-center gap-1" title="Financiado por tus ahorros">
+                              🪂 Usa Ahorros
+                            </span>
+                          )}
                           {!e.done && e.insufficientFunds && e.amt < 0 && (
                             <span className="text-[9px] bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0" title="Quiebre / Fondos insuficientes">🚨</span>
                           )}
@@ -610,76 +771,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
         </div>
       )}
 
-      {/* Filter Chips Bar */}
-      <div className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
-        <div>
-          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-1.5">
-            Filtrar por Tipo de Movimiento
-          </span>
-          <div className="flex flex-wrap gap-1.5">
-            {[
-              { id: 'income', label: '💚 Solo Ingresos' },
-              { id: 'expense', label: '💳 Solo Gastos Fijos' },
-              { id: 'debt', label: '🏦 Solo Deudas' },
-              { id: 'egresos', label: '🔴 Todos los Egresos (Gastos + Deudas)' },
-              { id: 'savings', label: '🛡️ Solo Ahorros' },
-            ].map(f => {
-              const isActive = activeOutflowFilters.includes(f.id);
-              return (
-                <button
-                  key={f.id}
-                  onClick={() => toggleOutflowFilter(f.id)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
-                    isActive
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              );
-            })}
-            {activeOutflowFilters.length > 0 && (
-              <button
-                onClick={() => setActiveOutflowFilters([])}
-                className="px-2.5 py-1.5 rounded-full text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 transition-colors"
-              >
-                Limpiar tipo
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-1.5">
-            Filtrar por Estado
-          </span>
-          <div className="flex flex-wrap gap-1.5">
-            {[
-              { id: 'pending', label: '🔴 Pendientes' },
-              { id: 'overdue', label: '⚠️ Atrasados' },
-              { id: 'postponed', label: '🔄 Pospuestos' },
-              { id: 'deficit', label: '🚨 Quiebre' },
-            ].map(f => {
-              const isActive = activeStateFilters.includes(f.id);
-              return (
-                <button
-                  key={f.id}
-                  onClick={() => toggleStateFilter(f.id)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
-                    isActive
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
       {/* Day Events Modal */}
       {selectedDayEvents && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
@@ -723,6 +814,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                              <span className="text-[9px] font-normal no-underline ml-1 shrink-0 opacity-70">
                                (Plan: {formatDateStr(e.originalDate).substring(0,5)})
                              </span>
+                        )}
+                        {e.isRescueCovered && (
+                          <span className="text-[9px] bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider shrink-0 flex items-center gap-1" title="Financiado por tus ahorros">
+                            🪂 Usa Ahorros
+                          </span>
                         )}
                         {e.insufficientFunds && e.amt < 0 && !e.done && <span title="Alerta de Quiebre" className="text-rose-500 no-underline">🚨</span>}
                       </p>

@@ -18,7 +18,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenProfile,
   onExportPDF,
 }) => {
-  const { activeView, profile, currentProfileName, setActiveView, exchangeRates, state, updateState, updateProfileData, integrityReport, forceUploadLocalToCloud } = useApp();
+  const { activeView, profile, currentProfileName, setActiveView, exchangeRates, state, updateState, updateProfileData, integrityReport, startInteractiveSync } = useApp();
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
   const [avatarViewerOpen, setAvatarViewerOpen] = useState(false);
   const [showNotifMenu, setShowNotifMenu] = useState(false);
@@ -307,9 +307,9 @@ export const TopBar: React.FC<TopBarProps> = ({
           {/* Manual Sync to Firebase Button */}
           {state.authUser && (
             <button
-              onClick={() => forceUploadLocalToCloud()}
+              onClick={() => startInteractiveSync()}
               className="px-2.5 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-900/40 dark:text-blue-300 dark:hover:bg-blue-900/60 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs"
-              title="Sincronizar manualmente con Firebase"
+              title="Sincronizar de forma interactiva con Firebase"
             >
               <CloudUpload className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Sincronizar</span>

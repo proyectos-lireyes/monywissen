@@ -1389,6 +1389,11 @@ export function calculateProjections(
       balance = Math.round((balance + (exp.amt || 0)) * 100) / 100;
       if (Math.abs(balance) < 0.001) balance = 0;
 
+      let expIsRescueCovered = false;
+      if (hasRescuedInCurrentCycle && exp.type !== 'savings') {
+        expIsRescueCovered = true;
+      }
+
       if (exp.type === 'savings' && exp.amt < 0) {
         savingsAccumulated = Math.round((savingsAccumulated + Math.abs(exp.amt)) * 100) / 100;
       }
@@ -1413,6 +1418,8 @@ export function calculateProjections(
             if (Math.abs(balance) < 0.001) balance = 0;
             savingsAccumulated = Math.round((savingsAccumulated - rescueAmt) * 100) / 100;
             if (Math.abs(savingsAccumulated) < 0.001) savingsAccumulated = 0;
+
+            expIsRescueCovered = true;
 
             plan.push({
               date: actualDate,
@@ -1453,6 +1460,7 @@ export function calculateProjections(
         belowCushion: isBelowCush,
         criticalDelay: !exp.done && (isInsufficient || isBelowCush),
         savingsAccumulated,
+        isRescueCovered: expIsRescueCovered,
       });
     }
   }

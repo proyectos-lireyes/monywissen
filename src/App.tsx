@@ -23,6 +23,7 @@ import { OnboardingModal } from './components/modals/OnboardingModal';
 import { InitialBalanceModal } from './components/modals/InitialBalanceModal';
 import { LoginScreen } from './components/auth/LoginScreen';
 import { AccountRecoveryModal } from './components/modals/AccountRecoveryModal';
+import { InteractiveSyncModal } from './components/modals/InteractiveSyncModal';
 import { checkAccountDeletionStatus, saveManualBackup } from './utils/firebase';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -405,6 +406,9 @@ const AppContent: React.FC = () => {
           setPendingDeletion(null);
         }}
       />
+
+      {/* Interactive Sync Comparison & Resolve Modal */}
+      <InteractiveSyncModal />
     </div>
   );
 };

@@ -258,6 +258,7 @@ export interface UserProfile {
   savings?: {
     current: number;
     digital: number;
+    currency?: string;
   };
 }
 
@@ -306,6 +307,7 @@ export interface PlanOccurrence {
   belowCushion?: boolean;
   criticalDelay?: boolean;
   savingsAccumulated?: number;
+  isRescueCovered?: boolean;
 }
 
 export interface IncomeAccountBalance {

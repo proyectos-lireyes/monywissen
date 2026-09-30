@@ -1,6 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, getDocs, query, orderBy, deleteDoc, limit } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, getDocs, query, orderBy, deleteDoc, limit, where, updateDoc } from 'firebase/firestore';
 import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithCredential, signInWithRedirect, getRedirectResult, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -1578,4 +1578,151 @@ export async function loadDebtTemplatesFromFirestore(): Promise<any[]> {
     handleFirestoreError(error, 'Error loading templates:');
     return [];
   }
+}
+
+/**
+ * SOCIAL SYSTEM: Send a Friend Request on the MonyShared network
+ */
+export async function sendFriendRequest(senderEmail: string, senderAlias: string, receiverEmail: string) {
+  try {
+    if (isQuotaCurrentlyBlocked()) return { success: false, error: 'Quota exceeded' };
+    const cleanSender = senderEmail.toLowerCase().trim();
+    const cleanReceiver = receiverEmail.toLowerCase().trim();
+    if (cleanSender === cleanReceiver) {
+      return { success: false, error: 'No puedes enviarte una solicitud a ti mismo' };
+    }
+
+    const docId = `${cleanSender.replace(/\./g, '_')}_to_${cleanReceiver.replace(/\./g, '_')}`;
+    const reqRef = doc(db, 'friend_requests', docId);
+    
+    await setDoc(reqRef, {
+      id: docId,
+      senderEmail: cleanSender,
+      senderAlias,
+      receiverEmail: cleanReceiver,
+      status: 'pending',
+      timestamp: Date.now()
+    });
+    return { success: true };
+  } catch (error) {
+    handleFirestoreError(error, 'Error sending friend request:');
+    return { success: false, error: 'Failed to send request' };
+  }
+}
+
+/**
+ * SOCIAL SYSTEM: Respond to a Friend Request
+ */
+export async function respondFriendRequest(requestId: string, status: 'accepted' | 'rejected') {
+  try {
+    if (isQuotaCurrentlyBlocked()) return;
+    const reqRef = doc(db, 'friend_requests', requestId);
+    await updateDoc(reqRef, { status, updatedAt: Date.now() });
+  } catch (error) {
+    handleFirestoreError(error, 'Error responding to friend request:');
+  }
+}
+
+/**
+ * SOCIAL SYSTEM: Listen to all incoming and outgoing friend requests in real-time
+ */
+export function subscribeFriendRequests(email: string, onUpdate: (requests: any[]) => void) {
+  if (!email || isQuotaCurrentlyBlocked()) return () => {};
+  const cleanEmail = email.toLowerCase().trim();
+  
+  // Real-time query matching incoming OR outgoing requests
+  const q = query(
+    collection(db, 'friend_requests'),
+    where('receiverEmail', '==', cleanEmail)
+  );
+
+  return onSnapshot(q, (snap) => {
+    const list = snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+    onUpdate(list);
+  }, (err) => {
+    console.error('Error in friend requests subscription:', err);
+  });
+}
+
+/**
+ * SOCIAL SYSTEM: Listen to outgoing friend requests to see who accepted
+ */
+export function subscribeOutgoingFriendRequests(email: string, onUpdate: (requests: any[]) => void) {
+  if (!email || isQuotaCurrentlyBlocked()) return () => {};
+  const cleanEmail = email.toLowerCase().trim();
+  
+  const q = query(
+    collection(db, 'friend_requests'),
+    where('senderEmail', '==', cleanEmail)
+  );
+
+  return onSnapshot(q, (snap) => {
+    const list = snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+    onUpdate(list);
+  }, (err) => {
+    console.error('Error in outgoing requests subscription:', err);
+  });
+}
+
+/**
+ * P2P AGREEMENT WORKFLOW: Send or update a shared P2P Loan proposal
+ */
+export async function saveP2PLoanToCloud(loan: any) {
+  try {
+    if (isQuotaCurrentlyBlocked()) return;
+    const loanRef = doc(db, 'shared_loans', loan.id);
+    await setDoc(loanRef, {
+      ...loan,
+      lastUpdated: Date.now()
+    }, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, 'Error saving P2P loan to cloud:');
+  }
+}
+
+/**
+ * P2P AGREEMENT WORKFLOW: Update loan status and notify peer
+ */
+export async function updateP2PLoanCloudStatus(loanId: string, status: string, additionalFields: any = {}) {
+  try {
+    if (isQuotaCurrentlyBlocked()) return;
+    const loanRef = doc(db, 'shared_loans', loanId);
+    await setDoc(loanRef, {
+      status,
+      ...additionalFields,
+      lastUpdated: Date.now()
+    }, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, 'Error updating shared loan status:');
+  }
+}
+
+/**
+ * P2P AGREEMENT WORKFLOW: Listen to active shared loans in real-time
+ */
+export function subscribeSharedLoans(email: string, onUpdate: (loans: any[]) => void) {
+  if (!email || isQuotaCurrentlyBlocked()) return () => {};
+  const cleanEmail = email.toLowerCase().trim();
+
+  // Listen to loans where current user is either lender or borrower
+  const qLender = query(collection(db, 'shared_loans'), where('lenderEmail', '==', cleanEmail));
+  const qBorrower = query(collection(db, 'shared_loans'), where('borrowerEmail', '==', cleanEmail));
+
+  const activeLoans: Record<string, any> = {};
+
+  const processSnap = (snap: any) => {
+    snap.docs.forEach((docSnap: any) => {
+      const data = docSnap.data();
+      activeLoans[docSnap.id] = { ...data, id: docSnap.id };
+    });
+    onUpdate(Object.values(activeLoans));
+  };
+
+  const unsubLender = onSnapshot(qLender, processSnap, (err) => console.error(err));
+  const unsubBorrower = onSnapshot(qBorrower, processSnap, (err) => console.error(err));
+
+  return () => {
+    unsubLender();
+    unsubBorrower();
+  };
 }

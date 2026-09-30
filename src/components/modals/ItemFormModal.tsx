@@ -210,6 +210,39 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
   const [showDueGrid, setShowDueGrid] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  const handleInitialPaidCuotasChange = (valStr: string) => {
+    const val = parseInt(valStr, 10) || 0;
+    setInitialPaidCuotas(valStr);
+    
+    if (val > 0) {
+      const debtId = editIndex !== null && profile.debts[editIndex] ? profile.debts[editIndex].id : 'preview';
+      const idWithout = debtId.replace(/^debt_/, '');
+      const idWith = debtId.startsWith('debt_') ? debtId : 'debt_' + debtId;
+      
+      updateProfileData(draft => {
+        draft.overrides = draft.overrides || {};
+        for (let k = 1; k <= val; k++) {
+          const possibleKeys = [
+            `${debtId}_${k}`,
+            `debt_${debtId}_cuota_${k}`,
+            `${idWithout}_${k}`,
+            `debt_${idWithout}_cuota_${k}`,
+            `${idWith}_${k}`,
+            `debt_${idWith}_cuota_${k}`
+          ];
+          possibleKeys.forEach(key => {
+            if (draft.overrides[key]) {
+              delete draft.overrides[key].explicitUnpaid;
+              delete draft.overrides[key].isPaid;
+              draft.overrides[key].done = true;
+              draft.overrides[key].paidPrior = true;
+            }
+          });
+        }
+      });
+    }
+  };
+
   const handleDebtTypeSelect = (selected: string) => {
     setDebtType(selected);
     if (selected === 'card') {
@@ -1104,30 +1137,50 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
         const numPaidPrior = parseInt(String(initialPaidCuotas), 10) || 0;
         draft.overrides = draft.overrides || {};
+        
+        const idWithout = item.id.replace(/^debt_/, '');
+        const idWith = item.id.startsWith('debt_') ? item.id : 'debt_' + item.id;
+        
         for (let k = 1; k <= actualInst; k++) {
-          const ovKey = `${item.id}_${k}`;
-          const legacyKey = `debt_${item.id}_cuota_${k}`;
+          const possibleKeys = [
+            `${item.id}_${k}`,
+            `debt_${item.id}_cuota_${k}`,
+            `${idWithout}_${k}`,
+            `debt_${idWithout}_cuota_${k}`,
+            `${idWith}_${k}`,
+            `debt_${idWith}_cuota_${k}`
+          ];
+
           if (k <= numPaidPrior) {
-            draft.overrides[ovKey] = {
-              ...(draft.overrides[ovKey] || {}),
+            possibleKeys.forEach(key => {
+              if (draft.overrides[key]) {
+                delete draft.overrides[key].explicitUnpaid;
+                delete draft.overrides[key].isPaid;
+                draft.overrides[key].done = true;
+                draft.overrides[key].paidPrior = true;
+              }
+            });
+            // Ensure primary key is present
+            const primaryKey = `${item.id}_${k}`;
+            draft.overrides[primaryKey] = {
+              ...(draft.overrides[primaryKey] || {}),
               done: true,
               paidPrior: true
             };
           } else {
-            if (draft.overrides[ovKey]?.paidPrior) {
-              delete draft.overrides[ovKey].done;
-              delete draft.overrides[ovKey].paidPrior;
-              if (Object.keys(draft.overrides[ovKey]).length === 0) {
-                delete draft.overrides[ovKey];
+            possibleKeys.forEach(key => {
+              if (draft.overrides[key]) {
+                if (draft.overrides[key].paidPrior) {
+                  delete draft.overrides[key].done;
+                  delete draft.overrides[key].paidPrior;
+                  delete draft.overrides[key].explicitUnpaid;
+                  delete draft.overrides[key].isPaid;
+                  if (Object.keys(draft.overrides[key]).length === 0) {
+                    delete draft.overrides[key];
+                  }
+                }
               }
-            }
-            if (draft.overrides[legacyKey]?.paidPrior) {
-              delete draft.overrides[legacyKey].done;
-              delete draft.overrides[legacyKey].paidPrior;
-              if (Object.keys(draft.overrides[legacyKey]).length === 0) {
-                delete draft.overrides[legacyKey];
-              }
-            }
+            });
           }
         }
 
@@ -1506,7 +1559,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                           <div className="w-[52px] shrink-0">
                             <label className="text-[9px] font-bold text-slate-500 block mb-1 text-center leading-tight">Pagadas</label>
                             <input
-                              type="number" min="0" max={installments || 999} value={initialPaidCuotas} onChange={e => setInitialPaidCuotas(e.target.value)}
+                              type="number" min="0" max={installments || 999} value={initialPaidCuotas} onChange={e => handleInitialPaidCuotasChange(e.target.value)}
                               placeholder="0"
                               className="w-full px-1 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100 text-center h-[38px]"
                             />
@@ -1609,7 +1662,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                           <div className="w-[52px] shrink-0">
                             <label className="text-[9px] font-bold text-slate-500 block mb-1 text-center leading-tight">Pagadas</label>
                             <input
-                              type="number" min="0" max={installments || 999} value={initialPaidCuotas} onChange={e => setInitialPaidCuotas(e.target.value)}
+                              type="number" min="0" max={installments || 999} value={initialPaidCuotas} onChange={e => handleInitialPaidCuotasChange(e.target.value)}
                               placeholder="0"
                               className="w-full px-1 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100 text-center h-[38px]"
                             />

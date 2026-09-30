@@ -30,7 +30,14 @@ import {
   sanitizeDocId,
   forceUploadStateToFirestore,
   logoutFirebase,
-  handleFirestoreError
+  handleFirestoreError,
+  sendFriendRequest,
+  respondFriendRequest,
+  subscribeFriendRequests,
+  subscribeOutgoingFriendRequests,
+  saveP2PLoanToCloud,
+  updateP2PLoanCloudStatus,
+  subscribeSharedLoans
 } from '../utils/firebase';
 import { checkAndTriggerDailyReminder, scheduleNativeDailyReminder } from '../utils/notifications';
 
@@ -154,6 +161,11 @@ interface AppContextType {
   startBackgroundUpdateDownload: () => void;
   checkForUpdates: (customUrl?: string) => Promise<{ hasUpdate: boolean; latestVersion: string; message: string }>;
   forceUploadLocalToCloud: () => Promise<void>;
+  syncComparison: { local: any; remote: any; email: string; onResolve: (action: 'upload' | 'download' | 'keep_local_only') => void } | null;
+  setSyncComparison: (val: any) => void;
+  startInteractiveSync: () => Promise<void>;
+  friendRequests: any[];
+  sharedLoans: any[];
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -206,6 +218,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     latestVersion: typeof __APP_VERSION__ !== 'undefined' ? `v${__APP_VERSION__}` : 'v1.0.0',
     downloadUrl: '',
   });
+
+  // Comparison state for interactive loading/syncing
+  const [syncComparison, setSyncComparison] = useState<{
+    local: any;
+    remote: any;
+    email: string;
+    onResolve: (action: 'upload' | 'download' | 'keep_local_only') => void;
+  } | null>(null);
+
+  // Real-time social and loan network states
+  const [friendRequests, setFriendRequests] = useState<any[]>([]);
+  const [sharedLoans, setSharedLoans] = useState<any[]>([]);
 
   const checkForUpdates = async (customUrl?: string) => {
     const rawCurrent = typeof __APP_VERSION__ !== 'undefined' ? String(__APP_VERSION__) : '1.2.5';
@@ -712,40 +736,94 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     showToast(`Perfil renombrado a "${newName}"`, '✏️');
   };
 
-  const loginUser = (user: AuthUser, token: string) => {
-    setState(prev => {
-      const aliasName = user.alias?.trim();
-      const draftProfiles = { ...prev.profiles };
-      let newCurrentProfile = prev.currentProfile;
-
-      if (aliasName) {
-        if (draftProfiles[newCurrentProfile] && newCurrentProfile !== aliasName && !draftProfiles[aliasName]) {
-          draftProfiles[aliasName] = draftProfiles[newCurrentProfile];
-          delete draftProfiles[newCurrentProfile];
-          newCurrentProfile = aliasName;
-        } else if (draftProfiles['Personal'] && !draftProfiles[aliasName]) {
-          draftProfiles[aliasName] = draftProfiles['Personal'];
-          delete draftProfiles['Personal'];
-          if (newCurrentProfile === 'Personal') {
-            newCurrentProfile = aliasName;
+  const loginUser = async (user: AuthUser, token: string) => {
+    showToast('Consultando respaldos en Firebase...', '☁️');
+    try {
+      const remoteBackup = await restoreStateFromFirebase(user.email);
+      if (remoteBackup) {
+        setSyncComparison({
+          local: state,
+          remote: remoteBackup,
+          email: user.email,
+          onResolve: async (action) => {
+            if (action === 'download') {
+              importFullState(remoteBackup);
+              setState(prev => ({
+                ...prev,
+                authToken: token,
+                authUser: user,
+              }));
+              showToast('¡Respaldo descargado de Firebase con éxito! ☁️', '✅');
+            } else if (action === 'upload') {
+              const stateToBackup = {
+                ...state,
+                authToken: token,
+                authUser: user,
+                lastUpdatedAt: Date.now()
+              };
+              await forceUploadStateToFirestore(user.email, stateToBackup);
+              setState(prev => ({
+                ...prev,
+                authToken: token,
+                authUser: user,
+                lastUpdatedAt: stateToBackup.lastUpdatedAt
+              }));
+              showToast('¡Datos locales cargados a Firebase con éxito! ☁️', '✅');
+            } else {
+              setState(prev => ({
+                ...prev,
+                authToken: token,
+                authUser: user,
+              }));
+            }
+            setSyncComparison(null);
           }
-        }
-      }
+        });
+      } else {
+        // No remote backup exists, just complete sign in
+        setState(prev => {
+          const aliasName = user.alias?.trim();
+          const draftProfiles = { ...prev.profiles };
+          let newCurrentProfile = prev.currentProfile;
 
-      // Also ensure myAlias setting is synced
-      if (aliasName && draftProfiles[newCurrentProfile]) {
-        draftProfiles[newCurrentProfile].settings.myAlias = aliasName;
-      }
+          if (aliasName) {
+            if (draftProfiles[newCurrentProfile] && newCurrentProfile !== aliasName && !draftProfiles[aliasName]) {
+              draftProfiles[aliasName] = draftProfiles[newCurrentProfile];
+              delete draftProfiles[newCurrentProfile];
+              newCurrentProfile = aliasName;
+            } else if (draftProfiles['Personal'] && !draftProfiles[aliasName]) {
+              draftProfiles[aliasName] = draftProfiles['Personal'];
+              delete draftProfiles['Personal'];
+              if (newCurrentProfile === 'Personal') {
+                newCurrentProfile = aliasName;
+              }
+            }
+          }
 
-      return {
+          if (aliasName && draftProfiles[newCurrentProfile]) {
+            draftProfiles[newCurrentProfile].settings.myAlias = aliasName;
+          }
+
+          return {
+            ...prev,
+            authToken: token,
+            authUser: user,
+            currentProfile: newCurrentProfile,
+            profiles: draftProfiles,
+          };
+        });
+        showToast(`¡Bienvenido, ${user.alias}! No encontramos respaldos previos.`, '🔐');
+      }
+    } catch (e) {
+      console.error(e);
+      // Fallback
+      setState(prev => ({
         ...prev,
         authToken: token,
         authUser: user,
-        currentProfile: newCurrentProfile,
-        profiles: draftProfiles,
-      };
-    });
-    showToast(`¡Bienvenido, ${user.alias}!`, '🔐');
+      }));
+      showToast(`¡Bienvenido, ${user.alias}!`, '🔐');
+    }
   };
 
   const logoutUser = () => {
@@ -846,6 +924,138 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  const startInteractiveSync = async () => {
+    const userEmail = state.authUser?.email || profile.settings.userEmail;
+    if (!userEmail) {
+      showToast('Inicia sesión para sincronizar datos con Firebase', '⚠️');
+      return;
+    }
+
+    if (localStorage.getItem('mony_firestore_quota_exceeded') === 'true') {
+      showToast('La cuota gratuita diaria de Firebase está agotada. Tus datos están seguros en este dispositivo.', '⚠️');
+      return;
+    }
+
+    showToast('Consultando respaldos en la nube...', '☁️');
+    try {
+      const remoteBackup = await restoreStateFromFirebase(userEmail);
+      setSyncComparison({
+        local: state,
+        remote: remoteBackup || null,
+        email: userEmail,
+        onResolve: async (action) => {
+          if (action === 'download') {
+            if (!remoteBackup) {
+              showToast('No hay datos en la nube para descargar', '⚠️');
+              return;
+            }
+            importFullState(remoteBackup);
+            showToast('¡Datos descargados de Firebase con éxito! ☁️', '✅');
+          } else if (action === 'upload') {
+            const stateToBackup = JSON.parse(JSON.stringify(state));
+            delete stateToBackup.authToken;
+            stateToBackup.lastUpdatedAt = Date.now();
+            await forceUploadStateToFirestore(userEmail, stateToBackup);
+            setState(prev => ({
+              ...prev,
+              lastUpdatedAt: stateToBackup.lastUpdatedAt
+            }));
+            showToast('¡Datos locales cargados a Firebase con éxito! ☁️', '✅');
+          }
+          setSyncComparison(null);
+        }
+      });
+    } catch (e: any) {
+      handleFirestoreError(e, 'Error al sincronizar con Firebase:');
+    }
+  };
+
+  // Listen to Friend Requests and Shared Loans in Real-time when authenticated
+  useEffect(() => {
+    const email = state.authUser?.email;
+    if (!email) {
+      setFriendRequests([]);
+      setSharedLoans([]);
+      return;
+    }
+
+    const unsubRequests = subscribeFriendRequests(email, (reqs) => {
+      setFriendRequests(prev => {
+        const map = new Map<string, any>();
+        prev.forEach(r => map.set(r.id, r));
+        reqs.forEach(r => map.set(r.id, r));
+        return Array.from(map.values());
+      });
+    });
+
+    const unsubOutgoing = subscribeOutgoingFriendRequests(email, (reqs) => {
+      setFriendRequests(prev => {
+        const map = new Map<string, any>();
+        prev.forEach(r => map.set(r.id, r));
+        reqs.forEach(r => map.set(r.id, r));
+        return Array.from(map.values());
+      });
+    });
+
+    const unsubLoans = subscribeSharedLoans(email, (loans) => {
+      setSharedLoans(loans);
+      
+      // Sync into the active local state so plan has debts/incomes automatically updated!
+      updateProfileData(draft => {
+        draft.p2p = draft.p2p || [];
+        loans.forEach(cloudLoan => {
+          const localIdx = draft.p2p.findIndex(l => l.id === cloudLoan.id);
+          if (localIdx === -1) {
+            draft.p2p.push(cloudLoan);
+          } else {
+            draft.p2p[localIdx] = { ...draft.p2p[localIdx], ...cloudLoan };
+          }
+
+          // Inflow/outflow logic synced to projection
+          const isBorrower = cloudLoan.borrowerEmail?.toLowerCase() === email.toLowerCase();
+          
+          if (cloudLoan.status === 'active' || cloudLoan.status === 'repayment_sent' || cloudLoan.status === 'closed') {
+            if (isBorrower) {
+              draft.debts = draft.debts || [];
+              const hasDebt = draft.debts.some(d => d.id === `debt_${cloudLoan.id}`);
+              if (!hasDebt) {
+                draft.debts.push({
+                  id: `debt_${cloudLoan.id}`,
+                  name: `Pagar préstamo a ${cloudLoan.lenderAlias}`,
+                  type: 'loan',
+                  balance: cloudLoan.amount,
+                  amount: cloudLoan.amount,
+                  currency: cloudLoan.currency,
+                  freq: 'one-time',
+                  dueDay: cloudLoan.dueDate ? String(new Date(cloudLoan.dueDate).getDate()) : '15',
+                  start: todayStr()
+                });
+              }
+            } else {
+              draft.incomes = draft.incomes || [];
+              const hasIncome = draft.incomes.some(i => i.id === `income_${cloudLoan.id}`);
+              if (!hasIncome) {
+                draft.incomes.push({
+                  id: `income_${cloudLoan.id}`,
+                  name: `Cobro de préstamo a ${cloudLoan.borrowerAlias}`,
+                  amount: cloudLoan.amount,
+                  freq: 'one-time',
+                  date: cloudLoan.dueDate || todayStr()
+                });
+              }
+            }
+          }
+        });
+      });
+    });
+
+    return () => {
+      unsubRequests();
+      unsubOutgoing();
+      unsubLoans();
+    };
+  }, [state.authUser?.email]);
+
   const integrityReport = useMemo(() => {
     return validateFinancialIntegrity(profile, exchangeRates);
   }, [profile]);
@@ -884,6 +1094,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         startBackgroundUpdateDownload,
         checkForUpdates,
         forceUploadLocalToCloud,
+        syncComparison,
+        setSyncComparison,
+        startInteractiveSync,
+        friendRequests,
+        sharedLoans,
       }}
     >
       {children}

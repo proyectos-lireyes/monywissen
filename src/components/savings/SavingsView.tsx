@@ -16,6 +16,7 @@ export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEd
 
   const [adjustPhys, setAdjustPhys] = useState(String(profile.savings?.current || 0));
   const [adjustDig, setAdjustDig] = useState(String(profile.savings?.digital || 0));
+  const [adjustCurrency, setAdjustCurrency] = useState(profile.savings?.currency || profile.settings.displayCurrency || 'USD_BCV');
 
   const [newPlatformName, setNewPlatformName] = useState('');
   const [editingPlatformId, setEditingPlatformId] = useState<string | null>(null);
@@ -25,8 +26,9 @@ export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEd
   const savingsList = profile.savingsList || [];
   const platforms = profile.settings.savingPlatforms || [];
 
-  let physicalTotal = profile.savings?.current || 0;
-  let digitalTotal = profile.savings?.digital || 0;
+  const baseCurrency = profile.savings?.currency || profile.settings.displayCurrency || 'USD_BCV';
+  let physicalTotal = convertAmount(profile.savings?.current || 0, baseCurrency);
+  let digitalTotal = convertAmount(profile.savings?.digital || 0, baseCurrency);
 
   savingsList.forEach(x => {
     if (x.status === 'completed' || x.delivered) {
@@ -42,6 +44,7 @@ export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEd
     setShowAdjustModal(true);
     setAdjustPhys(String(profile.savings?.current || 0));
     setAdjustDig(String(profile.savings?.digital || 0));
+    setAdjustCurrency(profile.savings?.currency || profile.settings.displayCurrency || 'USD_BCV');
   };
 
   const handleSaveAdjust = (e: React.FormEvent) => {
@@ -50,6 +53,7 @@ export const SavingsView: React.FC<SavingsViewProps> = ({ onOpenCreate, onOpenEd
       draft.savings = {
         current: parseFloat(adjustPhys) || 0,
         digital: parseFloat(adjustDig) || 0,
+        currency: adjustCurrency,
       };
     });
     showToast('Base histórica de ahorros actualizada', '⚙️');
@@ -153,7 +157,7 @@ return (
             onClick={handleAdjustBase}
             className="text-xs text-blue-600 hover:underline font-semibold"
           >
-            ✎ Ajustar Base Histórica
+            ✎ Ajustar Base Histórica ({profile.savings?.current || 0} Fís. / {profile.savings?.digital || 0} Dig. en {baseCurrency.replace('_BCV', '')})
           </button>
         </div>
 
@@ -328,6 +332,19 @@ return (
                   type="number" step="0.01" required value={adjustDig} onChange={e => setAdjustDig(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-slate-900 dark:text-slate-100"
                 />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 block mb-1">Moneda de esta Base</label>
+                <select
+                  value={adjustCurrency}
+                  onChange={e => setAdjustCurrency(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-slate-900 dark:text-slate-100"
+                >
+                  <option value="USD_BCV">$ (Dólares)</option>
+                  <option value="EUR_BCV">€ (Euros)</option>
+                  <option value="BS">Bs (Bolívares)</option>
+                  <option value="USDT">USDT</option>
+                </select>
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setShowAdjustModal(false)} className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors">
