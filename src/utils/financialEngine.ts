@@ -1798,6 +1798,21 @@ export function calculateIncomeAccountBalances(
           occ.label === 'Fondo Requerido para Iniciar' ||
           (typeof occ.label === 'string' && occ.label.toLowerCase().includes('fondo requerido'))
         ) {
+          // If the user specified a real bank account to fund this Required Starting Fund,
+          // it represents an outflow (deduction) from that bank account!
+          const fundingAccountId = occ.incomeId;
+          if (fundingAccountId && fundingAccountId === inc.id) {
+            totalProjectedOutflows += occUsd;
+            if (isOccDone && affectsCash) {
+              totalOutflowsToDate += occUsd;
+              paidMovements.push({
+                date: occDate,
+                label: 'Aporte de Fondo Inicial',
+                type: 'expense',
+                amount: occUsd,
+              });
+            }
+          }
           return;
         }
 
@@ -1808,8 +1823,8 @@ export function calculateIncomeAccountBalances(
 
         if (isThisAccount) {
           totalProjectedInflows += occUsd;
-          // Actual money in pocket: only when confirmed done and occurred up to today
-          if (isOccDone && affectsCash && isPastOrToday) {
+          // Actual money in pocket: when confirmed done
+          if (isOccDone && affectsCash) {
             totalInflowsToDate += occUsd;
           }
           if (!isOccDone && occDate >= today && (!nextIncomeDate || occDate < nextIncomeDate)) {
@@ -1819,13 +1834,13 @@ export function calculateIncomeAccountBalances(
       } else {
         // Outflows (expense, debt, savings, etc.)
         const assignedId = occ.incomeId || occ.ref?.incomeId;
-        const isAssignedToThis = assignedId === inc.id;
         // If unassigned or assigned to a non-existent account, attribute to primary account (index === 0)
         // EXCEPTION: if assigned to required_starting_fund, do not attribute to primary account
+        const isAssignedToThis = assignedId === inc.id || (!assignedId && index === 0);
         if (isAssignedToThis && affectsCash) {
           totalProjectedOutflows += occUsd;
-          // Actual money subtracted from current balance: occurred when marked as done up to today
-          if (isOccDone && isPastOrToday) {
+          // Actual money subtracted from current balance: occurred when marked as done
+          if (isOccDone) {
             totalOutflowsToDate += occUsd;
             paidMovements.push({
               date: occDate,
@@ -1879,7 +1894,7 @@ export function calculateIncomeAccountBalances(
     const reqAmount = Math.abs(reqFundOcc.amt || 0);
 
     let reqInflowsToDate = 0;
-    if (isOccDone && isPastOrToday) {
+    if (isOccDone) {
       reqInflowsToDate = reqAmount;
     }
     const reqProjectedInflows = reqAmount;
@@ -1901,8 +1916,7 @@ export function calculateIncomeAccountBalances(
         reqProjectedOutflows += occUsd;
         const occDone = !!occ.done;
         const oDate = occ.date || occ.targetDate || occ.originalDate;
-        const oPast = oDate <= today || (occ.targetDate && occ.targetDate <= today);
-        if (occDone && oPast) {
+        if (occDone) {
           reqOutflowsToDate += occUsd;
           reqPaidMovements.push({
             date: oDate,

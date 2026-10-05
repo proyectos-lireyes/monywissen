@@ -154,7 +154,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const isPastOrToday = e.date <= today || (e.targetDate && e.targetDate <= today);
     const affectsCash = !e.noAffectBalance;
 
-    if (e.done && affectsCash && (isOpening || isPastOrToday)) {
+    if (e.done && affectsCash) {
       todayBalance += e?.amt;
     }
     if (e.date <= today && affectsCash) {

@@ -239,6 +239,7 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
   const bsPerUsd = exchangeRates['BS'] ? (1 / exchangeRates['BS']).toFixed(2) : '43.00';
 
   const isIncome = type === 'income' || occurrence?.type === 'income' || (occurrence?.amt !== undefined && occurrence.amt > 0);
+  const isReqStartingFund = refId === 'required_starting_fund' || String(refId).includes('required_starting_fund');
 
   const applyOverride = (draft: any, updates: any) => {
     draft.overrides = draft.overrides || {};
@@ -639,7 +640,7 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
 
       if (refId === 'required_starting_fund' || idStr.includes('required_starting_fund')) {
         Object.keys(draft.overrides).forEach(k => {
-          if (k.startsWith('income_required_starting_fund_')) {
+          if (k.includes('required_starting_fund')) {
             delete draft.overrides[k];
           }
         });
@@ -974,12 +975,12 @@ return (
               </div>
               <p className="text-[10px] text-slate-500">
                 {overrideRecord.noAffectBalance
-                  ? (isIncome ? 'Este ingreso está marcado con fondos previos o externos. No suma dinero a tus cuentas actuales.' : 'Esta cuota está marcada con fondos previos o externos. No descuenta dinero de tus cuentas de ingreso actuales.')
-                  : (isIncome ? 'Se suma al saldo acumulado de la cuenta de ingreso seleccionada.' : 'Se descuenta del saldo acumulado de la cuenta de ingreso seleccionada.')}
+                  ? (isReqStartingFund ? 'Este fondo se aportará de dinero previo o externo. No descuenta de tus cuentas actuales.' : isIncome ? 'Este ingreso está marcado con fondos previos o externos. No suma dinero a tus cuentas actuales.' : 'Esta cuota está marcada con fondos previos o externos. No descuenta dinero de tus cuentas de ingreso actuales.')
+                  : (isReqStartingFund ? 'Se descuenta del saldo acumulado de la cuenta de origen seleccionada.' : isIncome ? 'Se suma al saldo acumulado de la cuenta de ingreso seleccionada.' : 'Se descuenta del saldo acumulado de la cuenta de ingreso seleccionada.')}
               </p>
               <div className="pt-1">
                 <label className="text-[10px] font-bold text-slate-500 block mb-1">
-                  {isIncome ? 'Cambiar cuenta receptora para este ingreso:' : 'Cambiar cuenta de origen para este pago:'}
+                  {isReqStartingFund ? 'Cambiar cuenta de origen para este fondo (se descontará):' : isIncome ? 'Cambiar cuenta receptora para este ingreso:' : 'Cambiar cuenta de origen para este pago:'}
                 </label>
                 <select
                   value={overrideRecord.noAffectBalance ? '__EXTERNAL__' : (overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId || (refId === 'required_starting_fund' ? 'required_starting_fund' : ''))}
@@ -1028,7 +1029,7 @@ return (
                   className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-bold text-slate-800 dark:text-slate-200"
                 >
                   <option value="">
-                    ❓ Sin cuenta especificada (indicar origen)
+                    ❓ Cuenta Predeterminada ({profile.incomes[0]?.name ? `Se descontará de ${profile.incomes[0].name}` : 'indicar origen'})
                   </option>
                   {(refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || occurrence?.incomeId === 'required_starting_fund' || overrideRecord.incomeId === 'required_starting_fund' || balanceMap['required_starting_fund'] !== undefined) && (
                     <option value="required_starting_fund">
@@ -1063,11 +1064,11 @@ return (
             <div className="p-3 bg-slate-100/80 dark:bg-slate-800/90 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
               <div className="flex items-center justify-between">
                 <label className="font-bold text-slate-800 dark:text-slate-200 text-xs block">
-                  {isIncome ? 'Cuenta receptora del ingreso (a donde sumará):' : 'Cuenta de donde saldrá el egreso:'}
+                  {isReqStartingFund ? 'Cuenta de donde saldrá este fondo (se descontará):' : isIncome ? 'Cuenta receptora del ingreso (a donde sumará):' : 'Cuenta de donde saldrá el egreso:'}
                 </label>
                 {selectedIncomeId !== '__EXTERNAL__' && balanceMap[selectedIncomeId] !== undefined && (
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                    {isIncome ? 'Disponible actual:' : 'Quedan:'} {formatCurrency(balanceMap[selectedIncomeId])}
+                    {isReqStartingFund ? 'Disponible actual:' : isIncome ? 'Disponible actual:' : 'Quedan:'} {formatCurrency(balanceMap[selectedIncomeId])}
                   </span>
                 )}
               </div>
@@ -1081,7 +1082,7 @@ return (
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs text-slate-800 dark:text-slate-100"
               >
                 <option value="">
-                  ❓ Sin cuenta especificada (indicar origen)
+                  ❓ Cuenta Predeterminada ({profile.incomes[0]?.name ? `Se descontará de ${profile.incomes[0].name}` : 'indicar origen'})
                 </option>
                 {(refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || occurrence?.incomeId === 'required_starting_fund' || overrideRecord.incomeId === 'required_starting_fund' || balanceMap['required_starting_fund'] !== undefined) && (
                   <option value="required_starting_fund">
@@ -1104,12 +1105,12 @@ return (
               {selectedIncomeId !== '__EXTERNAL__' && (
                 <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between text-[11px]">
                   <span className="text-slate-500 font-medium">
-                    {isIncome ? 'Saldo tras recibir este ingreso:' : 'Saldo tras pagar este ítem:'}
+                    {isReqStartingFund ? 'Saldo tras aportar este fondo:' : isIncome ? 'Saldo tras recibir este ingreso:' : 'Saldo tras pagar este ítem:'}
                   </span>
                   {(() => {
                     const currentBal = balanceMap[selectedIncomeId] ?? 0;
                     const payAmt = showCustomPay ? convertedPayUsd : remainingUsd;
-                    const afterBal = isIncome ? currentBal + payAmt : currentBal - payAmt;
+                    const afterBal = (isIncome && !isReqStartingFund) ? currentBal + payAmt : currentBal - payAmt;
                     return (
                       <span className={`font-black ${afterBal >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                         {formatCurrency(afterBal)}
@@ -1121,8 +1122,8 @@ return (
 
               <p className="text-[10px] text-slate-500 leading-tight">
                 {selectedIncomeId === '__EXTERNAL__'
-                  ? (isIncome ? '🛡️ Se registrará como cobrado sin sumar a tus cuentas de ingreso actuales.' : '🛡️ Se registrará como pagada con dinero previo o externo, sin restar de tus cuentas de ingreso actuales.')
-                  : (isIncome ? '💳 Se sumará al disponible acumulativo de la cuenta de ingreso seleccionada.' : '💳 Se restará del disponible acumulativo de la cuenta de ingreso seleccionada.')}
+                  ? (isReqStartingFund ? '🛡️ Se registrará como aportado con dinero previo o externo, sin restar de tus cuentas de ingreso actuales.' : isIncome ? '🛡️ Se registrará como cobrado sin sumar a tus cuentas de ingreso actuales.' : '🛡️ Se registrará como pagada con dinero previo o externo, sin restar de tus cuentas de ingreso actuales.')
+                  : (isReqStartingFund ? '💳 Se restará del disponible acumulativo de la cuenta de ingreso seleccionada.' : isIncome ? '💳 Se sumará al disponible acumulativo de la cuenta de ingreso seleccionada.' : '💳 Se restará del disponible acumulativo de la cuenta de ingreso seleccionada.')}
               </p>
             </div>
 
