@@ -693,20 +693,20 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
                     </div>
                     
                     {/* Display AVAILABLE BALANCE PRIOR TO RESCATE OR INCOME */}
-                    {isRescate && preIncomeBalance !== null && (
+                    {isRescate && preIncomeBalance !== null && !e.done && (
                       <div className="p-1 px-2 bg-purple-100/70 dark:bg-purple-900/40 rounded-lg border border-purple-200/80 dark:border-purple-800/50 inline-block self-start">
                         <p className="text-[10px] font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1">
-                          🛟 <span>Disp. previo:</span>
+                          🛟 <span>Antes de rescatar:</span>
                           <span className="font-black text-xs text-purple-700 dark:text-purple-300">
                             {formatCurrency(preIncomeBalance)}
                           </span>
                         </p>
                       </div>
                     )}
-                    {isIncome && e.type !== 'opening_balance' && preIncomeBalance !== null && (
-                      <div className="p-1 px-2 bg-emerald-100/60 dark:bg-emerald-900/40 rounded-lg border border-emerald-200/80 dark:border-emerald-800/50 inline-block self-start">
+                    {isIncome && e.type !== 'opening_balance' && preIncomeBalance !== null && !e.done && (
+                      <div className="p-1 px-2 bg-emerald-100/60 dark:bg-emerald-900/40 rounded-lg border border-emerald-200/80 dark:border-emerald-800/50 inline-block self-start" title="Tu saldo proyectado justo antes de que este ingreso se sume">
                         <p className="text-[10px] font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1">
-                          💡 <span>Disp. previo:</span>
+                          💡 <span>Saldo antes de entrar:</span>
                           <span className="font-black text-xs text-emerald-700 dark:text-emerald-300">
                             {formatCurrency(preIncomeBalance)}
                           </span>

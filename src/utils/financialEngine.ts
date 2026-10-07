@@ -899,7 +899,7 @@ export function calculateProjections(
         amt: isDiscarded ? 0 : (noAffectBalance ? 0 : (amt > 0 ? finalPaymentAmt : -finalPaymentAmt)),
         incomeId: resolvedIncomeId,
         ref: safeRef,
-        originalDate: finalDate,
+        originalDate: dateStr,
         targetDate: finalDate,
         done: isItemDone,
         discarded: isDiscarded,
