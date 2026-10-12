@@ -26,6 +26,7 @@ import {
   Info,
   Calendar,
   PiggyBank,
+  Clock,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -124,8 +125,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [showCushionModal, setShowCushionModal] = useState(false);
   const [tempCushionAmt, setTempCushionAmt] = useState(profile.settings.minBalance || 0);
   const [tempCushionCurr, setTempCushionCurr] = useState(profile.settings.minBalanceCurrency || profile.settings.displayCurrency || 'USD');
-  const [pendingFilter, setPendingFilter] = useState<'next_income' | 'next_30' | 'all'>('next_income');
+  const [pendingFilter, setPendingFilter] = useState<'next_income' | 'next_30' | 'all'>('next_30');
   const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
+  const [showUpcomingDebtsModal, setShowUpcomingDebtsModal] = useState(false);
   const [hiddenLines, setHiddenLines] = useState<Record<string, boolean>>({});
 
   const toggleLine = (dataKey: string) => {
@@ -173,6 +175,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const currentSavings = (profile.savings?.current || 0) + (profile.savings?.digital || 0);
   const finalSavings = lastOccurrence ? (lastOccurrence.savingsAccumulated || 0) : currentSavings;
   const totalDebt = (profile.debts || []).reduce((acc, d) => acc + convertAmount(getRemainingDebtAmount(d, profile.overrides, exchangeRates), d.currency), 0);
+  
+  const activeDebts = profile.debts || [];
+  const upcomingDebts = activeDebts.filter(d => (d.balance ?? 0) > 0);
+  const savingsRescues = (integrityReport?.preventiveWarnings || []).filter(w => w.type === 'SAVINGS_RESCUE_INFO');
 
   // Prepare Recharts Data
   const chartDataMap: Record<string, { date: string; label: string; balance: number; income: number; expense: number; debt: number; totalEgresos: number; netAvailable: number; items: any[]; deficit?: number; plannedIncome: number; plannedEgresos: number; plannedNetFlow?: number;
@@ -1123,6 +1129,63 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Info Blocks: Upcoming Debts & Savings Rescues */}
+      {(upcomingDebts.length > 0 || savingsRescues.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {upcomingDebts.length > 0 && (
+            <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-[2rem] border border-amber-200 dark:border-amber-800/40 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-black text-amber-900 dark:text-amber-200 uppercase tracking-wider flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-amber-600" />
+                  Deudas y Compromisos
+                </h3>
+                <span className="bg-amber-200 dark:bg-amber-800 text-amber-900 dark:text-amber-100 px-2 py-0.5 rounded-lg text-[10px] font-black">
+                  {upcomingDebts.length}
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-800 dark:text-amber-200/70 font-medium">
+                Tienes compromisos de pago vigentes. Estas son cuotas programadas en tu calendario financiero.
+              </p>
+              <button
+                onClick={() => setShowUpcomingDebtsModal(true)}
+                className="w-full py-2 bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800/50 rounded-xl text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-50 transition-colors flex items-center justify-center gap-1.5"
+              >
+                Ver Detalle de Cuotas <ChevronRight className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
+          {savingsRescues.length > 0 && (
+            <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-[2rem] border border-purple-200 dark:border-purple-800/40 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-black text-purple-900 dark:text-purple-200 uppercase tracking-wider flex items-center gap-2">
+                  <PiggyBank className="w-4 h-4 text-purple-600" />
+                  Uso de Ahorros (Rescates)
+                </h3>
+                <span className="bg-purple-200 dark:bg-purple-800 text-purple-900 dark:text-purple-100 px-2 py-0.5 rounded-lg text-[10px] font-black">
+                  {savingsRescues.length}
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {savingsRescues.map((r, i) => (
+                  <p key={i} className="text-[10px] text-purple-800 dark:text-purple-300 font-bold flex items-start gap-1.5">
+                    <span className="mt-1 w-1 h-1 bg-purple-400 rounded-full shrink-0" />
+                    {r.message}
+                  </p>
+                ))}
+              </div>
+              <button
+                onClick={() => setActiveView('calendar')}
+                className="w-full py-2 bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-800/50 rounded-xl text-[11px] font-bold text-purple-700 dark:text-purple-400 hover:bg-purple-50 transition-colors flex items-center justify-center gap-1.5"
+              >
+                Ver en Cronograma <ChevronRight className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Upcoming Items Timeline */}
       <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
@@ -1641,6 +1704,102 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold transition-colors"
               >
                 Cerrar Detalles
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upcoming Debts Scrollable Modal */}
+      {showUpcomingDebtsModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] w-full max-w-xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col max-h-[85vh] animate-in slide-in-from-bottom-4 duration-300">
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-100 dark:bg-amber-900/50 text-amber-600 dark:text-amber-400 rounded-2xl">
+                  <Clock className="w-6 h-6" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-black text-slate-900 dark:text-white leading-tight">
+                    Compromisos de Pago
+                  </h2>
+                  <p className="text-xs text-slate-500 font-medium">Lista de cuotas y deudas programadas</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowUpcomingDebtsModal(false)}
+                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto space-y-3 custom-scrollbar flex-1 bg-slate-50/30 dark:bg-slate-950/20">
+              {plan.filter(e => e.type === 'debt' && !e.done).length === 0 ? (
+                <div className="py-20 text-center space-y-3">
+                  <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-300">
+                    <CheckCircle2 className="w-8 h-8" />
+                  </div>
+                  <p className="text-sm font-bold text-slate-400">No tienes deudas o cuotas pendientes</p>
+                </div>
+              ) : (
+                plan.filter(e => e.type === 'debt' && !e.done).map((occ, idx) => {
+                  const isOverdue = occ.date < today;
+                  return (
+                    <div 
+                      key={idx}
+                      onClick={() => {
+                        setShowUpcomingDebtsModal(false);
+                        onOpenDetails(occ.type, occ.ref?.id || '', occ.originalDate, occ.date);
+                      }}
+                      className={`p-4 rounded-[1.5rem] border transition-all flex items-center justify-between cursor-pointer group ${
+                        isOverdue 
+                          ? 'bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800/40' 
+                          : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700 hover:border-amber-300 dark:hover:border-amber-700 shadow-sm'
+                      }`}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                          isOverdue ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'
+                        }`}>
+                          <TrendingDown className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-black text-slate-800 dark:text-slate-100 group-hover:text-amber-600 transition-colors">
+                            {occ.label}
+                          </p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                              isOverdue ? 'bg-rose-200 text-rose-800' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                            }`}>
+                              {isOverdue ? '⚠️ ATRASADO' : formatDateStr(occ.date)}
+                            </span>
+                            {occ.originalDate && occ.originalDate !== occ.date && (
+                              <span className="text-[10px] text-slate-400 font-medium italic">
+                                (Plan: {formatDateStr(occ.originalDate).substring(0,5)})
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-black text-slate-900 dark:text-slate-100">
+                          {formatCurrency(Math.abs(occ.amt))}
+                        </p>
+                        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:translate-x-1 transition-transform ml-auto" />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            
+            <div className="p-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
+              <button
+                onClick={() => setShowUpcomingDebtsModal(false)}
+                className="w-full py-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black text-sm shadow-xl active:scale-95 transition-all"
+              >
+                Entendido
               </button>
             </div>
           </div>

@@ -114,7 +114,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const showDebtsNotif = upcomingDebts.length > 0 && !dismissedAlerts.includes('debts');
   const showRescueNotif = savingsRescues.length > 0 && !dismissedAlerts.includes('rescues');
 
-  const totalNotifsCount = (isUpdateAvailable ? 1 : 0) + (showP2PNotif ? 1 : 0) + (showContactsNotif ? 1 : 0) + (showSharedNotif ? 1 : 0) + (showDebtsNotif ? 1 : 0) + (showRescueNotif ? 1 : 0);
+  const totalNotifsCount = (isUpdateAvailable ? 1 : 0) + (showP2PNotif ? 1 : 0) + (showContactsNotif ? 1 : 0) + (showSharedNotif ? 1 : 0);
 
   const handleDismissAlert = (alertType: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -285,64 +285,6 @@ export const TopBar: React.FC<TopBarProps> = ({
                       <p className="text-[10px] text-violet-700 dark:text-violet-300 pr-4">
                         Tienes {sharedGroups.length} grupo(s) activos para división de gastos en partes iguales o por porcentaje.
                       </p>
-                    </div>
-                  )}
-
-                  {/* Active Debts Alert */}
-                  {showDebtsNotif && (
-                    <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-100 dark:border-amber-900/40 space-y-1 relative group">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-amber-900 dark:text-amber-200 text-[11px] flex items-center gap-1">
-                          <Clock className="w-3.5 h-3.5 text-amber-600" /> Deudas y Cuotas ({upcomingDebts.length})
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => {
-                              setActiveView('calendar');
-                              setShowNotifMenu(false);
-                            }}
-                            className="text-[10px] text-amber-600 dark:text-amber-400 font-bold hover:underline flex items-center gap-0.5"
-                          >
-                            Ver <ExternalLink className="w-2.5 h-2.5" />
-                          </button>
-                          <button onClick={(e) => handleDismissAlert('debts', e)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" title="Descartar">
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-                      <p className="text-[10px] text-amber-700 dark:text-amber-300 pr-4">
-                        Tienes {upcomingDebts.length} compromiso(s) de pago vigentes.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Informative Savings Rescues Notification */}
-                  {showRescueNotif && (
-                    <div className="p-2.5 bg-purple-50 dark:bg-purple-950/40 rounded-xl border border-purple-100 dark:border-purple-900/40 space-y-1 relative group">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-purple-900 dark:text-purple-200 text-[11px] flex items-center gap-1">
-                          <PiggyBank className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" /> Rescates de Ahorro Informativos ({savingsRescues.length})
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => {
-                              setActiveView('calendar');
-                              setShowNotifMenu(false);
-                            }}
-                            className="text-[10px] text-purple-600 dark:text-purple-400 font-bold hover:underline flex items-center gap-0.5"
-                          >
-                            Ver <ExternalLink className="w-2.5 h-2.5" />
-                          </button>
-                          <button onClick={(e) => handleDismissAlert('rescues', e)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" title="Descartar">
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-                      {savingsRescues.map(r => (
-                        <p key={r.id} className="text-[10px] text-purple-800 dark:text-purple-300 pr-4">
-                          • {r.message}
-                        </p>
-                      ))}
                     </div>
                   )}
 
