@@ -13,6 +13,7 @@ export interface UserSettings {
   minBalanceCurrency?: string;
   delayDays: number;
   openingBalance?: number;
+  openingBalanceCurrency?: string;
   freeSpend: number;
   autoSaveThreshold?: number;
   myEmail?: string;
@@ -269,6 +270,13 @@ export interface AppStateData {
   authToken?: string | null;
   authUser?: AuthUser | null;
   lastUpdatedAt?: number;
+  exchangeRates?: Record<string, number>;
+  exchangeRatesMeta?: {
+    publishedAt: string;
+    updatedAt: string;
+    bcvUsd: number;
+    bcvEur: number;
+  } | null;
 }
 
 export interface AuthUser {

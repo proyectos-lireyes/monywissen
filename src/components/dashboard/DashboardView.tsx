@@ -136,6 +136,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [adjustmentTarget, setAdjustmentTarget] = useState<string>('0');
   const [tempPlanStart, setTempPlanStart] = useState(profile.settings.planStart);
   const [tempOpeningBalanceStr, setTempOpeningBalanceStr] = useState(String(profile.settings.openingBalance || 0));
+  const [tempOpeningBalanceCurrency, setTempOpeningBalanceCurrency] = useState(profile.settings.openingBalanceCurrency || profile.settings.displayCurrency || 'USD');
   const [dismissAutoSaveRec, setDismissAutoSaveRec] = useState(false);
 
   const plan = calculateProjections(profile, exchangeRates);
@@ -607,6 +608,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               onClick={() => {
                 setTempOpeningBalanceStr(String(startingFundItem.amt));
+                setTempOpeningBalanceCurrency('USD'); // Injected fund is always in base currency
                 setTempPlanStart(profile.settings.planStart || today);
                 setShowSetupModal(true);
               }}
@@ -790,12 +792,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 onClick={() => {
                   setTempPlanStart(profile.settings.planStart || today);
                   setTempOpeningBalanceStr(String(profile.settings.openingBalance || 0));
+                  setTempOpeningBalanceCurrency(profile.settings.openingBalanceCurrency || profile.settings.displayCurrency || 'USD');
                   setShowSetupModal(true);
                 }}
                 className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
                 title="Configurar fecha de inicio y saldo inicial base"
               >
-                <span>Saldo Inicial: <strong>{formatCurrency(profile.settings.openingBalance || 0)}</strong></span>
+                <span>Saldo Inicial: <strong>{formatAmountWithCurrency(profile.settings.openingBalance || 0, profile.settings.openingBalanceCurrency || 'USD')}</strong></span>
               </button>
             </div>
             <div className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-slate-50 tracking-tight mt-1">
@@ -1397,14 +1400,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Dinero Disponible (Saldo Base)</label>
                   <div className="relative">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={tempOpeningBalanceStr}
-                      onChange={(e) => setTempOpeningBalanceStr(e.target.value)}
-                      placeholder="0.00"
-                      className="w-full pl-8 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={tempOpeningBalanceStr}
+                        onChange={(e) => setTempOpeningBalanceStr(e.target.value)}
+                        placeholder="0.00"
+                        className="flex-1 pl-8 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                      />
+                      <select
+                        value={tempOpeningBalanceCurrency}
+                        onChange={(e) => setTempOpeningBalanceCurrency(e.target.value)}
+                        className="w-32 px-3 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
+                      >
+                        <option value="EUR">EUR (€)</option>
+                        <option value="USD">USD ($)</option>
+                        <option value="BS">BS (Bs)</option>
+                        <option value="USDT">USDT</option>
+                      </select>
+                    </div>
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1.5 ml-1">Déjalo vacío (0) para que el sistema calcule el monto necesario para cubrir gastos previos a tu primer ingreso.</p>
                 </div>
@@ -1423,6 +1438,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   updateProfileData(draft => {
                     draft.settings.planStart = tempPlanStart;
                     draft.settings.openingBalance = parseFloat(tempOpeningBalanceStr) || 0;
+                    draft.settings.openingBalanceCurrency = tempOpeningBalanceCurrency;
                     
                     // Clear past compensations just in case
                     if (draft.overrides) {

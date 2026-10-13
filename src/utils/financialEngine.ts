@@ -7,8 +7,13 @@
 import { UserProfile, PlanOccurrence, SharedGroup, DebtItem, CustomDebtType, IncomePeriodCoverage, IncomeAccountBalance, CurrencyCode } from '../types';
 
 export function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
+
 
 export function parseDateSafe(dStr?: string | null): Date {
   if (!dStr) return new Date(todayStr() + 'T12:00:00');
@@ -24,8 +29,12 @@ export function toIsoDateSafe(dateObj: Date): string {
   if (!dateObj || isNaN(dateObj.getTime())) {
     return todayStr();
   }
-  return dateObj.toISOString().slice(0, 10);
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
+
 
 export let globalDisplayCurrency = 'USD';
 export let globalExchangeRates: Record<string, number> = {};
@@ -754,11 +763,13 @@ export function calculateProjections(
 
   const settings = profile.settings;
   const startD = settings.planStart || todayStr();
-  const endD = settings.planEnd || new Date(Date.now() + 86400000 * 60).toISOString().slice(0, 10);
+  const endD = settings.planEnd || toIsoDateSafe(new Date(Date.now() + 86400000 * 60));
+
   const overrides = profile.overrides || {};
 
   const map: Record<string, any[]> = {};
-  let balance = settings.openingBalance || 0;
+  const openingBalCurrency = settings.openingBalanceCurrency || 'USD';
+  let balance = convAmt(settings.openingBalance || 0, openingBalCurrency);
 
   const startYear = new Date(startD + 'T12:00:00').getFullYear();
   const startMonth = new Date(startD + 'T12:00:00').getMonth();
@@ -787,8 +798,9 @@ export function calculateProjections(
       if (d < startD) {
         const v2 = parts[1];
         d = (v2 === '30' || v2 === 'EOM')
-          ? new Date(startYear, startMonth + 1, 0).toISOString().slice(0, 10)
+          ? toIsoDateSafe(new Date(startYear, startMonth + 1, 0))
           : getDateInMonth(startYear, startMonth, parseInt(v2 || '30', 10));
+
       }
     } else if (inc.freq === 'weekly') {
       d = startD;
@@ -944,8 +956,9 @@ export function calculateProjections(
         for (let m = mStart; m <= mEnd; m++) {
           const d1 = getDateInMonth(y, m, v1);
           const d2 = (v2 === '30' || v2 === 'EOM')
-            ? new Date(y, m + 1, 0).toISOString().slice(0, 10)
+            ? toIsoDateSafe(new Date(y, m + 1, 0))
             : getDateInMonth(y, m, parseInt(v2, 10));
+
           if (d1 >= effStart && d1 <= effEnd) addOccurrence(d1, inc.name, 'income', convAmt(inc.amount, (inc as any).currency), inc);
           if (d2 >= effStart && d2 <= effEnd) addOccurrence(d2, inc.name, 'income', convAmt(inc.amount, (inc as any).currency), inc);
         }
@@ -958,8 +971,9 @@ export function calculateProjections(
       }
       const limit = new Date(effEnd + 'T12:00:00');
       while (curr <= limit) {
-        const dateStr = curr.toISOString().slice(0, 10);
+        const dateStr = toIsoDateSafe(curr);
         if (dateStr >= effStart && dateStr <= effEnd) {
+
           addOccurrence(dateStr, inc.name, 'income', convAmt(inc.amount, (inc as any).currency), inc);
         }
         curr.setDate(curr.getDate() + 7);
@@ -1022,8 +1036,9 @@ export function calculateProjections(
         for (let m = mStart; m <= mEnd; m++) {
           const d1 = getDateInMonth(y, m, v1);
           const d2 = (v2 === '30' || v2 === 'EOM')
-            ? new Date(y, m + 1, 0).toISOString().slice(0, 10)
+            ? toIsoDateSafe(new Date(y, m + 1, 0))
             : getDateInMonth(y, m, parseInt(v2, 10));
+
           if (d1 >= effStart && d1 <= effEnd) addOccurrence(d1, exp.name, 'expense', -convAmt(exp.amount, (exp as any).currency), exp);
           if (d2 >= effStart && d2 <= effEnd) addOccurrence(d2, exp.name, 'expense', -convAmt(exp.amount, (exp as any).currency), exp);
         }
@@ -1036,8 +1051,9 @@ export function calculateProjections(
       }
       const limit = new Date(effEnd + 'T12:00:00');
       while (curr <= limit) {
-        const dateStr = curr.toISOString().slice(0, 10);
+        const dateStr = toIsoDateSafe(curr);
         if (dateStr >= effStart && dateStr <= effEnd) {
+
           addOccurrence(dateStr, exp.name, 'expense', -convAmt(exp.amount, (exp as any).currency), exp);
         }
         curr.setDate(curr.getDate() + 7);
@@ -1157,7 +1173,7 @@ export function calculateProjections(
 
   const cushionCurrency = settings.minBalanceCurrency || settings.displayCurrency || 'USD';
   const cushionInBase = convAmt(settings.minBalance || 0, cushionCurrency);
-  const openingBal = settings.openingBalance || 0;
+  const openingBal = convAmt(settings.openingBalance || 0, openingBalCurrency);
 
   // Formula: Egresos iniciales + Colchón de seguridad - (Saldo base inicial + Ingresos ya recibidos)
   const requiredInitial = Math.max(0, Math.round((initialEgresosSum + cushionInBase - (openingBal + initialIncomesDoneSum)) * 100) / 100);
@@ -1634,7 +1650,7 @@ export function calculateIncomeCoverageAnalysis(
     const periodDates = datesBetween(
       incDate, 
       nextIncDate 
-        ? new Date(new Date(nextIncDate + 'T12:00:00').getTime() - 86400000).toISOString().slice(0, 10) 
+        ? toIsoDateSafe(new Date(new Date(nextIncDate + 'T12:00:00').getTime() - 86400000))
         : incDate
     );
 
@@ -1745,22 +1761,35 @@ export function parseOverrideKey(key: string): { type: string; entityId: string;
 export function calculateIncomeAccountBalances(
   profile: UserProfile,
   plan: PlanOccurrence[],
-  convertAmount?: (amt: number, curr?: string) => number,
+  exchangeRates: Record<string, number> = {},
   today: string = todayStr()
 ): IncomeAccountBalance[] {
+  const convAmt = (amt: number, currency?: string) => {
+    if (!currency || currency === 'USD_BCV' || currency === 'USD') return amt;
+    let curr = currency;
+    if (curr === 'EUR') curr = 'EUR_BCV';
+    const rate = exchangeRates[curr] || exchangeRates[currency];
+    return rate ? amt * rate : amt;
+  };
+
+
   const incomes = profile.incomes || [];
+
   if (incomes.length === 0) return [];
 
-  const initialOpeningBalance = Number(profile.settings?.openingBalance) || 0;
+  const openingBalCurrency = profile.settings?.openingBalanceCurrency || 'USD';
+  const initialOpeningBalanceUsd = convAmt(Number(profile.settings?.openingBalance) || 0, openingBalCurrency);
+
   const baseIncomes = incomes.filter(inc => !inc.incomeId);
   const validIncomeIds = new Set(baseIncomes.map(i => i.id));
 
   const results: IncomeAccountBalance[] = baseIncomes.map((inc, index) => {
     // Initial opening balance is allocated to the primary/first income account by default
-    const openingAmt = index === 0 ? initialOpeningBalance : 0;
+    const openingAmtUsd = index === 0 ? initialOpeningBalanceUsd : 0;
     
-    let totalInflowsToDate = openingAmt;
-    let totalProjectedInflows = openingAmt;
+    let totalInflowsToDate = openingAmtUsd;
+    let totalProjectedInflows = openingAmtUsd;
+
     let nextIncomeDate: string | null = null;
 
     // Count items explicitly configured with this income as funding source
@@ -1795,9 +1824,10 @@ export function calculateIncomeAccountBalances(
       const isOccDone = !!occ.done;
       const occDate = occ.date || occ.targetDate || occ.originalDate;
       const affectsCash = !occ.noAffectBalance;
-      const occUsd = Math.abs(occ.amt || 0);
+      const occUsd = (occ.amt || 0); // plan amt is already in USD
 
       if (occ.type === 'income' || occ.type === 'rescate_ahorros') {
+
         // Fondo Requerido is strictly isolated and goes to its own required fund account
         if (
           occ.ref?.id === 'required_starting_fund' ||
@@ -1809,14 +1839,17 @@ export function calculateIncomeAccountBalances(
           // it represents an outflow (deduction) from that bank account!
           const fundingAccountId = occ.incomeId;
           if (fundingAccountId && fundingAccountId === inc.id) {
-            totalProjectedOutflows += occUsd;
+            totalProjectedOutflows += Math.abs(occUsd);
+
             if (isOccDone && affectsCash) {
-              totalOutflowsToDate += occUsd;
+              totalOutflowsToDate += Math.abs(occUsd);
+
               paidMovements.push({
                 date: occDate,
                 label: 'Aporte de Fondo Inicial',
                 type: 'expense',
-                amount: occUsd,
+                amount: Math.abs(occUsd),
+
               });
             }
           }
@@ -1828,11 +1861,13 @@ export function calculateIncomeAccountBalances(
           (!validIncomeIds.has(occ.ref?.id) && (!occIncomeId || !validIncomeIds.has(occIncomeId)) && index === 0);
 
         if (isThisAccount) {
-          totalProjectedInflows += occUsd;
+          totalProjectedInflows += Math.abs(occUsd);
+
           // Actual money in pocket: when confirmed done
           if (isOccDone && affectsCash) {
-            totalInflowsToDate += occUsd;
+            totalInflowsToDate += Math.abs(occUsd);
           }
+
           if (!isOccDone && occDate >= today && (!nextIncomeDate || occDate < nextIncomeDate)) {
             nextIncomeDate = occDate;
           }
@@ -1844,15 +1879,18 @@ export function calculateIncomeAccountBalances(
         // EXCEPTION: if assigned to required_starting_fund, do not attribute to primary account
         const isAssignedToThis = assignedId === inc.id || (!assignedId && index === 0);
         if (isAssignedToThis && affectsCash) {
-          totalProjectedOutflows += occUsd;
+          totalProjectedOutflows += Math.abs(occUsd);
+
           // Actual money subtracted from current balance: occurred when marked as done
           if (isOccDone) {
-            totalOutflowsToDate += occUsd;
+            totalOutflowsToDate += Math.abs(occUsd);
+
             paidMovements.push({
               date: occDate,
               label: occ.label ? occ.label.replace(/\s*\(✓.*?\)/g, '').trim() : 'Egreso',
               type: occ.type,
-              amount: occUsd,
+              amount: Math.abs(occUsd),
+
             });
           }
         }
@@ -1936,12 +1974,16 @@ export function calculateIncomeAccountBalances(
 
     reqPaidMovements.sort((a, b) => b.date.localeCompare(a.date));
 
+    const reqAccountCurrency = (profile.settings?.minBalanceCurrency as CurrencyCode) || 'USD_BCV';
+    const rateToReqCurrency = convAmt(1, reqAccountCurrency) || 1;
+    const amountInReqCurrency = reqAmount / rateToReqCurrency;
+
     results.push({
       id: 'required_starting_fund',
       name: 'Fondo Requerido',
-      amount: reqAmount,
+      amount: amountInReqCurrency,
       freq: 'one-time',
-      currency: (profile.settings?.minBalanceCurrency as CurrencyCode) || 'USD_BCV',
+      currency: reqAccountCurrency,
       totalInflowsToDate: reqInflowsToDate,
       totalOutflowsToDate: reqOutflowsToDate,
       availableToday: reqInflowsToDate - reqOutflowsToDate,
@@ -1952,6 +1994,7 @@ export function calculateIncomeAccountBalances(
       nextIncomeDate: isOccDone ? null : occDate,
       paidMovements: reqPaidMovements,
     });
+
   }
 
   return results;

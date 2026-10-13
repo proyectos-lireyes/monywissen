@@ -76,6 +76,12 @@ function getDefaultSeed(): AppStateData {
     },
     authToken: null,
     authUser: null,
+    exchangeRates: {
+      'USD': 1,
+      'BS': 40,
+      'EUR': 0.92,
+    },
+    exchangeRatesMeta: null
   };
 }
 
@@ -189,18 +195,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [activeView, setActiveView] = useState<string>('dashboard');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [undoBuffer, setUndoBuffer] = useState<UserProfile | null>(null);
-  const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({
-    'USD_BCV': 1,
-    'USD': 1,
-    'USD_PARALELO': 1, // Optional placeholder
-    'EUR_BCV': 1.05, // Default/fallback
-    'EUR': 1.05,
-    'USDT': 1,
-    'BS': 0.02, // 1 / 50 as fallback
-    'VES': 0.02,
+  const [exchangeRates, setExchangeRates] = useState<Record<string, number>>(() => {
+    return state.exchangeRates || {
+      'USD_BCV': 1,
+      'USD': 1,
+      'USD_PARALELO': 1,
+      'EUR_BCV': 1.05,
+      'EUR': 1.05,
+      'USDT': 1,
+      'BS': 0.02,
+      'VES': 0.02,
+    };
   });
 
-  const [exchangeRatesMeta, setExchangeRatesMeta] = useState<{ publishedAt: string; updatedAt: string; bcvUsd: number; bcvEur: number } | undefined>(undefined);
+  const [exchangeRatesMeta, setExchangeRatesMeta] = useState<{ publishedAt: string; updatedAt: string; bcvUsd: number; bcvEur: number } | undefined>(() => {
+    return state.exchangeRatesMeta || undefined;
+  });
   const [syncSessionId, setSyncSessionId] = useState<number>(0);
 
   // App APK Background Update State
@@ -469,7 +479,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const eurVal = eurRate / usdRate;
         const bsVal = 1 / usdRate;
 
-        setExchangeRates({
+        const newRates = {
           'USD_BCV': 1,
           'USD': 1,
           'USD_PARALELO': usdParaleloRate / usdRate, // relative to BCV
@@ -478,15 +488,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           'EUR': eurVal,
           'BS': bsVal, 
           'VES': bsVal,
-        });
+        };
+
+        setExchangeRates(newRates);
 
         if (usdOficial && usdOficial.fechaActualizacion) {
-          setExchangeRatesMeta({
+          const meta = {
             publishedAt: usdOficial.fechaActualizacion,
             updatedAt: new Date().toISOString(),
             bcvUsd: usdOficial.promedio,
             bcvEur: eurOficial?.promedio || eurRate
-          });
+          };
+          setExchangeRatesMeta(meta);
+          
+          // PERSIST to global state for sync
+          setState(prev => ({
+            ...prev,
+            exchangeRates: newRates,
+            exchangeRatesMeta: meta
+          }));
+        } else {
+          setState(prev => ({
+            ...prev,
+            exchangeRates: newRates
+          }));
         }
       } catch (err) {
         console.error('Failed to fetch exchange rates', err);
@@ -872,6 +897,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       profiles: sanitizedProfiles,
       authUser: newState.authUser || prev.authUser,
       authToken: newState.authToken || prev.authToken,
+      exchangeRates: newState.exchangeRates || prev.exchangeRates,
+      exchangeRatesMeta: newState.exchangeRatesMeta || prev.exchangeRatesMeta,
     }));
     showToast('Base de datos y perfiles restaurados correctamente con toda tu información', '💾');
   };

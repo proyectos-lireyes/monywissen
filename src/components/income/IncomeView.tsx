@@ -31,7 +31,8 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
 
   // Compute projection plan to get up-to-date inflows and outflows per account
   const plan = calculateProjections(profile, exchangeRates);
-  const accountBalances = calculateIncomeAccountBalances(profile, plan, convertAmount, todayStr());
+  const accountBalances = calculateIncomeAccountBalances(profile, plan, exchangeRates, todayStr());
+
 
   let todayBalanceFromPlan = 0;
   plan.forEach(e => {

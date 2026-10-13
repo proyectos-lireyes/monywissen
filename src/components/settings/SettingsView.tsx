@@ -122,6 +122,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
   const [delayDays, setDelayDays] = useState(settings.delayDays);
   const [autoSaveThreshold, setAutoSaveThreshold] = useState(settings.autoSaveThreshold || 0);
   const [openingBalanceStr, setOpeningBalanceStr] = useState(String(settings.openingBalance || 0));
+  const [openingBalanceCurrency, setOpeningBalanceCurrency] = useState(settings.openingBalanceCurrency || settings.displayCurrency || 'USD');
   const [freeSpend, setFreeSpend] = useState(settings.freeSpend);
   const [notifTime, setNotifTime] = useState(settings.notifTime || '08:00');
   const [notificationsEnabled, setNotificationsEnabled] = useState(settings.notificationsEnabled !== false);
@@ -307,6 +308,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
       draft.settings.minBalanceCurrency = minBalanceCurrency;
       draft.settings.delayDays = delayDays;
       draft.settings.openingBalance = parseFloat(openingBalanceStr) || 0;
+      draft.settings.openingBalanceCurrency = openingBalanceCurrency;
       draft.settings.freeSpend = freeSpend;
       draft.settings.notifTime = notifTime;
       draft.settings.notificationsEnabled = notificationsEnabled;
@@ -429,13 +431,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-bold text-slate-500">Saldo Inicial Manual</label>
-                <input
-                  type="number"
-                  value={openingBalanceStr === '0' ? '' : openingBalanceStr}
-                  onChange={e => setOpeningBalanceStr(e.target.value)}
-                  placeholder="0 para auto-calcular"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100 mb-3"
-                />
+                <div className="flex gap-2 mt-1 mb-3">
+                  <input
+                    type="number"
+                    value={openingBalanceStr === '0' ? '' : openingBalanceStr}
+                    onChange={e => setOpeningBalanceStr(e.target.value)}
+                    placeholder="0 para auto-calcular"
+                    className="flex-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
+                  />
+                  <select
+                    value={openingBalanceCurrency}
+                    onChange={e => setOpeningBalanceCurrency(e.target.value)}
+                    className="w-24 px-2 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="USD">USD ($)</option>
+                    <option value="BS">BS (Bs)</option>
+                    <option value="EUR">EUR (€)</option>
+                    <option value="USDT">USDT</option>
+                  </select>
+                </div>
               </div>
               <div>
                 <label className="text-xs font-bold text-slate-500">Saldo mínimo (Colchón de Seguridad)</label>
