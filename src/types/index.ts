@@ -94,6 +94,7 @@ export interface IncomeItem {
   tags?: string[];
   currency?: CurrencyCode;
   strictDate?: boolean;
+  incomeId?: string; // Link to another income account
 }
 
 export interface ExpenseItem {

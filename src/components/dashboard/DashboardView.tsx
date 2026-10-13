@@ -1138,7 +1138,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-black text-amber-900 dark:text-amber-200 uppercase tracking-wider flex items-center gap-2">
                   <Clock className="w-4 h-4 text-amber-600" />
-                  Deudas y Compromisos
+                  Pagos Programados
                 </h3>
                 <span className="bg-amber-200 dark:bg-amber-800 text-amber-900 dark:text-amber-100 px-2 py-0.5 rounded-lg text-[10px] font-black">
                   {upcomingDebts.length}
@@ -1161,7 +1161,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-black text-purple-900 dark:text-purple-200 uppercase tracking-wider flex items-center gap-2">
                   <PiggyBank className="w-4 h-4 text-purple-600" />
-                  Uso de Ahorros (Rescates)
+                  Rescates de Ahorros (Informativo)
                 </h3>
                 <span className="bg-purple-200 dark:bg-purple-800 text-purple-900 dark:text-purple-100 px-2 py-0.5 rounded-lg text-[10px] font-black">
                   {savingsRescues.length}
@@ -1176,10 +1176,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 ))}
               </div>
               <button
-                onClick={() => setActiveView('calendar')}
+                onClick={() => setShowUpcomingDebtsModal(true)}
                 className="w-full py-2 bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-800/50 rounded-xl text-[11px] font-bold text-purple-700 dark:text-purple-400 hover:bg-purple-50 transition-colors flex items-center justify-center gap-1.5"
               >
-                Ver en Cronograma <ChevronRight className="w-3 h-3" />
+                Ver Detalle en Modal <ChevronRight className="w-3 h-3" />
               </button>
             </div>
           )}
@@ -1721,9 +1721,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
                 <div>
                   <h2 className="text-xl font-black text-slate-900 dark:text-white leading-tight">
-                    Compromisos de Pago
+                    Pagos y Rescates
                   </h2>
-                  <p className="text-xs text-slate-500 font-medium">Lista de cuotas y deudas programadas</p>
+                  <p className="text-xs text-slate-500 font-medium">Cronograma de compromisos y uso de ahorros</p>
                 </div>
               </div>
               <button 
@@ -1735,42 +1735,49 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
             
             <div className="p-6 overflow-y-auto space-y-3 custom-scrollbar flex-1 bg-slate-50/30 dark:bg-slate-950/20">
-              {plan.filter(e => e.type === 'debt' && !e.done).length === 0 ? (
+              {plan.filter(e => (e.type === 'debt' || e.type === 'rescate_ahorros') && !e.done).length === 0 ? (
                 <div className="py-20 text-center space-y-3">
                   <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-300">
                     <CheckCircle2 className="w-8 h-8" />
                   </div>
-                  <p className="text-sm font-bold text-slate-400">No tienes deudas o cuotas pendientes</p>
+                  <p className="text-sm font-bold text-slate-400">No tienes pagos programados o rescates pendientes</p>
                 </div>
               ) : (
-                plan.filter(e => e.type === 'debt' && !e.done).map((occ, idx) => {
-                  const isOverdue = occ.date < today;
+                plan.filter(e => (e.type === 'debt' || e.type === 'rescate_ahorros') && !e.done).map((occ, idx) => {
+                  const isOverdue = occ.date < today && occ.type !== 'rescate_ahorros';
+                  const isRescate = occ.type === 'rescate_ahorros';
                   return (
                     <div 
                       key={idx}
                       onClick={() => {
                         setShowUpcomingDebtsModal(false);
-                        onOpenDetails(occ.type, occ.ref?.id || '', occ.originalDate, occ.date);
+                        if (!isRescate) {
+                          onOpenDetails(occ.type, occ.ref?.id || '', occ.originalDate, occ.date);
+                        } else {
+                          setActiveView('calendar');
+                        }
                       }}
                       className={`p-4 rounded-[1.5rem] border transition-all flex items-center justify-between cursor-pointer group ${
                         isOverdue 
                           ? 'bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800/40' 
+                          : isRescate
+                          ? 'bg-purple-50/50 dark:bg-purple-950/20 border-purple-100 dark:border-purple-800/30 hover:border-purple-300'
                           : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700 hover:border-amber-300 dark:hover:border-amber-700 shadow-sm'
                       }`}
                     >
                       <div className="flex items-center gap-4">
                         <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                          isOverdue ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'
+                          isOverdue ? 'bg-rose-100 text-rose-600' : isRescate ? 'bg-purple-100 text-purple-600' : 'bg-amber-100 text-amber-600'
                         }`}>
-                          <TrendingDown className="w-5 h-5" />
+                          {isRescate ? <PiggyBank className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
                         </div>
                         <div>
-                          <p className="text-sm font-black text-slate-800 dark:text-slate-100 group-hover:text-amber-600 transition-colors">
+                          <p className="text-sm font-black text-slate-800 dark:text-slate-100 group-hover:text-indigo-600 transition-colors">
                             {occ.label}
                           </p>
                           <div className="flex items-center gap-2 mt-0.5">
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                              isOverdue ? 'bg-rose-200 text-rose-800' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                              isOverdue ? 'bg-rose-200 text-rose-800' : isRescate ? 'bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
                             }`}>
                               {isOverdue ? '⚠️ ATRASADO' : formatDateStr(occ.date)}
                             </span>
@@ -1783,8 +1790,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-sm font-black text-slate-900 dark:text-slate-100">
-                          {formatCurrency(Math.abs(occ.amt))}
+                        <p className={`text-sm font-black ${isRescate ? 'text-purple-600' : 'text-slate-900 dark:text-slate-100'}`}>
+                          {isRescate ? '+' : '-'}{formatCurrency(Math.abs(occ.amt))}
                         </p>
                         <ChevronRight className="w-4 h-4 text-slate-300 group-hover:translate-x-1 transition-transform ml-auto" />
                       </div>

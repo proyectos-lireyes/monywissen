@@ -1133,11 +1133,12 @@ export function calculateProjections(
 
   // 5. Calculate required starting fund to cover expenses + cushion before the first income date
   let initialEgresosSum = 0;
+  let initialIncomesDoneSum = 0;
   for (const d of allDatesList) {
     const dayEvents = map[d] || [];
     let hitRealIncome = false;
     for (const e of dayEvents) {
-      if ((e?.amt || 0) > 0 && e?.type === 'income' && e?.ref?.id !== 'required_starting_fund') {
+      if ((e?.amt || 0) > 0 && e?.type === 'income' && e?.ref?.id !== 'required_starting_fund' && !e.done) {
         hitRealIncome = true;
         break;
       }
@@ -1148,6 +1149,9 @@ export function calculateProjections(
       if ((e?.amt || 0) < 0 && e?.ref?.id !== 'auto_savings' && e?.ref?.id !== 'savings_auto_savings') {
         initialEgresosSum += Math.abs(e?.amt || 0);
       }
+      if ((e?.amt || 0) > 0 && e?.type === 'income' && e.done) {
+        initialIncomesDoneSum += e.amt;
+      }
     }
   }
 
@@ -1155,8 +1159,8 @@ export function calculateProjections(
   const cushionInBase = convAmt(settings.minBalance || 0, cushionCurrency);
   const openingBal = settings.openingBalance || 0;
 
-  // Formula: Egresos iniciales + Colchón de seguridad - Saldo base inicial
-  const requiredInitial = Math.max(0, Math.round((initialEgresosSum + cushionInBase - openingBal) * 100) / 100);
+  // Formula: Egresos iniciales + Colchón de seguridad - (Saldo base inicial + Ingresos ya recibidos)
+  const requiredInitial = Math.max(0, Math.round((initialEgresosSum + cushionInBase - (openingBal + initialIncomesDoneSum)) * 100) / 100);
 
   if (requiredInitial > 0) {
     const key = `income_required_starting_fund_${startD}`;
@@ -1748,9 +1752,10 @@ export function calculateIncomeAccountBalances(
   if (incomes.length === 0) return [];
 
   const initialOpeningBalance = Number(profile.settings?.openingBalance) || 0;
-  const validIncomeIds = new Set(incomes.map(i => i.id));
+  const baseIncomes = incomes.filter(inc => !inc.incomeId);
+  const validIncomeIds = new Set(baseIncomes.map(i => i.id));
 
-  const results: IncomeAccountBalance[] = incomes.map((inc, index) => {
+  const results: IncomeAccountBalance[] = baseIncomes.map((inc, index) => {
     // Initial opening balance is allocated to the primary/first income account by default
     const openingAmt = index === 0 ? initialOpeningBalance : 0;
     
@@ -1769,6 +1774,9 @@ export function calculateIncomeAccountBalances(
     (profile.savingsList || []).forEach(s => {
       if (s.incomeId === inc.id) assignedItemsCount++;
     });
+    (profile.incomes || []).forEach(i => {
+      if (i.incomeId === inc.id) assignedItemsCount++;
+    });
 
     // Scan occurrences from the projected financial plan
     let totalOutflowsToDate = 0;
@@ -1786,7 +1794,6 @@ export function calculateIncomeAccountBalances(
 
       const isOccDone = !!occ.done;
       const occDate = occ.date || occ.targetDate || occ.originalDate;
-      const isPastOrToday = occDate <= today || (occ.targetDate && occ.targetDate <= today);
       const affectsCash = !occ.noAffectBalance;
       const occUsd = Math.abs(occ.amt || 0);
 
@@ -1817,8 +1824,7 @@ export function calculateIncomeAccountBalances(
         }
 
         const occIncomeId = occ.incomeId || occ.ref?.incomeId;
-        const isThisAccount = occ.ref?.id === inc.id || 
-          occIncomeId === inc.id ||
+        const isThisAccount = (occIncomeId ? occIncomeId === inc.id : occ.ref?.id === inc.id) || 
           (!validIncomeIds.has(occ.ref?.id) && (!occIncomeId || !validIncomeIds.has(occIncomeId)) && index === 0);
 
         if (isThisAccount) {

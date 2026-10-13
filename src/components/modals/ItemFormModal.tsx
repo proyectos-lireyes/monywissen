@@ -968,6 +968,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           currency: currency as any,
           receiptImg: receiptImg || undefined,
           strictDate,
+          incomeId: incomeId || undefined,
         };
 
         if (editIndex !== null) {
@@ -1335,7 +1336,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
                 <div>
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Cuenta de Origen (¿De cuál cuenta saldrá este dinero?)
+                    Cuenta Bancaria / Origen de Fondos (¿De dónde saldrá el dinero?)
                   </label>
                   <select
                     value={incomeId}
@@ -1775,18 +1776,23 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                       </div>
                     </div>
 
-                    {type === 'expense' && (
+                    {(type === 'expense' || (type === 'income' && (forceOneTime || freq === 'one-time'))) && (
                       <div>
                         <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                          Cuenta de Ingreso (¿De cuál cuenta saldrá este gasto?)
+                          {type === 'income' ? 'Cuenta Bancaria Receptora (¿A qué cuenta sumará este ingreso?)' : 'Cuenta Bancaria de Origen (¿De dónde saldrá este dinero?)'}
                         </label>
                         <select
                           value={incomeId}
                           onChange={e => setIncomeId(e.target.value)}
                           className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
                         >
-                          <option value="">❓ Sin cuenta especificada (Indicar al momento de pagar)</option>
-                          {incomeBalances.map(b => (
+                          <option value="">❓ Sin cuenta específica ({type === 'income' ? 'Creará su propia cuenta' : 'Indicar al momento de pagar'})</option>
+                          {incomeBalances.filter(b => {
+                            if (type === 'income' && editIndex !== null) {
+                              return b.id !== profile.incomes[editIndex]?.id;
+                            }
+                            return true;
+                          }).map(b => (
                             <option key={b.id} value={b.id}>
                               {b.id === 'required_starting_fund' ? '🪙' : '🏦'} {b.name} — Disponible: {formatCurrencyExt(b.availableToday, b.currency || 'USD_BCV')}
                             </option>
