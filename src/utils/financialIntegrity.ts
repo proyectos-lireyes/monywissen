@@ -411,7 +411,11 @@ export function evaluateCashBreaches(profile: UserProfile, exchangeRates: Record
   let currentBreachCause = '';
   let inBreach = false;
 
+  const startD = profile.settings.planStart || todayStr();
+  const endD = profile.settings.planEnd || '2099-12-31';
+
   plan.forEach((p) => {
+    if (!p || p.date < startD || p.date > endD || p.done) return;
     // A breach (quiebre) occurs ONLY when total available funds (ahorros + ingresos) <= 0
     const totalLiquidity = (p.savingsAccumulated || 0) + p.balance;
     const isUncoveredDeficit = p.balance < -0.001 && totalLiquidity <= 0.001;

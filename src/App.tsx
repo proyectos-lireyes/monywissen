@@ -143,6 +143,7 @@ const AppContent: React.FC = () => {
   // Form Modal state
   const [formType, setFormType] = useState<'income' | 'expense' | 'debt' | 'saving' | null>(null);
   const [formEditIndex, setEditIndex] = useState<number | null>(null);
+  const [formInitialIncomeId, setFormInitialIncomeId] = useState<string | undefined>(undefined);
   const [formForceOneTime, setForceOneTime] = useState(false);
 
   // Occurrence Detail Modal state
@@ -163,10 +164,11 @@ const AppContent: React.FC = () => {
     );
   }
 
-  const handleOpenCreate = (type: 'income' | 'expense' | 'debt' | 'saving', forceOneTime: boolean = false) => {
+  const handleOpenCreate = (type: 'income' | 'expense' | 'debt' | 'saving', forceOneTime: boolean = false, initialIncomeId?: string) => {
     setFormType(type);
     setEditIndex(null);
     setForceOneTime(forceOneTime);
+    setFormInitialIncomeId(initialIncomeId);
   };
 
   const handleOpenEdit = (type: 'income' | 'expense' | 'debt' | 'saving', index: number) => {
@@ -368,6 +370,7 @@ const AppContent: React.FC = () => {
         type={formType}
         editIndex={formEditIndex}
         forceOneTime={formForceOneTime}
+        initialIncomeId={formInitialIncomeId}
         onClose={() => setFormType(null)}
       />
 

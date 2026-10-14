@@ -4,7 +4,7 @@ import { formatCurrency, formatDateStr } from '../../utils/financialEngine';
 import { Plus, Wallet, Globe, DollarSign, Settings2, Image as ImageIcon, Trash2 } from 'lucide-react';
 
 interface SavingsViewProps {
-  onOpenCreate: (type: 'saving') => void;
+  onOpenCreate: (type: 'income' | 'expense' | 'debt' | 'saving', forceOneTime?: boolean, initialIncomeId?: string) => void;
   onOpenEdit: (type: 'saving', index: number) => void;
 }
 

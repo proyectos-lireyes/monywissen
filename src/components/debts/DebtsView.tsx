@@ -7,7 +7,7 @@ import { publishDebtTemplateToFirestore, loadDebtTemplatesFromFirestore } from '
 import { Plus, Building2, ShieldAlert, Sparkles, Download, Layers, Trash2, Table as TableIcon, LayoutGrid, ArrowUpDown, ArrowUp, ArrowDown, Filter } from 'lucide-react';
 
 interface DebtsViewProps {
-  onOpenCreate: (type: 'debt') => void;
+  onOpenCreate: (type: 'income' | 'expense' | 'debt' | 'saving', forceOneTime?: boolean, initialIncomeId?: string) => void;
   onOpenEdit: (type: 'debt', index: number) => void;
 }
 

@@ -4,7 +4,7 @@ import { formatCurrency, todayStr } from '../../utils/financialEngine';
 import { Plus, CreditCard, Clock, CheckCircle, Search, Filter, ArrowUpDown, ArrowUp, ArrowDown, Receipt } from 'lucide-react';
 
 interface ExpensesViewProps {
-  onOpenCreate: (type: 'expense' | 'debt', forceOneTime?: boolean) => void;
+  onOpenCreate: (type: 'income' | 'expense' | 'debt' | 'saving', forceOneTime?: boolean, initialIncomeId?: string) => void;
   onOpenEdit: (type: 'expense' | 'debt', index: number) => void;
 }
 
@@ -277,6 +277,9 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onOpenCreate, onOpen
                       {renderSortIcon('amount')}
                     </div>
                   </th>
+                  <th className="py-3 px-3 text-right text-slate-400 font-bold uppercase tracking-wider">
+                    Cuenta
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-xs">
@@ -313,6 +316,11 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ onOpenCreate, onOpen
                       </td>
                       <td className="py-3 px-3 text-right font-black text-blue-600 dark:text-blue-400 whitespace-nowrap">
                         {formatCurrencyExt(item.amount, (item as any).currency)}
+                      </td>
+                      <td className="py-3 px-3 text-right">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/40">
+                          {profile.incomes.find(i => i.id === item.incomeId)?.name || 'Cuenta Principal'}
+                        </span>
                       </td>
                     </tr>
                   );

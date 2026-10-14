@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   formatCurrency,
@@ -7,6 +7,7 @@ import {
   todayStr,
   datesBetween,
   calculateProjections,
+  calculateIncomeAccountBalances,
   getRemainingDebtAmount,
 } from '../../utils/financialEngine';
 import {
@@ -96,7 +97,7 @@ const formatDailyLabel = (dateStr: string) => {
 };
 
 interface DashboardViewProps {
-  onOpenCreate: (type: 'income' | 'expense' | 'debt' | 'saving', forceOneTime?: boolean) => void;
+  onOpenCreate: (type: 'income' | 'expense' | 'debt' | 'saving', forceOneTime?: boolean, initialIncomeId?: string) => void;
   onOpenDetails: (type: string, refId: string, originalDate: string, planDate: string) => void;
 }
 
@@ -164,12 +165,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       projectedToday += e?.amt;
     }
     
-    if (e?.amt > 0 && e.type !== 'compensation' && e.type !== 'opening_balance') totalIncome += e?.amt;
+    if (e?.amt > 0 && e.type !== 'compensation' && e.type !== 'opening_balance' && affectsCash) totalIncome += e?.amt;
     if (e?.amt < 0 && e.type !== 'savings' && affectsCash) totalExpense += Math.abs(e?.amt);
-    if (!e.done && (e.criticalDelay || e.insufficientFunds || e.belowCushion) && !criticalAlert) {
+    if (!e.done && e.date >= profile.settings.planStart && e.date <= profile.settings.planEnd && (e.insufficientFunds || e.belowCushion) && !criticalAlert) {
       criticalAlert = { date: e.date, reason: e.label, isBelowCushion: e.belowCushion, isNeg: e.insufficientFunds };
     }
   });
+
+  const accountBalances = useMemo(
+    () => calculateIncomeAccountBalances(profile, plan, exchangeRates, today),
+    [profile, plan, exchangeRates, today]
+  );
+  const totalAccountAvailableToday = accountBalances.length > 0
+    ? accountBalances.reduce((acc, a) => acc + (a.id !== 'required_starting_fund' ? a.availableToday : Math.max(0, a.availableToday)), 0)
+    : todayBalance;
 
   const lastOccurrence = plan[plan.length - 1];
   const projectedBalance = lastOccurrence ? lastOccurrence.balance : (plan.length > 0 ? plan[0].balance : (profile.settings.openingBalance || 0));
@@ -228,7 +237,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (e.type === 'rescate_ahorros') chartDataMap[e.date].rescates = (chartDataMap[e.date].rescates || 0) + e?.amt;
       if (e?.amt < 0 && e.type === 'expense') chartDataMap[e.date].expense += Math.abs(e?.amt);
       if (e?.amt < 0 && (e.type === 'debt' )) chartDataMap[e.date].debt += Math.abs(e?.amt);
-      if (e.insufficientFunds && e?.amt < 0 && e.balance < -0.01) chartDataMap[e.date].deficit = (chartDataMap[e.date].deficit || 0) + Math.abs(e?.amt);
+      if (e.insufficientFunds && e?.amt < 0) chartDataMap[e.date].deficit = (chartDataMap[e.date].deficit || 0) + ((e as any).deficitAmt || Math.abs(e?.amt));
       chartDataMap[e.date].balance = e.balance;
       chartDataMap[e.date].savingsAccumulated = e.savingsAccumulated !== undefined ? e.savingsAccumulated : (chartDataMap[e.date].savingsAccumulated || 0);
       runningBalance = e.balance;
@@ -337,7 +346,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (e?.amt < 0 && e.type === 'expense') biweeklyDataMap[prefix].expense += Math.abs(e?.amt);
       if (e?.amt < 0 && (e.type === 'debt' )) biweeklyDataMap[prefix].debt += Math.abs(e?.amt);
       biweeklyDataMap[prefix].items.push(e);
-      if (e.insufficientFunds && e?.amt < 0) biweeklyDataMap[prefix].deficit += Math.abs(e?.amt);
+      if (e.insufficientFunds && e?.amt < 0) biweeklyDataMap[prefix].deficit = (biweeklyDataMap[prefix].deficit || 0) + ((e as any).deficitAmt || Math.abs(e?.amt));
       biweeklyDataMap[prefix].balance = e.balance;
       biweeklyDataMap[prefix].savingsAccumulated = e.savingsAccumulated || 0;
     }
@@ -385,7 +394,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (e?.amt < 0 && e.type === 'expense') weeklyDataMap[weekPrefix].expense += Math.abs(e?.amt);
       if (e?.amt < 0 && (e.type === 'debt' )) weeklyDataMap[weekPrefix].debt += Math.abs(e?.amt);
       weeklyDataMap[weekPrefix].items.push(e);
-      if (e.insufficientFunds && e?.amt < 0) weeklyDataMap[weekPrefix].deficit += Math.abs(e?.amt);
+      if (e.insufficientFunds && e?.amt < 0) weeklyDataMap[weekPrefix].deficit = (weeklyDataMap[weekPrefix].deficit || 0) + ((e as any).deficitAmt || Math.abs(e?.amt));
       weeklyDataMap[weekPrefix].balance = e.balance; // Keep last balance of the week
       weeklyDataMap[weekPrefix].savingsAccumulated = e.savingsAccumulated || 0;
     }
@@ -432,7 +441,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (e?.amt < 0 && e.type === 'expense') monthlyDataMap[monthPrefix].expense += Math.abs(e?.amt);
       if (e?.amt < 0 && (e.type === 'debt' )) monthlyDataMap[monthPrefix].debt += Math.abs(e?.amt);
       monthlyDataMap[monthPrefix].items.push(e);
-      if (e.insufficientFunds && e?.amt < 0) monthlyDataMap[monthPrefix].deficit += Math.abs(e?.amt);
+      if (e.insufficientFunds && e?.amt < 0) monthlyDataMap[monthPrefix].deficit = (monthlyDataMap[monthPrefix].deficit || 0) + ((e as any).deficitAmt || Math.abs(e?.amt));
       monthlyDataMap[monthPrefix].balance = e.balance;
       monthlyDataMap[monthPrefix].savingsAccumulated = e.savingsAccumulated || 0;
     }
@@ -802,7 +811,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </button>
             </div>
             <div className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-slate-50 tracking-tight mt-1">
-              {formatCurrency(todayBalance)}
+              {formatCurrency(totalAccountAvailableToday)}
             </div>
             <p className="text-xs text-slate-500 mt-1 flex items-center flex-wrap gap-1">
               <span>Colchón Mínimo:</span>
@@ -848,7 +857,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         
         {/* Deficit Alert Banner */}
         {(() => {
-          const criticalDeficits = plan.filter(e => e.balance < -0.01 && (chartDataMap[e.date]?.balance ?? 0) < -0.01 && e?.amt < 0 && !e.done);
+          const criticalDeficits = plan.filter(e => 
+            e.date >= profile.settings.planStart && 
+            e.date <= profile.settings.planEnd && 
+            e.insufficientFunds && 
+            e?.amt < 0 && 
+            !e.done
+          );
           if (criticalDeficits.length === 0) return null;
           
           const uniqueDeficits = Array.from(new Map(criticalDeficits.map(item => [item.ref?.id, item])).values());
@@ -1078,12 +1093,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </>
                     ) : (
                       <>
-                        {hasDeficit && (
-                          <Bar hide={hiddenLines["deficit"]} dataKey="deficit" stackId="opt" yAxisId="left" fill="#991b1b" name="Déficit (Alerta)" barSize={12} radius={[4,4,0,0]} />
-                        )}
-                        {hasRescates && (
-                          <Bar hide={hiddenLines["rescates"]} dataKey="rescates" stackId="opt" yAxisId="left" fill="#8b5cf6" name="Rescate de Ahorros" barSize={12} radius={[4,4,0,0]} />
-                        )}
+                        <Bar hide={hiddenLines["deficit"]} dataKey="deficit" stackId="opt" yAxisId="left" fill="#991b1b" name="Déficit (Alerta)" barSize={12} radius={[4,4,0,0]} />
+                        <Bar hide={hiddenLines["rescates"]} dataKey="rescates" stackId="opt" yAxisId="left" fill="#8b5cf6" name="Rescate de Ahorros" barSize={12} radius={[4,4,0,0]} />
                         {hasIncome && (
                           <Line hide={hiddenLines["income"]} type="monotone" dataKey="income" yAxisId="left" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={chartMode !== 0} activeDot={{ onClick: (props: any, e: any) => { if (e && e.stopPropagation) e.stopPropagation(); setPeriodDetails(props.payload); }, cursor: 'pointer', r: 6 }} />
                         )}
@@ -1292,7 +1303,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <span className="text-[9px] font-normal text-slate-500">(Plan: {formatDateStr(u.originalDate).substring(0,5)})</span>
                       )}
                     </p>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
                       {isStartingFund ? (
                         <span className="text-amber-700 dark:text-amber-400 font-semibold">
                           Requerido para iniciar el plan sin déficit
@@ -1303,6 +1314,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </span>
                       ) : (
                         <span>Proyectado: {formatDateStr(u.date)}</span>
+                      )}
+                      {!isStartingFund && (
+                        <span className="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md border border-slate-200/50 dark:border-slate-700/50 font-bold">
+                          🏦 {profile.incomes.find(i => i.id === u.incomeId)?.name || 'Cuenta Principal'}
+                        </span>
                       )}
                     </p>
                   </div>

@@ -721,6 +721,30 @@ export function getOverrideForItem(
     for (const k of keysToTry) {
       if (overrides[k]) return overrides[k];
     }
+    
+    // Check for +/- 1 day shifts (timezone issues)
+    try {
+      const currentD = new Date(dateStr + 'T12:00:00');
+      const prevD = new Date(currentD.getTime() - 86400000);
+      const nextD = new Date(currentD.getTime() + 86400000);
+      const prevDateStr = prevD.toISOString().slice(0, 10);
+      const nextDateStr = nextD.toISOString().slice(0, 10);
+      
+      for (const dStr of [prevDateStr, nextDateStr]) {
+        const altKeys = [
+          `${type}_${idCandidate}_${dStr}`,
+          `${idCandidate}_${dStr}`,
+          `debt_${idCandidate}_${dStr}`,
+          `income_${idCandidate}_${dStr}`,
+          `expense_${idCandidate}_${dStr}`
+        ];
+        for (const ak of altKeys) {
+          if (overrides[ak]) return overrides[ak];
+        }
+      }
+    } catch (e) {
+      // Ignore invalid dates
+    }
   }
 
   // Scan all keys in overrides for candidate matches if dateStr matches OR if item is one-time
@@ -730,6 +754,18 @@ export function getOverrideForItem(
         if (dateStr && k.endsWith(`_${dateStr}`)) {
           return overrides[k];
         }
+        
+        // Check near dates in the keys too
+        const keyDatePart = k.split('_').pop();
+        if (keyDatePart && /^\d{4}-\d{2}-\d{2}$/.test(keyDatePart)) {
+           const kDate = new Date(keyDatePart + 'T12:00:00');
+           const targetDate = new Date(dateStr + 'T12:00:00');
+           const diffDays = Math.abs(kDate.getTime() - targetDate.getTime()) / 86400000;
+           if (diffDays <= 1.1) {
+              return overrides[k];
+           }
+        }
+
         if (ref.freq === 'one-time' || !ref.freq) {
           const ov = overrides[k];
           if (ov && (ov.done || ov.discarded || ov.actualDate)) {
@@ -823,7 +859,7 @@ export function calculateProjections(
     if (isDiscarded && !options?.includeDiscarded) return;
 
     const isOneTimeItem = (ref.freq === 'one-time' || !ref.freq) && (!ref.installments || parseInt(String(ref.installments), 10) <= 1);
-    let done = ov 
+    let done = (ov && ov.done !== undefined)
       ? !!ov.done 
       : (isOneTimeItem && ref.done !== undefined ? !!ref.done : (type === 'savings' && ref.status === 'completed'));
     
@@ -880,7 +916,7 @@ export function calculateProjections(
     }
 
     if (noAffectBalance) {
-      finalPaymentAmt = 0;
+      // Keep finalPaymentAmt for display, but it will be skipped in balance calculations
     }
 
     if (!done && finalPaymentAmt <= 0.01) {
@@ -904,13 +940,23 @@ export function calculateProjections(
         extraLabel = ` (+${formatCurrency(totalPaidForInstallment - plannedAmt)} Extra)`;
       }
 
+      const isOutflow = type !== 'income' && type !== 'opening_balance' && type !== 'rescate_ahorros';
+      let finalIncomeId = resolvedIncomeId;
+      
+      // Auto-assign early unassigned outflows to required_starting_fund if they occur before the first future income
+      // Do NOT auto-route one-time transactions so they debit normally from the user's base account
+      const isOneTime = (ref.freq === 'one-time' || !ref.freq) && (!ref.installments || parseInt(String(ref.installments), 10) <= 1);
+      if (isOutflow && !finalIncomeId && firstRealIncomeDate && finalDate < firstRealIncomeDate && !isOneTime) {
+        finalIncomeId = 'required_starting_fund';
+      }
+
       const isItemDone = isDiscarded ? false : done;
       const occurrence = {
         label: label + (isDiscarded ? ' (Descartada)' : (done ? ` (✓)${extraLabel}` : (partials.length > 0 ? ' (Restante)' : ''))),
         type,
-        amt: isDiscarded ? 0 : (noAffectBalance ? 0 : (amt > 0 ? finalPaymentAmt : -finalPaymentAmt)),
-        incomeId: resolvedIncomeId,
-        ref: safeRef,
+        amt: isDiscarded ? 0 : (amt > 0 ? finalPaymentAmt : -finalPaymentAmt),
+        incomeId: finalIncomeId,
+        ref: { ...safeRef, incomeId: finalIncomeId },
         originalDate: dateStr,
         targetDate: finalDate,
         done: isItemDone,
@@ -1148,41 +1194,50 @@ export function calculateProjections(
   const allDatesList = datesBetween(startD, endD);
 
   // 5. Calculate required starting fund to cover expenses + cushion before the first income date
-  let initialEgresosSum = 0;
-  let initialIncomesDoneSum = 0;
-  for (const d of allDatesList) {
-    const dayEvents = map[d] || [];
-    let hitRealIncome = false;
-    for (const e of dayEvents) {
-      if ((e?.amt || 0) > 0 && e?.type === 'income' && e?.ref?.id !== 'required_starting_fund' && !e.done) {
-        hitRealIncome = true;
-        break;
-      }
-    }
-    if (hitRealIncome) break;
-
-    for (const e of dayEvents) {
-      if ((e?.amt || 0) < 0 && e?.ref?.id !== 'auto_savings' && e?.ref?.id !== 'savings_auto_savings') {
-        initialEgresosSum += Math.abs(e?.amt || 0);
-      }
-      if ((e?.amt || 0) > 0 && e?.type === 'income' && e.done) {
-        initialIncomesDoneSum += e.amt;
-      }
-    }
-  }
-
+  // This is a mini-simulation to find the maximum deficit encountered until the first "Not Done" income.
+  let simGapBal = balance; // starts with opening balance
+  let gapMaxDeficit = 0;
   const cushionCurrency = settings.minBalanceCurrency || settings.displayCurrency || 'USD';
   const cushionInBase = convAmt(settings.minBalance || 0, cushionCurrency);
-  const openingBal = convAmt(settings.openingBalance || 0, openingBalCurrency);
 
-  // Formula: Egresos iniciales + Colchón de seguridad - (Saldo base inicial + Ingresos ya recibidos)
-  const requiredInitial = Math.max(0, Math.round((initialEgresosSum + cushionInBase - (openingBal + initialIncomesDoneSum)) * 100) / 100);
+  for (const d of allDatesList) {
+    const dayEvents = map[d] || [];
+    const sorted = [...dayEvents].sort((a,b) => {
+      const aInc = (a.amt || 0) > 0 ? 1 : 0;
+      const bInc = (b.amt || 0) > 0 ? 1 : 0;
+      return bInc - aInc;
+    });
+    
+    let hitNotDoneIncome = false;
+    for (const e of sorted) {
+      const isIncome = (e.amt || 0) > 0 && e.type === 'income' && e.ref?.id !== 'required_starting_fund';
+      if (isIncome) {
+        if (!e.done) {
+          hitNotDoneIncome = true;
+          break;
+        } else {
+          simGapBal = Math.round((simGapBal + (e.amt || 0)) * 100) / 100;
+        }
+      } else if ((e.amt || 0) < 0) {
+        if (!e.noAffectBalance) {
+          simGapBal = Math.round((simGapBal + (e.amt || 0)) * 100) / 100;
+          const isOneTime = e.ref?.freq === 'one-time' || e.type === 'savings';
+          const threshold = isOneTime ? 0 : cushionInBase;
+          const deficit = threshold - simGapBal;
+          if (deficit > gapMaxDeficit) gapMaxDeficit = deficit;
+        }
+      }
+    }
+    if (hitNotDoneIncome) break;
+  }
 
-  if (requiredInitial > 0) {
-    const key = `income_required_starting_fund_${startD}`;
-    const matchKey = Object.keys(overrides).find(k => k === key) || Object.keys(overrides).find(k => k.startsWith('income_required_starting_fund_'));
-    const ov = (matchKey ? overrides[matchKey] : null) || overrides[key] || {};
-    if (!ov.discarded) {
+  const requiredInitial = Math.max(0, Math.round(gapMaxDeficit * 100) / 100);
+
+  const key = `income_required_starting_fund_${startD}`;
+  const matchKey = Object.keys(overrides).find(k => k === key) || Object.keys(overrides).find(k => k.startsWith('income_required_starting_fund_'));
+  const ov = (matchKey ? overrides[matchKey] : null) || overrides[key] || {};
+
+  if (requiredInitial > 0 || (ov && !ov.discarded && (ov.done || ov.isCustomAmt))) {
       const isDone = ov.done !== undefined ? !!ov.done : false;
       const amtToInject = (ov && ov.amt !== undefined && ov.isCustomAmt) ? parseFloat(String(ov.amt)) : requiredInitial;
       if (!map[startD]) map[startD] = [];
@@ -1195,10 +1250,7 @@ export function calculateProjections(
         originalDate: startD,
         targetDate: startD,
         done: isDone,
-        isDelayed: false,
-        isGhost: false
       });
-    }
   }
 
   // 6. Day-by-Day Cash Flow Simulation
@@ -1308,9 +1360,10 @@ export function calculateProjections(
         }
       }
 
-      // Add income AFTER auto-savings
-      balance = Math.round((balance + (inc.amt || 0)) * 100) / 100;
-      if (Math.abs(balance) < 0.001) balance = 0;
+      if (!inc.noAffectBalance) {
+        balance = Math.round((balance + (inc.amt || 0)) * 100) / 100;
+        if (Math.abs(balance) < 0.001) balance = 0;
+      }
 
       plan.push({
         ...inc,
@@ -1322,154 +1375,58 @@ export function calculateProjections(
       });
     }
 
-    // 2. Lump-sum savings rescue calculation on breach date:
-    // If funds on date d drop below the cushion (targetMin) for the first time in this income cycle,
-    // calculate a single lump-sum rescue covering total remaining expenses up to the next income + cushion.
-    if (hasEncounteredFirstIncome && savingsAccumulated > 0.001 && !hasRescuedInCurrentCycle && expenseEvents.length > 0) {
-      let simBal = balance;
-      let breachesColchon = false;
-      for (const exp of expenseEvents) {
-        simBal = Math.round((simBal + (exp.amt || 0)) * 100) / 100;
-        if (simBal < targetMin - 0.001) {
-          breachesColchon = true;
-        }
-      }
+    // 2. Colchón mínimo de seguridad:
+    // El colchón actúa estrictamente como un umbral de alerta / notificación sin generar movimientos
+    // sintéticos forzados de 'rescate de ahorros' ni alterar artificialmente el balance o los ahorros.
 
-      if (breachesColchon) {
-        // Calculate sum of all expenses from date d up to (excluding) the next real income
-        let totalExpensesUntilNextIncome = 0;
-        for (const exp of expenseEvents) {
-          totalExpensesUntilNextIncome += Math.abs(exp.amt || 0);
-        }
-        for (let k = i + 1; k < allDatesList.length; k++) {
-          const futureDay = allDatesList[k];
-          const futureEvents = map[futureDay] || [];
-          let stopAtIncome = false;
-          for (const fe of futureEvents) {
-            if ((fe.amt || 0) > 0 && fe.type === 'income' && fe.ref?.id !== 'required_starting_fund') {
-              stopAtIncome = true;
-              break;
-            }
-            if ((fe.amt || 0) < 0) {
-              totalExpensesUntilNextIncome += Math.abs(fe.amt || 0);
-            }
-          }
-          if (stopAtIncome) break;
-        }
-
-        const totalNeededAtBreach = Math.round((totalExpensesUntilNextIncome + targetMin) * 100) / 100;
-        const deficitNeeded = Math.max(0, Math.round((totalNeededAtBreach - balance) * 100) / 100);
-        const lumpRescueAmt = Math.round(Math.min(savingsAccumulated, deficitNeeded) * 100) / 100;
-
-        if (lumpRescueAmt > 0.001) {
-          const rescueKey = `rescate_ahorros_${d}`;
-          const rescueLegacyKey = `rescate_ahorros_rescate_ahorros_${d}`;
-          const ov = overrides[rescueKey] || overrides[rescueLegacyKey] || {};
-
-          if (!ov || !ov.discarded) {
-            const isDone = Boolean(ov?.done);
-            const actualDate = (ov && ov.actualDate) ? ov.actualDate : d;
-            const finalRescueAmt = (ov && ov.amt !== undefined && ov.isCustomAmt)
-              ? Math.abs(parseFloat(String(ov.amt)))
-              : lumpRescueAmt;
-
-            balance = Math.round((balance + finalRescueAmt) * 100) / 100;
-            if (Math.abs(balance) < 0.001) balance = 0;
-            savingsAccumulated = Math.round((savingsAccumulated - finalRescueAmt) * 100) / 100;
-            if (Math.abs(savingsAccumulated) < 0.001) savingsAccumulated = 0;
-
-            hasRescuedInCurrentCycle = true;
-
-            plan.push({
-              date: actualDate,
-              label: 'Rescate de Ahorros',
-              type: 'rescate_ahorros',
-              amt: finalRescueAmt,
-              ref: {
-                id: `rescate_ahorros_${d}`,
-                name: 'Rescate de Ahorros',
-                effectiveColor: '#8b5cf6',
-              },
-              originalDate: d,
-              targetDate: actualDate,
-              done: isDone,
-              balance,
-              isDelayed: false,
-              insufficientFunds: false,
-              savingsAccumulated,
-              isGhost: false
-            });
-          }
-        }
-      }
-    }
 
     // 3. Process today's non-income events (expenses, debt payments, savings)
     for (const exp of expenseEvents) {
-      balance = Math.round((balance + (exp.amt || 0)) * 100) / 100;
-      if (Math.abs(balance) < 0.001) balance = 0;
-
-      let expIsRescueCovered = false;
-      if (hasRescuedInCurrentCycle && exp.type !== 'savings') {
-        expIsRescueCovered = true;
+      if (!exp.noAffectBalance) {
+        balance = Math.round((balance + (exp.amt || 0)) * 100) / 100;
+        if (Math.abs(balance) < 0.001) balance = 0;
       }
 
       if (exp.type === 'savings' && exp.amt < 0) {
         savingsAccumulated = Math.round((savingsAccumulated + Math.abs(exp.amt)) * 100) / 100;
       }
 
-      // Safety fallback: if balance dropped below 0 unexpectedly and savings are still available (only after first income)
-      if (hasEncounteredFirstIncome && balance < -0.001 && savingsAccumulated > 0.001) {
-        const needed = Math.round((-balance) * 100) / 100;
-        const fallbackRescue = Math.round(Math.min(savingsAccumulated, needed) * 100) / 100;
-        if (fallbackRescue > 0.001) {
-          const fallbackKey = `rescate_ahorros_${d}`;
-          const fallbackLegacyKey = `rescate_ahorros_rescate_ahorros_${d}`;
-          const ov = overrides[fallbackKey] || overrides[fallbackLegacyKey] || {};
-
-          if (!ov || !ov.discarded) {
-            const isDone = Boolean(ov?.done);
-            const actualDate = (ov && ov.actualDate) ? ov.actualDate : d;
-            const rescueAmt = (ov && ov.amt !== undefined && ov.isCustomAmt)
-              ? Math.abs(parseFloat(String(ov.amt)))
-              : fallbackRescue;
-
-            balance = Math.round((balance + rescueAmt) * 100) / 100;
-            if (Math.abs(balance) < 0.001) balance = 0;
-            savingsAccumulated = Math.round((savingsAccumulated - rescueAmt) * 100) / 100;
-            if (Math.abs(savingsAccumulated) < 0.001) savingsAccumulated = 0;
-
-            expIsRescueCovered = true;
-
-            plan.push({
-              date: actualDate,
-              label: 'Rescate de Ahorros',
-              type: 'rescate_ahorros',
-              amt: rescueAmt,
-              ref: {
-                id: `rescate_ahorros_${d}`,
-                name: 'Rescate de Ahorros',
-                effectiveColor: '#8b5cf6',
-              },
-              originalDate: d,
-              targetDate: actualDate,
-              done: isDone,
-              balance,
-              isDelayed: false,
-              insufficientFunds: false,
-              savingsAccumulated,
-              isGhost: false
-            });
-          }
-        }
-      }
-
       balance = Math.round(balance * 100) / 100;
       if (Math.abs(balance) < 0.001) balance = 0;
+
+      // Real overdraft / deficit handling:
+      // If cash drops below zero (balance < -0.01), draw strictly what is needed from savings to cover the gap
+      let rescateAmt = 0;
+      if (balance < -0.01 && savingsAccumulated > 0.001 && exp.type !== 'savings') {
+        const needed = Math.abs(balance);
+        rescateAmt = Math.min(savingsAccumulated, needed);
+        rescateAmt = Math.round(rescateAmt * 100) / 100;
+        
+        if (rescateAmt > 0) {
+          savingsAccumulated = Math.round((savingsAccumulated - rescateAmt) * 100) / 100;
+          balance = Math.round((balance + rescateAmt) * 100) / 100;
+          if (Math.abs(balance) < 0.001) balance = 0;
+
+          // Push the rescate event so it maps to the purple bar and shows in transactions
+          plan.push({
+            date: d,
+            originalDate: d,
+            targetDate: d,
+            label: `Rescate de Ahorros (${exp.label})`,
+            type: 'rescate_ahorros',
+            amt: rescateAmt,
+            balance,
+            savingsAccumulated,
+            done: !!exp.done,
+            ref: { id: `rescue_${d}_${exp.ref?.id || ''}`, name: 'Rescate de Ahorros', effectiveColor: '#8b5cf6' }
+          });
+        }
+      }
 
       const totalLiquidity = (savingsAccumulated || 0) + balance;
       const isInsufficient = balance < -0.01 && totalLiquidity <= 0.001;
       const isBelowCush = targetMin > 0 && balance < targetMin && !isInsufficient;
+      const deficitShortfall = isInsufficient ? Math.abs(balance) : 0;
 
       plan.push({
         ...exp,
@@ -1477,10 +1434,11 @@ export function calculateProjections(
         targetDate: d,
         balance,
         insufficientFunds: isInsufficient,
+        deficitAmt: deficitShortfall,
         belowCushion: isBelowCush,
         criticalDelay: !exp.done && (isInsufficient || isBelowCush),
         savingsAccumulated,
-        isRescueCovered: expIsRescueCovered,
+        isRescueCovered: rescateAmt > 0,
       });
     }
   }
@@ -1766,9 +1724,12 @@ export function calculateIncomeAccountBalances(
 ): IncomeAccountBalance[] {
   const convAmt = (amt: number, currency?: string) => {
     if (!currency || currency === 'USD_BCV' || currency === 'USD') return amt;
+    if (typeof exchangeRates === 'function') {
+      return (exchangeRates as any)(amt, currency);
+    }
     let curr = currency;
     if (curr === 'EUR') curr = 'EUR_BCV';
-    const rate = exchangeRates[curr] || exchangeRates[currency];
+    const rate = (exchangeRates as any)?.[curr] || (exchangeRates as any)?.[currency];
     return rate ? amt * rate : amt;
   };
 
@@ -1780,7 +1741,10 @@ export function calculateIncomeAccountBalances(
   const openingBalCurrency = profile.settings?.openingBalanceCurrency || 'USD';
   const initialOpeningBalanceUsd = convAmt(Number(profile.settings?.openingBalance) || 0, openingBalCurrency);
 
-  const baseIncomes = incomes.filter(inc => !inc.incomeId);
+  const recurringIncomes = incomes.filter(inc => inc.freq !== 'one-time');
+  const baseIncomes = recurringIncomes.length > 0 
+    ? recurringIncomes.filter(inc => !inc.incomeId)
+    : incomes.filter(inc => !inc.incomeId);
   const validIncomeIds = new Set(baseIncomes.map(i => i.id));
 
   const results: IncomeAccountBalance[] = baseIncomes.map((inc, index) => {
@@ -1823,7 +1787,7 @@ export function calculateIncomeAccountBalances(
 
       const isOccDone = !!occ.done;
       const occDate = occ.date || occ.targetDate || occ.originalDate;
-      const affectsCash = !occ.noAffectBalance;
+      const affectsCash = !occ.noAffectBalance || (occ as any).wasPreIncluded;
       const occUsd = (occ.amt || 0); // plan amt is already in USD
 
       if (occ.type === 'income' || occ.type === 'rescate_ahorros') {
@@ -1866,6 +1830,13 @@ export function calculateIncomeAccountBalances(
           // Actual money in pocket: when confirmed done
           if (isOccDone && affectsCash) {
             totalInflowsToDate += Math.abs(occUsd);
+
+            paidMovements.push({
+              date: occDate,
+              label: occ.label ? occ.label.replace(/\s*\(✓.*?\)/g, '').trim() : 'Ingreso',
+              type: 'income',
+              amount: Math.abs(occUsd),
+            });
           }
 
           if (!isOccDone && occDate >= today && (!nextIncomeDate || occDate < nextIncomeDate)) {
@@ -1952,6 +1923,11 @@ export function calculateIncomeAccountBalances(
       amount: number;
     }> = [];
 
+    // To prevent negative balance in the UI for this virtual account,
+    // we will calculate how much of the assigned expenses are covered by existing capital (opening balance + done incomes)
+    // and show it as a virtual inflow.
+    const tempInflows = reqInflowsToDate;
+
     (plan || []).forEach(occ => {
       if (!occ || occ.type === 'income' || occ.type === 'opening_balance' || occ.type === 'rescate_ahorros') return;
       const assignedId = occ.incomeId || occ.ref?.incomeId;
@@ -1972,11 +1948,26 @@ export function calculateIncomeAccountBalances(
       }
     });
 
+    const gap = reqOutflowsToDate - tempInflows;
+    if (gap > 0.001) {
+      const virtualInflow = Math.round(gap * 100) / 100;
+      reqInflowsToDate += virtualInflow;
+      reqPaidMovements.push({
+        date: today,
+        label: 'Capital Existente Aplicado',
+        type: 'income',
+        amount: virtualInflow
+      });
+    }
+
     reqPaidMovements.sort((a, b) => b.date.localeCompare(a.date));
 
     const reqAccountCurrency = (profile.settings?.minBalanceCurrency as CurrencyCode) || 'USD_BCV';
     const rateToReqCurrency = convAmt(1, reqAccountCurrency) || 1;
     const amountInReqCurrency = reqAmount / rateToReqCurrency;
+
+    const rawReqAvailableToday = reqInflowsToDate - reqOutflowsToDate;
+    const reqAvailableToday = Math.abs(rawReqAvailableToday) < 0.01 ? 0 : rawReqAvailableToday;
 
     results.push({
       id: 'required_starting_fund',
@@ -1986,7 +1977,7 @@ export function calculateIncomeAccountBalances(
       currency: reqAccountCurrency,
       totalInflowsToDate: reqInflowsToDate,
       totalOutflowsToDate: reqOutflowsToDate,
-      availableToday: reqInflowsToDate - reqOutflowsToDate,
+      availableToday: reqAvailableToday,
       totalProjectedInflows: reqProjectedInflows,
       totalProjectedOutflows: reqProjectedOutflows,
       projectedBalance: reqProjectedInflows - reqProjectedOutflows,
@@ -1994,7 +1985,6 @@ export function calculateIncomeAccountBalances(
       nextIncomeDate: isOccDone ? null : occDate,
       paidMovements: reqPaidMovements,
     });
-
   }
 
   return results;

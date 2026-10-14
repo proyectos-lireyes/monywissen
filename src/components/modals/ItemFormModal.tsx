@@ -132,6 +132,7 @@ interface ItemFormModalProps {
   type: 'income' | 'expense' | 'debt' | 'saving' | null;
   editIndex: number | null;
   forceOneTime?: boolean;
+  initialIncomeId?: string;
   onClose: () => void;
 }
 
@@ -140,12 +141,13 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
   type,
   editIndex,
   forceOneTime = false,
+  initialIncomeId,
   onClose,
 }) => {
   const { profile, updateProfileData, showToast, validateTransaction, convertAmount, exchangeRates } = useApp();
 
   const projections = React.useMemo(() => calculateProjections(profile, exchangeRates), [profile, exchangeRates]);
-  const incomeBalances = React.useMemo(() => calculateIncomeAccountBalances(profile, projections, convertAmount), [profile, projections, convertAmount]);
+  const incomeBalances = React.useMemo(() => calculateIncomeAccountBalances(profile, projections, exchangeRates, todayStr()), [profile, projections, exchangeRates]);
 
   const formatCurrencyExt = (amt: number, curr?: string) => {
     let sym = '$';
@@ -787,6 +789,8 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           setCategory('');
           setTags(item.tags ? item.tags.join(', ') : '');
           setCurrency(item.currency || 'USD_BCV');
+          setIncomeId(item.incomeId || '');
+          setReceiptImg(item.receiptImg || '');
         }
       } else if (type === 'expense') {
         const item = profile.expenses[editIndex];
@@ -888,9 +892,11 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       setTags('');
       setCurrency('USD_BCV');
       setReceiptImg('');
-      setIncomeId('');
+      const defaultAccId = initialIncomeId || profile.incomes?.find(i => !i.incomeId && i.freq !== 'one-time')?.id || profile.incomes?.[0]?.id || '';
+      setIncomeId(defaultAccId);
+      setMarkAsDone(forceOneTime);
     }
-  }, [isOpen, type, editIndex, forceOneTime]); // Removed profile to prevent reset on every profile update
+  }, [isOpen, type, editIndex, forceOneTime, initialIncomeId, profile.incomes]);
 
   if (!isOpen || !type) return null;
 
@@ -1804,18 +1810,21 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                       <div className="pt-2 pb-2">
                         <label className="flex items-center gap-2 cursor-pointer p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
                           <input type="checkbox" checked={markAsDone} onChange={e => setMarkAsDone(e.target.checked)} className="w-4 h-4 text-emerald-600 rounded" />
-                          <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Marcar como procesado (Listo)</span>
+                          <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Marcar como Pagado / Procesado (Listo)</span>
                         </label>
                       </div>
                     )}
                     
-                    {forceOneTime ? (
-                      <div>
-                        <label className="text-xs font-bold text-slate-500 block">Fecha</label>
+                    {forceOneTime || freq === 'one-time' ? (
+                      <div className="pt-2">
+                        <label className="text-xs font-bold text-slate-500 block mb-1">Fecha de la Transacción</label>
                         <input
                           type="date" value={date} onChange={e => setDate(e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100 h-[38px]"
                         />
+                        <p className="text-[10px] text-slate-400 mt-1 italic">
+                          Esta es una transacción única y no se repetirá.
+                        </p>
                       </div>
                     ) : (
                       <div className="grid grid-cols-2 gap-2">

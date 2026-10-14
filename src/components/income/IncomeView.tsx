@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 
 interface IncomeViewProps {
-  onOpenCreate: (type: 'income', forceOneTime?: boolean) => void;
+  onOpenCreate: (type: 'income' | 'expense' | 'debt' | 'saving', forceOneTime?: boolean, initialIncomeId?: string) => void;
   onOpenEdit: (type: 'income', index: number) => void;
 }
 
@@ -300,7 +300,14 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
                         </td>
 
                         <td className="py-3.5 px-4 text-right">
-                          <div className="flex items-center justify-end gap-1">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => onOpenCreate('expense', true, acc.id)}
+                              className="p-1.5 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-lg transition-colors cursor-pointer"
+                              title={`Registrar gasto desde ${acc.name}`}
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
                             {!isRequiredFundAccount ? (
                               <button
                                 onClick={() => handleDelete(acc.id, acc.name)}
@@ -310,7 +317,7 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             ) : (
-                              <span className="text-xs text-amber-500 font-bold px-2 py-1">🪙</span>
+                              <span className="text-xs text-amber-500 font-bold px-1.5">🪙</span>
                             )}
                           </div>
                         </td>
@@ -320,14 +327,14 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
                       {isExpanded && (
                         <tr className="bg-slate-50/70 dark:bg-slate-800/40">
                           <td colSpan={6} className="p-4 space-y-4">
-                            {/* Historial de Pagos Efectuados desde esta Cuenta */}
+                            {/* Historial de Movimientos Efectuados en esta Cuenta */}
                             <div>
                               <span className="text-[11px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-wide flex items-center gap-1.5 mb-2">
-                                💸 Pagos y Egresos Débitados de {acc.name} ({paidMovements.length}):
+                                💸 Movimientos Registrados en {acc.name} ({paidMovements.length}):
                               </span>
                               {paidMovements.length === 0 ? (
                                 <p className="text-xs text-slate-400 italic bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
-                                  Aún no se han realizado pagos debitados de esta cuenta. Al marcar un gasto, cuota o ahorro como pagado, puedes elegir debitarlo de aquí.
+                                  Aún no se han registrado movimientos procesados en esta cuenta. Al registrar o marcar un ingreso o gasto como listo, se afectará este saldo.
                                 </p>
                               ) : (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
@@ -338,16 +345,31 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
                                           {mov.label}
                                         </span>
                                         <span className="text-[10px] text-slate-400">
-                                          {mov.date} · {mov.type === 'debt' ? '💳 Cuota' : mov.type === 'savings' ? '💰 Ahorro' : '📉 Gasto'}
+                                          {mov.date} · {mov.type === 'income' ? '📈 Ingreso' : mov.type === 'debt' ? '💳 Cuota' : mov.type === 'savings' ? '💰 Ahorro' : '📉 Gasto'}
                                         </span>
                                       </div>
-                                      <span className="font-black text-rose-600 dark:text-rose-400 shrink-0">
-                                        -{formatCurrency(mov.amount)}
+                                      <span className={`font-black shrink-0 ${mov.type === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                                        {mov.type === 'income' ? '+' : '-'}{formatCurrency(mov.amount)}
                                       </span>
                                     </div>
                                   ))}
                                 </div>
                               )}
+                            </div>
+
+                            <div className="flex flex-wrap justify-end gap-2 pt-2">
+                               <button 
+                                 onClick={() => onOpenCreate('income', true, acc.id)}
+                                 className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 text-emerald-600 dark:text-emerald-400 rounded-xl text-[10px] font-black flex items-center gap-1.5 transition-colors border border-emerald-100 dark:border-emerald-800/40"
+                               >
+                                 <Plus className="w-3 h-3" /> + Ingreso en {acc.name}
+                               </button>
+                               <button 
+                                 onClick={() => onOpenCreate('expense', true, acc.id)}
+                                 className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 rounded-xl text-[10px] font-black flex items-center gap-1.5 transition-colors border border-rose-100 dark:border-rose-800/40"
+                               >
+                                 <Plus className="w-3 h-3" /> - Gasto desde {acc.name}
+                               </button>
                             </div>
 
                             {/* Egresos y Compromisos Fijos Asignados a esta cuenta */}

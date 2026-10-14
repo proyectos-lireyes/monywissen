@@ -302,6 +302,7 @@ export interface PlanOccurrence {
     effectiveColor?: string;
     type?: string;
     incomeId?: string;
+    freq?: FrequencyType;
   };
   originalDate: string;
   done: boolean;
@@ -313,10 +314,12 @@ export interface PlanOccurrence {
   isDelayed?: boolean;
   discarded?: boolean;
   insufficientFunds?: boolean;
+  deficitAmt?: number;
   belowCushion?: boolean;
   criticalDelay?: boolean;
   savingsAccumulated?: number;
   isRescueCovered?: boolean;
+  wasPreIncluded?: boolean;
 }
 
 export interface IncomeAccountBalance {
