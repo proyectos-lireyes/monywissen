@@ -202,9 +202,23 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
       setEditingPartialIdx(null);
       setPartialAmt('');
       const isNoAffectRecorded = overrideRecord.noAffectBalance === true || overrideRecord.externalPay === true || overrideRecord.paidPrior === true;
-      setAffectBalance(!isNoAffectRecorded);
-      const isReqFund = refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || occurrence?.label === 'Fondo Requerido para Iniciar' || occurrence?.incomeId === 'required_starting_fund' || overrideRecord.incomeId === 'required_starting_fund';
-      const defaultIncId = isReqFund ? 'required_starting_fund' : (overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId || '');
+      const isReqFund = refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || occurrence?.label === 'Fondo Requerido para Iniciar' || occurrence?.incomeId === 'required_starting_fund' || overrideRecord.incomeId === 'required_starting_fund' || refId === 'initial_required_funding' || occurrence?.incomeId === 'initial_required_funding';
+      let defaultIncId = isReqFund ? 'initial_required_funding' : (overrideRecord.incomeId || occurrence?.incomeId || occurrence?.ref?.incomeId || targetItem?.incomeId || '');
+
+      if (!defaultIncId && !isNoAffectRecorded) {
+        const itemDate = planDate || originalDate || todayStr();
+        const priorIncomes = planForBalances
+          .filter(p => p.type === 'income' && p.amt > 0 && p.ref?.id !== 'required_starting_fund' && p.ref?.id !== 'initial_required_funding')
+          .filter(p => (p.targetDate || p.date || p.originalDate) <= itemDate)
+          .sort((a, b) => (b.targetDate || b.date || b.originalDate).localeCompare(a.targetDate || a.date || a.originalDate));
+
+        if (priorIncomes.length > 0) {
+          defaultIncId = priorIncomes[0].incomeId || priorIncomes[0].ref?.id || '';
+        } else {
+          defaultIncId = 'initial_required_funding';
+        }
+      }
+
       setSelectedIncomeId(isNoAffectRecorded ? '__EXTERNAL__' : defaultIncId);
       if (originalDate) {
         setActualDate(planDate || originalDate);
@@ -358,13 +372,21 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
         ...effectiveUpdates
       };
     }
-    if (idStr.includes('rescate_ahorros')) {
+    if (type === 'rescate_ahorros' || idStr.includes('rescate_ahorros') || idStr.includes('rescue_') || refId?.includes('rescue')) {
       draft.overrides[`rescate_ahorros_${originalDate}`] = {
         ...(draft.overrides[`rescate_ahorros_${originalDate}`] || {}),
         ...effectiveUpdates
       };
-      draft.overrides[`rescate_ahorros_rescate_ahorros_${originalDate}`] = {
-        ...(draft.overrides[`rescate_ahorros_rescate_ahorros_${originalDate}`] || {}),
+      draft.overrides[`rescue_${originalDate}`] = {
+        ...(draft.overrides[`rescue_${originalDate}`] || {}),
+        ...effectiveUpdates
+      };
+      draft.overrides[`rescate_ahorros_rescue_${originalDate}`] = {
+        ...(draft.overrides[`rescate_ahorros_rescue_${originalDate}`] || {}),
+        ...effectiveUpdates
+      };
+      draft.overrides[`rescate_ahorros_rescue_${originalDate}_${originalDate}`] = {
+        ...(draft.overrides[`rescate_ahorros_rescue_${originalDate}_${originalDate}`] || {}),
         ...effectiveUpdates
       };
     }
@@ -644,6 +666,12 @@ const [postponeDate, setPostponeDate] = useState(todayStr());
             delete draft.overrides[k];
           }
         });
+      }
+      if (type === 'rescate_ahorros' || idStr.includes('rescue_') || idStr.includes('rescate_ahorros')) {
+        delete draft.overrides[`rescate_ahorros_${originalDate}`];
+        delete draft.overrides[`rescue_${originalDate}`];
+        delete draft.overrides[`rescate_ahorros_rescue_${originalDate}`];
+        delete draft.overrides[`rescate_ahorros_rescue_${originalDate}_${originalDate}`];
       }
 
       // Update base item in incomes / expenses / debts ONLY if it is a ONE-TIME non-installment item
@@ -1028,12 +1056,12 @@ return (
                   }}
                   className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-bold text-slate-800 dark:text-slate-200"
                 >
-                  <option value="">
-                    ❓ Cuenta Predeterminada ({profile.incomes[0]?.name ? `Se descontará de ${profile.incomes[0].name}` : 'indicar origen'})
+                  <option value="" disabled={!selectedIncomeId}>
+                    ❓ Selecciona la cuenta de origen / receptora
                   </option>
-                  {(refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || occurrence?.incomeId === 'required_starting_fund' || overrideRecord.incomeId === 'required_starting_fund' || balanceMap['required_starting_fund'] !== undefined) && (
-                    <option value="required_starting_fund">
-                      🪙 Fondo Requerido — {formatCurrency(balanceMap['required_starting_fund'] ?? 0)}
+                  {(isReqStartingFund || refId === 'initial_required_funding' || occurrence?.incomeId === 'initial_required_funding') && (
+                    <option value="initial_required_funding">
+                      🪙 Dinero Necesario para Iniciar el Plan
                     </option>
                   )}
                   {(profile.incomes || []).map(inc => {
@@ -1081,12 +1109,12 @@ return (
                 }}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-xs text-slate-800 dark:text-slate-100"
               >
-                <option value="">
-                  ❓ Cuenta Predeterminada ({profile.incomes[0]?.name ? `Se descontará de ${profile.incomes[0].name}` : 'indicar origen'})
+                <option value="" disabled={!selectedIncomeId}>
+                  ❓ Selecciona la cuenta de origen / receptora
                 </option>
-                {(refId === 'required_starting_fund' || occurrence?.ref?.id === 'required_starting_fund' || occurrence?.incomeId === 'required_starting_fund' || overrideRecord.incomeId === 'required_starting_fund' || balanceMap['required_starting_fund'] !== undefined) && (
-                  <option value="required_starting_fund">
-                    🪙 Fondo Requerido — {formatCurrency(balanceMap['required_starting_fund'] ?? 0)}
+                {(isReqStartingFund || refId === 'initial_required_funding' || occurrence?.incomeId === 'initial_required_funding') && (
+                  <option value="initial_required_funding">
+                    🪙 Dinero Necesario para Iniciar el Plan
                   </option>
                 )}
                 {(profile.incomes || []).map(inc => {

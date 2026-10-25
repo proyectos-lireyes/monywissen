@@ -215,34 +215,44 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
   const handleInitialPaidCuotasChange = (valStr: string) => {
     const val = parseInt(valStr, 10) || 0;
     setInitialPaidCuotas(valStr);
-    
-    if (val > 0) {
-      const debtId = editIndex !== null && profile.debts[editIndex] ? profile.debts[editIndex].id : 'preview';
-      const idWithout = debtId.replace(/^debt_/, '');
-      const idWith = debtId.startsWith('debt_') ? debtId : 'debt_' + debtId;
-      
-      updateProfileData(draft => {
-        draft.overrides = draft.overrides || {};
-        for (let k = 1; k <= val; k++) {
-          const possibleKeys = [
-            `${debtId}_${k}`,
-            `debt_${debtId}_cuota_${k}`,
-            `${idWithout}_${k}`,
-            `debt_${idWithout}_cuota_${k}`,
-            `${idWith}_${k}`,
-            `debt_${idWith}_cuota_${k}`
-          ];
-          possibleKeys.forEach(key => {
-            if (draft.overrides[key]) {
+
+    const debtId = editIndex !== null && profile.debts[editIndex] ? profile.debts[editIndex].id : 'preview';
+    const idWithout = debtId.replace(/^debt_/, '');
+    const idWith = debtId.startsWith('debt_') ? debtId : 'debt_' + debtId;
+
+    updateProfileData(draft => {
+      if (editIndex !== null && draft.debts[editIndex]) {
+        draft.debts[editIndex].initialPaidCuotas = val;
+      }
+      draft.overrides = draft.overrides || {};
+      const totalInst = parseInt(String(installments || 999), 10);
+      for (let k = 1; k <= totalInst; k++) {
+        const primaryKey = `${debtId}_${k}`;
+        const keyWithout = `${idWithout}_${k}`;
+        const keyWith = `${idWith}_${k}`;
+
+        if (k <= val) {
+          const updates = { done: true, paidPrior: true };
+          draft.overrides[primaryKey] = { ...(draft.overrides[primaryKey] || {}), ...updates };
+          delete draft.overrides[primaryKey].explicitUnpaid;
+          draft.overrides[keyWithout] = { ...(draft.overrides[keyWithout] || {}), ...updates };
+          delete draft.overrides[keyWithout].explicitUnpaid;
+          draft.overrides[keyWith] = { ...(draft.overrides[keyWith] || {}), ...updates };
+          delete draft.overrides[keyWith].explicitUnpaid;
+        } else {
+          [primaryKey, keyWithout, keyWith].forEach(key => {
+            if (draft.overrides[key] && draft.overrides[key].paidPrior) {
+              delete draft.overrides[key].done;
+              delete draft.overrides[key].paidPrior;
               delete draft.overrides[key].explicitUnpaid;
-              delete draft.overrides[key].isPaid;
-              draft.overrides[key].done = true;
-              draft.overrides[key].paidPrior = true;
+              if (Object.keys(draft.overrides[key]).length === 0) {
+                delete draft.overrides[key];
+              }
             }
           });
         }
-      });
-    }
+      }
+    });
   };
 
   const handleDebtTypeSelect = (selected: string) => {
@@ -363,6 +373,18 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       if (type !== 'debt' && type !== 'income' && type !== 'expense') return [];
       if (!parseFloat(String(balance || amount))) return [];
 
+      const rawOverrides = profile.overrides || {};
+      const activeOverrides: Record<string, any> = {};
+      if (editIndex !== null) {
+        Object.assign(activeOverrides, rawOverrides);
+      } else {
+        Object.keys(rawOverrides).forEach(k => {
+          if (!k.startsWith('debt_preview_') && !k.startsWith('preview_')) {
+            activeOverrides[k] = rawOverrides[k];
+          }
+        });
+      }
+
       if (type === 'income' || type === 'expense') {
         const itemId = editIndex !== null && profile[type === 'income' ? 'incomes' : 'expenses'][editIndex] ? profile[type === 'income' ? 'incomes' : 'expenses'][editIndex].id : 'preview';
         
@@ -400,7 +422,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
           expenses: type === 'expense' ? [dummyItem] : [],
           debts: [],
           savingsList: [],
-          overrides: profile.overrides || {}
+          overrides: activeOverrides
         };
 
         const plan = calculateProjections(dummyProfile as any, exchangeRates, { includeDiscarded: true });
@@ -409,7 +431,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
         
         return occurrences.map((c, i) => {
           const itemKey = `${type}_${itemId}_${c.originalDate || c.date}`;
-          const ov = (profile.overrides || {})[itemKey] || {};
+          const ov = activeOverrides[itemKey] || {};
           const isDiscarded = !!c.discarded || !!ov.discarded;
           const isPostponed = !c.done && (c.userPostponed || Boolean(ov.userPostponed) || Boolean(c.targetDate && c.originalDate && c.targetDate !== c.originalDate));
           return {
@@ -471,7 +493,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       apr: parseFloat(String(apr)) || 0
     };
     
-    const plan = calculateAmortizationPlan(dummyItem, profile.overrides || {}, profile.settings.customDebts || [], undefined, exchangeRates);
+    const plan = calculateAmortizationPlan(dummyItem, activeOverrides, profile.settings.customDebts || [], undefined, exchangeRates);
     
     return plan.map((c, i) => {
       const isPaid = c.isPaid || c.isCoveredByExplicit || c.isCoveredBySequential;
@@ -484,7 +506,7 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
         isPaid,
         paidAmount: isPaid ? c.expectedAmount : 0, // Simplifying preview
         paidCurrency: currency,
-        ov: c.ov || (profile.overrides || {})[c.key] || {},
+        ov: c.ov || activeOverrides[c.key] || {},
         isCoveredBySequential: c.isCoveredBySequential,
         isCoveredByExplicit: c.isCoveredByExplicit,
         requiredPay: c.requiredPay
@@ -748,24 +770,8 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
     showToast(editingPayment.isPaidState === false ? 'Fecha reprogramada' : 'Registro de pago actualizado', '✅');
   };
 
-  const hasCleanedPreview = React.useRef(false);
-
   useEffect(() => {
-    if (!isOpen) {
-      hasCleanedPreview.current = false;
-    }
     if (!isOpen || !type) return;
-
-    if (type === 'debt' && editIndex === null && !hasCleanedPreview.current) {
-      hasCleanedPreview.current = true;
-      updateProfileData(draft => {
-        if (draft.overrides) {
-          Object.keys(draft.overrides).forEach(k => {
-            if (k.startsWith('debt_preview_') || k.startsWith('preview_')) delete draft.overrides[k];
-          });
-        }
-      });
-    }
 
     if (editIndex !== null) {
       if (type === 'income') {
@@ -892,7 +898,9 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
       setTags('');
       setCurrency('USD_BCV');
       setReceiptImg('');
-      const defaultAccId = initialIncomeId || profile.incomes?.find(i => !i.incomeId && i.freq !== 'one-time')?.id || profile.incomes?.[0]?.id || '';
+      const defaultAccId = (type === 'income' && (!forceOneTime && freq !== 'one-time'))
+        ? '' 
+        : (initialIncomeId || profile.incomes?.find(i => !i.incomeId && i.freq !== 'one-time')?.id || profile.incomes?.[0]?.id || '');
       setIncomeId(defaultAccId);
       setMarkAsDone(forceOneTime);
     }
@@ -1349,10 +1357,11 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                     onChange={e => setIncomeId(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
                   >
-                    <option value="">❓ Sin cuenta especificada (Indicar al momento de pagar)</option>
-                    {incomeBalances.map(b => (
+                    <option value="">❓ Sin cuenta específica (Indicar al momento de pagar)</option>
+                    <option value="initial_required_funding">🪙 Dinero Necesario para Iniciar el Plan</option>
+                    {incomeBalances.filter(b => b.id !== 'required_starting_fund' && b.id !== 'initial_required_funding').map(b => (
                       <option key={b.id} value={b.id}>
-                        {b.id === 'required_starting_fund' ? '🪙' : '🏦'} {b.name} — Disponible: {formatCurrencyExt(b.availableToday, b.currency || 'USD_BCV')}
+                        🏦 {b.name} — Disponible: {formatCurrency(b.availableToday)}
                       </option>
                     ))}
                   </select>
@@ -1739,10 +1748,11 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                                 onChange={e => setIncomeId(e.target.value)}
                                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-900 dark:text-slate-100"
                               >
-                                <option value="">❓ Sin cuenta especificada (Indicar al momento de pagar cada cuota)</option>
-                                {incomeBalances.map(b => (
+                                <option value="">❓ Sin cuenta específica (Indicar al momento de pagar cada cuota)</option>
+                                <option value="initial_required_funding">🪙 Dinero Necesario para Iniciar el Plan</option>
+                                {incomeBalances.filter(b => b.id !== 'required_starting_fund' && b.id !== 'initial_required_funding').map(b => (
                                   <option key={b.id} value={b.id}>
-                                    {b.id === 'required_starting_fund' ? '🪙' : '🏦'} {b.name} — Disponible: {formatCurrencyExt(b.availableToday, b.currency || 'USD_BCV')}
+                                    🏦 {b.name} — Disponible: {formatCurrency(b.availableToday)}
                                   </option>
                                 ))}
                               </select>
@@ -1793,14 +1803,16 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
                           className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-900 dark:text-slate-100"
                         >
                           <option value="">❓ Sin cuenta específica ({type === 'income' ? 'Creará su propia cuenta' : 'Indicar al momento de pagar'})</option>
+                          <option value="initial_required_funding">🪙 Dinero Necesario para Iniciar el Plan</option>
                           {incomeBalances.filter(b => {
+                            if (b.id === 'required_starting_fund' || b.id === 'initial_required_funding') return false;
                             if (type === 'income' && editIndex !== null) {
                               return b.id !== profile.incomes[editIndex]?.id;
                             }
                             return true;
                           }).map(b => (
                             <option key={b.id} value={b.id}>
-                              {b.id === 'required_starting_fund' ? '🪙' : '🏦'} {b.name} — Disponible: {formatCurrencyExt(b.availableToday, b.currency || 'USD_BCV')}
+                              🏦 {b.name} — Disponible: {formatCurrency(b.availableToday)}
                             </option>
                           ))}
                         </select>

@@ -88,7 +88,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
   const getAccountSourceInfo = (e: any) => {
     if (e.type === 'opening_balance') return null;
     const isRescate = e.type === 'rescate_ahorros';
-    if (isRescate) return null;
+    if (isRescate) {
+      const accountId = e.incomeId || e.ref?.incomeId;
+      const account = accountId ? (profile.incomes || []).find(i => i.id === accountId) : null;
+      return {
+        label: `Entra en: ${account ? account.name : 'Cuenta de ingresos'}`,
+        icon: '🛟',
+        color: 'text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-800/50 font-medium'
+      };
+    }
 
     if (e.noAffectBalance) {
       return {
@@ -98,19 +106,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onOpenDetails }) => 
       };
     }
 
-    const isRequiredFund = e.ref?.id === 'required_starting_fund' || e.incomeId === 'required_starting_fund' || e.label === 'Fondo Requerido para Iniciar' || (typeof e.label === 'string' && e.label.toLowerCase().includes('fondo requerido'));
-    if (isRequiredFund) {
-      return {
-        label: `${e.done ? 'Depositado en' : 'Entra en'}: Fondo Requerido`,
-        icon: '🪙',
-        color: 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/50'
-      };
-    }
-
     const accountId = e.incomeId || e.ref?.incomeId;
-    if (accountId === 'required_starting_fund') {
+
+    if (accountId === 'required_starting_fund' || accountId === 'initial_required_funding') {
       return {
-        label: `${e.done ? 'Pagado desde' : 'Se debitará de'}: Fondo Requerido`,
+        label: `${e.done ? 'Pagado desde' : 'Se debitará de'}: Dinero Necesario para Iniciar`,
         icon: '🪙',
         color: 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/50'
       };

@@ -870,7 +870,9 @@ export function calculateProjections(
       finalDate = ov.actualDate;
     }
 
-    const resolvedIncomeId = ov?.incomeId || ref.incomeId || (type === 'income' ? ref.id : undefined);
+    const isRecurringIncome = type === 'income' && ref.freq && ref.freq !== 'one-time';
+    const isPreIncome = !firstRealIncomeDate || finalDate < firstRealIncomeDate;
+    const resolvedIncomeId = isRecurringIncome ? ref.id : (ov?.incomeId || ref.incomeId || (type === 'income' ? ref.id : (isPreIncome ? 'initial_required_funding' : undefined)));
 
     const partials = (ov && ov.partials) ? ov.partials : [];
 
@@ -941,14 +943,7 @@ export function calculateProjections(
       }
 
       const isOutflow = type !== 'income' && type !== 'opening_balance' && type !== 'rescate_ahorros';
-      let finalIncomeId = resolvedIncomeId;
-      
-      // Auto-assign early unassigned outflows to required_starting_fund if they occur before the first future income
-      // Do NOT auto-route one-time transactions so they debit normally from the user's base account
-      const isOneTime = (ref.freq === 'one-time' || !ref.freq) && (!ref.installments || parseInt(String(ref.installments), 10) <= 1);
-      if (isOutflow && !finalIncomeId && firstRealIncomeDate && finalDate < firstRealIncomeDate && !isOneTime) {
-        finalIncomeId = 'required_starting_fund';
-      }
+      const finalIncomeId = resolvedIncomeId;
 
       const isItemDone = isDiscarded ? false : done;
       const occurrence = {
@@ -975,7 +970,9 @@ export function calculateProjections(
   };
 
   // 1. Process Incomes
-  (profile.incomes || []).forEach(inc => {
+  (profile.incomes || [])
+    .filter(inc => inc.id !== 'required_starting_fund' && inc.id !== 'initial_required_funding')
+    .forEach(inc => {
     const effStart = (inc.hasCustomStart && inc.start && inc.start > startD) ? inc.start : startD;
     const effEnd = inc.end || endD;
 
@@ -1191,69 +1188,9 @@ export function calculateProjections(
     }
   });
 
-  const allDatesList = datesBetween(startD, endD);
-
-  // 5. Calculate required starting fund to cover expenses + cushion before the first income date
-  // This is a mini-simulation to find the maximum deficit encountered until the first "Not Done" income.
-  let simGapBal = balance; // starts with opening balance
-  let gapMaxDeficit = 0;
   const cushionCurrency = settings.minBalanceCurrency || settings.displayCurrency || 'USD';
-  const cushionInBase = convAmt(settings.minBalance || 0, cushionCurrency);
 
-  for (const d of allDatesList) {
-    const dayEvents = map[d] || [];
-    const sorted = [...dayEvents].sort((a,b) => {
-      const aInc = (a.amt || 0) > 0 ? 1 : 0;
-      const bInc = (b.amt || 0) > 0 ? 1 : 0;
-      return bInc - aInc;
-    });
-    
-    let hitNotDoneIncome = false;
-    for (const e of sorted) {
-      const isIncome = (e.amt || 0) > 0 && e.type === 'income' && e.ref?.id !== 'required_starting_fund';
-      if (isIncome) {
-        if (!e.done) {
-          hitNotDoneIncome = true;
-          break;
-        } else {
-          simGapBal = Math.round((simGapBal + (e.amt || 0)) * 100) / 100;
-        }
-      } else if ((e.amt || 0) < 0) {
-        if (!e.noAffectBalance) {
-          simGapBal = Math.round((simGapBal + (e.amt || 0)) * 100) / 100;
-          const isOneTime = e.ref?.freq === 'one-time' || e.type === 'savings';
-          const threshold = isOneTime ? 0 : cushionInBase;
-          const deficit = threshold - simGapBal;
-          if (deficit > gapMaxDeficit) gapMaxDeficit = deficit;
-        }
-      }
-    }
-    if (hitNotDoneIncome) break;
-  }
-
-  const requiredInitial = Math.max(0, Math.round(gapMaxDeficit * 100) / 100);
-
-  const key = `income_required_starting_fund_${startD}`;
-  const matchKey = Object.keys(overrides).find(k => k === key) || Object.keys(overrides).find(k => k.startsWith('income_required_starting_fund_'));
-  const ov = (matchKey ? overrides[matchKey] : null) || overrides[key] || {};
-
-  if (requiredInitial > 0 || (ov && !ov.discarded && (ov.done || ov.isCustomAmt))) {
-      const isDone = ov.done !== undefined ? !!ov.done : false;
-      const amtToInject = (ov && ov.amt !== undefined && ov.isCustomAmt) ? parseFloat(String(ov.amt)) : requiredInitial;
-      if (!map[startD]) map[startD] = [];
-      map[startD].unshift({
-        label: 'Fondo Requerido para Iniciar',
-        type: 'income',
-        amt: amtToInject,
-        ref: { id: 'required_starting_fund', name: 'Fondo Requerido', effectiveColor: '#f59e0b' },
-        incomeId: 'required_starting_fund',
-        originalDate: startD,
-        targetDate: startD,
-        done: isDone,
-      });
-  }
-
-  // 6. Day-by-Day Cash Flow Simulation
+  // 5. Day-by-Day Cash Flow Simulation
   const plan: PlanOccurrence[] = [];
   let savingsAccumulated = (profile.savings?.current || 0) + (profile.savings?.digital || 0);
   const targetMin = convAmt(settings.minBalance || 0, cushionCurrency);
@@ -1261,20 +1198,70 @@ export function calculateProjections(
   let realIncomeCount = 0;
   let hasRescuedInCurrentCycle = false;
 
-  // Add opening balance record on startD
-  plan.push({
-    date: startD,
-    label: 'Saldo Inicial Base',
-    type: 'opening_balance',
-    amt: balance,
-    ref: { id: 'opening_balance', name: 'Saldo Base', effectiveColor: '#94a3b8' },
-    originalDate: startD,
-    targetDate: startD,
-    done: true,
-    balance: balance,
-    isDelayed: false,
-    savingsAccumulated: savingsAccumulated
-  });
+  // Determine first real income date and total expenses before first income
+  let targetFirstIncomeDate: string | null = null;
+  const sortedAllDates = Object.keys(map).sort();
+  for (const d of sortedAllDates) {
+    const inc = (map[d] || []).find(e => (e.amt || 0) > 0 && e.type === 'income' && e.ref?.id !== 'required_starting_fund');
+    if (inc) {
+      targetFirstIncomeDate = d;
+      break;
+    }
+  }
+
+  let totalExpensesBeforeFirstIncome = 0;
+  for (const d of sortedAllDates) {
+    if (targetFirstIncomeDate && d >= targetFirstIncomeDate) break;
+    for (const e of (map[d] || [])) {
+      if (d === targetFirstIncomeDate && e.type === 'income') continue;
+      if ((e.amt || 0) < 0 && (e.type === 'expense' || e.type === 'debt' || e.type === 'savings') && !e.noAffectBalance) {
+        totalExpensesBeforeFirstIncome += Math.abs(e.amt || 0);
+      }
+    }
+  }
+
+  totalExpensesBeforeFirstIncome = Math.round(totalExpensesBeforeFirstIncome * 100) / 100;
+
+  // Add opening balance or required initial funding record on startD
+  if (totalExpensesBeforeFirstIncome > 0) {
+    const initKey = `opening_balance_initial_required_funding_${startD}`;
+    const initOv = overrides[initKey] || overrides[`initial_required_funding_${startD}`] || {};
+    const isInitDone = Boolean(initOv.done);
+    const requiredAmt = totalExpensesBeforeFirstIncome;
+
+    balance = requiredAmt;
+
+    plan.push({
+      date: startD,
+      label: '🪙 Dinero Necesario para Iniciar el Plan',
+      type: 'opening_balance',
+      amt: requiredAmt,
+      ref: { id: 'initial_required_funding', name: 'Dinero Necesario para Iniciar el Plan', effectiveColor: '#f59e0b' },
+      originalDate: startD,
+      targetDate: startD,
+      done: isInitDone, // PENDIENTE por defecto para indicar si se dispone de él
+      balance: balance,
+      isDelayed: false,
+      savingsAccumulated: savingsAccumulated
+    });
+  } else {
+    balance = 0;
+    plan.push({
+      date: startD,
+      label: 'Saldo Inicial Base',
+      type: 'opening_balance',
+      amt: 0,
+      ref: { id: 'opening_balance', name: 'Saldo Base', effectiveColor: '#94a3b8' },
+      originalDate: startD,
+      targetDate: startD,
+      done: true,
+      balance: 0,
+      isDelayed: false,
+      savingsAccumulated: savingsAccumulated
+    });
+  }
+
+  const allDatesList = Object.keys(map).sort();
 
   for (let i = 0; i < allDatesList.length; i++) {
     const d = allDatesList[i];
@@ -1300,19 +1287,14 @@ export function calculateProjections(
       }
     }
 
-    // 1. Process incomes and sweep excess to auto_savings JUST BEFORE income arrives
+    // 1. Process incomes and sweep surplus above cushion to savings JUST BEFORE income arrives
     let sweptToday = false;
-    const enableAutoSavings = settings.enableAutoSavings !== false;
     for (const inc of incomeEvents) {
-      const isRealIncome = inc.ref?.id !== 'required_starting_fund';
+      const isRealIncome = inc.ref?.id !== 'required_starting_fund' && inc.ref?.id !== 'initial_required_funding';
       if (isRealIncome) {
-        realIncomeCount++;
-        hasEncounteredFirstIncome = true;
-        hasRescuedInCurrentCycle = false;
-
-        // Auto-savings: JUST BEFORE the new income, sweep previous cycle's surplus above cushion
-        if (enableAutoSavings && !sweptToday && realIncomeCount > 1) {
-          const excess = Math.max(0, Math.round((balance - targetMin) * 100) / 100);
+        // Auto-savings: JUST BEFORE a subsequent real income enters (after the first income), sweep any surplus above the cushion into savings
+        if (hasEncounteredFirstIncome && !sweptToday && targetMin >= 0 && balance > targetMin + 0.001) {
+          const excess = Math.round((balance - targetMin) * 100) / 100;
 
           if (excess > 0.001) {
             const autoKey = `savings_auto_savings_${d}`;
@@ -1320,7 +1302,7 @@ export function calculateProjections(
             const ov = overrides[autoKey] || overrides[autoLegacyKey] || {};
 
             if (!ov || !ov.discarded) {
-              const isDone = Boolean(ov?.done);
+              const isDone = Boolean(ov?.done ?? false);
               const actualDate = (ov && ov.actualDate) ? ov.actualDate : d;
               
               let saveAmt = excess;
@@ -1339,10 +1321,10 @@ export function calculateProjections(
 
                 plan.push({
                   date: actualDate,
-                  label: 'Ahorro Automático Sugerido',
+                  label: `💡 Excedente a Ahorros (Sugerencia: ${formatCurrency(saveAmt)})`,
                   type: 'savings',
                   amt: -saveAmt,
-                  ref: { id: 'auto_savings', name: 'Ahorro Automático Sugerido', effectiveColor: '#10b981' },
+                  ref: { id: 'auto_savings', name: 'Excedente a Ahorros', effectiveColor: '#10b981' },
                   originalDate: d,
                   targetDate: actualDate,
                   done: isDone,
@@ -1358,6 +1340,10 @@ export function calculateProjections(
           }
           sweptToday = true;
         }
+
+        realIncomeCount++;
+        hasEncounteredFirstIncome = true;
+        hasRescuedInCurrentCycle = false;
       }
 
       if (!inc.noAffectBalance) {
@@ -1381,6 +1367,139 @@ export function calculateProjections(
 
 
     // 3. Process today's non-income events (expenses, debt payments, savings)
+    // Period-level Consolidated Savings Rescue:
+    // When inside an income cycle (after a real income has entered), look ahead to find the peak deficit
+    // across the entire cycle (until the next income) and execute ONE single consolidated rescue transaction
+    // on the exact date where the shortfall begins.
+    let rescateAmtTotal = 0;
+
+    if (hasEncounteredFirstIncome && savingsAccumulated > 0.001) {
+      if (!hasRescuedInCurrentCycle) {
+        // Look ahead across the current income cycle to find the peak deficit and the first shortfall date
+        let tempBal = balance;
+        let minTempBal = balance;
+        let firstShortfallDate: string | null = null;
+
+        for (let j = i; j < allDatesList.length; j++) {
+          const dj = allDatesList[j];
+          const eventsOnDj = map[dj] || [];
+
+          // Stop lookahead if a future real income enters (start of next cycle)
+          if (j > i) {
+            const hasFutureIncome = eventsOnDj.some(e => (e.amt || 0) > 0 && e.type === 'income' && e.ref?.id !== 'required_starting_fund' && e.ref?.id !== 'initial_required_funding');
+            if (hasFutureIncome) break;
+          }
+
+          let outflowsOnDj = 0;
+          eventsOnDj.forEach(e => {
+            if ((e.amt || 0) < 0 && e.type !== 'income' && e.type !== 'savings' && !e.noAffectBalance) {
+              outflowsOnDj += Math.abs(e.amt || 0);
+            }
+          });
+
+          tempBal = Math.round((tempBal - outflowsOnDj) * 100) / 100;
+          if (tempBal < minTempBal) {
+            minTempBal = tempBal;
+            if (!firstShortfallDate && tempBal < -0.01) {
+              firstShortfallDate = dj;
+            }
+          }
+        }
+
+        // If a shortfall exists in this cycle and TODAY is the date the shortfall begins (or has begun)
+        if (minTempBal < -0.01 && (firstShortfallDate === d || (firstShortfallDate && firstShortfallDate <= d))) {
+          const cycleDeficit = Math.abs(minTempBal);
+          rescateAmtTotal = Math.min(savingsAccumulated, cycleDeficit);
+          rescateAmtTotal = Math.round(rescateAmtTotal * 100) / 100;
+
+          const rescueKey = `rescate_ahorros_${d}`;
+          const rescueLegacyKey = `rescue_${d}`;
+          const rescueOv = overrides[rescueKey] || overrides[rescueLegacyKey] || overrides[`rescate_ahorros_rescue_${d}_${d}`] || overrides[`rescue_${d}_${d}`] || overrides[`rescate_ahorros_rescue_${d}`] || {};
+
+          if (!rescueOv.discarded) {
+            if (rescueOv.amt !== undefined) {
+              rescateAmtTotal = Math.min(savingsAccumulated, Math.abs(parseFloat(String(rescueOv.amt))));
+              rescateAmtTotal = Math.round(rescateAmtTotal * 100) / 100;
+            }
+
+            if (rescateAmtTotal > 0.001) {
+              savingsAccumulated = Math.round((savingsAccumulated - rescateAmtTotal) * 100) / 100;
+              balance = Math.round((balance + rescateAmtTotal) * 100) / 100;
+              if (Math.abs(balance) < 0.001) balance = 0;
+
+              const isDone = rescueOv.done !== undefined ? Boolean(rescueOv.done) : (expenseEvents.length === 0 || expenseEvents.every(e => e.done));
+
+              const rescuePriorInc = plan
+                .filter(p => p.type === 'income' && p.amt > 0 && p.ref?.id !== 'required_starting_fund' && p.ref?.id !== 'initial_required_funding')
+                .filter(p => (p.targetDate || p.date || p.originalDate) <= d)
+                .sort((a, b) => (b.targetDate || b.date || b.originalDate).localeCompare(a.targetDate || a.date || a.originalDate))[0];
+              const rescueIncId = rescueOv.incomeId || rescuePriorInc?.incomeId || rescuePriorInc?.ref?.id;
+
+              plan.push({
+                date: d,
+                originalDate: d,
+                targetDate: d,
+                label: 'Rescate de Ahorros',
+                type: 'rescate_ahorros',
+                amt: rescateAmtTotal,
+                incomeId: rescueIncId,
+                balance,
+                savingsAccumulated,
+                done: isDone,
+                ref: { id: `rescue_${d}`, name: 'Rescate de Ahorros', effectiveColor: '#8b5cf6', incomeId: rescueIncId }
+              });
+
+              hasRescuedInCurrentCycle = true;
+            }
+          }
+        }
+      } else {
+        // Fallback: if balance still drops below 0 later in the cycle due to unplanned extra expense, rescue remaining balance if savings available
+        let totalOutflowOnDay = 0;
+        for (const exp of expenseEvents) {
+          if (!exp.noAffectBalance && exp.type !== 'savings' && (exp.amt || 0) < 0) {
+            totalOutflowOnDay += Math.abs(exp.amt || 0);
+          }
+        }
+        const projectedEndBal = Math.round((balance - totalOutflowOnDay) * 100) / 100;
+        if (projectedEndBal < -0.01) {
+          const needed = Math.abs(projectedEndBal);
+          rescateAmtTotal = Math.min(savingsAccumulated, needed);
+          rescateAmtTotal = Math.round(rescateAmtTotal * 100) / 100;
+
+          const rescueKey = `rescate_ahorros_${d}`;
+          const rescueLegacyKey = `rescue_${d}`;
+          const rescueOv = overrides[rescueKey] || overrides[rescueLegacyKey] || overrides[`rescate_ahorros_rescue_${d}_${d}`] || overrides[`rescue_${d}_${d}`] || overrides[`rescate_ahorros_rescue_${d}`] || {};
+
+          if (!rescueOv.discarded && rescateAmtTotal > 0.001) {
+            savingsAccumulated = Math.round((savingsAccumulated - rescateAmtTotal) * 100) / 100;
+            balance = Math.round((balance + rescateAmtTotal) * 100) / 100;
+            if (Math.abs(balance) < 0.001) balance = 0;
+
+            const rescuePriorInc = plan
+              .filter(p => p.type === 'income' && p.amt > 0 && p.ref?.id !== 'required_starting_fund' && p.ref?.id !== 'initial_required_funding')
+              .filter(p => (p.targetDate || p.date || p.originalDate) <= d)
+              .sort((a, b) => (b.targetDate || b.date || b.originalDate).localeCompare(a.targetDate || a.date || a.originalDate))[0];
+            const rescueIncId = rescueOv.incomeId || rescuePriorInc?.incomeId || rescuePriorInc?.ref?.id;
+
+            plan.push({
+              date: d,
+              originalDate: d,
+              targetDate: d,
+              label: 'Rescate de Ahorros',
+              type: 'rescate_ahorros',
+              amt: rescateAmtTotal,
+              incomeId: rescueIncId,
+              balance,
+              savingsAccumulated,
+              done: rescueOv.done !== undefined ? Boolean(rescueOv.done) : (expenseEvents.length === 0 || expenseEvents.every(e => e.done)),
+              ref: { id: `rescue_${d}`, name: 'Rescate de Ahorros', effectiveColor: '#8b5cf6', incomeId: rescueIncId }
+            });
+          }
+        }
+      }
+    }
+
     for (const exp of expenseEvents) {
       if (!exp.noAffectBalance) {
         balance = Math.round((balance + (exp.amt || 0)) * 100) / 100;
@@ -1393,35 +1512,6 @@ export function calculateProjections(
 
       balance = Math.round(balance * 100) / 100;
       if (Math.abs(balance) < 0.001) balance = 0;
-
-      // Real overdraft / deficit handling:
-      // If cash drops below zero (balance < -0.01), draw strictly what is needed from savings to cover the gap
-      let rescateAmt = 0;
-      if (balance < -0.01 && savingsAccumulated > 0.001 && exp.type !== 'savings') {
-        const needed = Math.abs(balance);
-        rescateAmt = Math.min(savingsAccumulated, needed);
-        rescateAmt = Math.round(rescateAmt * 100) / 100;
-        
-        if (rescateAmt > 0) {
-          savingsAccumulated = Math.round((savingsAccumulated - rescateAmt) * 100) / 100;
-          balance = Math.round((balance + rescateAmt) * 100) / 100;
-          if (Math.abs(balance) < 0.001) balance = 0;
-
-          // Push the rescate event so it maps to the purple bar and shows in transactions
-          plan.push({
-            date: d,
-            originalDate: d,
-            targetDate: d,
-            label: `Rescate de Ahorros (${exp.label})`,
-            type: 'rescate_ahorros',
-            amt: rescateAmt,
-            balance,
-            savingsAccumulated,
-            done: !!exp.done,
-            ref: { id: `rescue_${d}_${exp.ref?.id || ''}`, name: 'Rescate de Ahorros', effectiveColor: '#8b5cf6' }
-          });
-        }
-      }
 
       const totalLiquidity = (savingsAccumulated || 0) + balance;
       const isInsufficient = balance < -0.01 && totalLiquidity <= 0.001;
@@ -1438,7 +1528,7 @@ export function calculateProjections(
         belowCushion: isBelowCush,
         criticalDelay: !exp.done && (isInsufficient || isBelowCush),
         savingsAccumulated,
-        isRescueCovered: rescateAmt > 0,
+        isRescueCovered: rescateAmtTotal > 0,
       });
     }
   }
@@ -1734,41 +1824,41 @@ export function calculateIncomeAccountBalances(
   };
 
 
-  const incomes = profile.incomes || [];
+  const incomes = (profile.incomes || []).filter(inc => inc.id !== 'required_starting_fund' && inc.id !== 'initial_required_funding');
 
   if (incomes.length === 0) return [];
 
   const openingBalCurrency = profile.settings?.openingBalanceCurrency || 'USD';
   const initialOpeningBalanceUsd = convAmt(Number(profile.settings?.openingBalance) || 0, openingBalCurrency);
 
-  const recurringIncomes = incomes.filter(inc => inc.freq !== 'one-time');
-  const baseIncomes = recurringIncomes.length > 0 
-    ? recurringIncomes.filter(inc => !inc.incomeId)
-    : incomes.filter(inc => !inc.incomeId);
+  const baseIncomes = incomes.filter(inc => {
+    if (inc.freq && inc.freq !== 'one-time') return true;
+    if (!inc.incomeId || inc.incomeId === '' || inc.incomeId === inc.id) return true;
+    return false;
+  });
   const validIncomeIds = new Set(baseIncomes.map(i => i.id));
 
   const results: IncomeAccountBalance[] = baseIncomes.map((inc, index) => {
-    // Initial opening balance is allocated to the primary/first income account by default
-    const openingAmtUsd = index === 0 ? initialOpeningBalanceUsd : 0;
+    const openingAmtUsd = 0;
     
-    let totalInflowsToDate = openingAmtUsd;
-    let totalProjectedInflows = openingAmtUsd;
+    let totalInflowsToDate = 0;
+    let totalProjectedInflows = 0;
 
     let nextIncomeDate: string | null = null;
 
     // Count items explicitly configured with this income as funding source
     let assignedItemsCount = 0;
     (profile.expenses || []).forEach(e => {
-      if (e.incomeId === inc.id) assignedItemsCount++;
+      if (e.incomeId && e.incomeId === inc.id && e.incomeId !== 'required_starting_fund') assignedItemsCount++;
     });
     (profile.debts || []).forEach(d => {
-      if (d.incomeId === inc.id) assignedItemsCount++;
+      if (d.incomeId && d.incomeId === inc.id && d.incomeId !== 'required_starting_fund') assignedItemsCount++;
     });
     (profile.savingsList || []).forEach(s => {
-      if (s.incomeId === inc.id) assignedItemsCount++;
+      if (s.incomeId && s.incomeId === inc.id && s.incomeId !== 'required_starting_fund') assignedItemsCount++;
     });
     (profile.incomes || []).forEach(i => {
-      if (i.incomeId === inc.id) assignedItemsCount++;
+      if (i.incomeId && i.incomeId === inc.id && i.id !== inc.id && i.incomeId !== 'required_starting_fund') assignedItemsCount++;
     });
 
     // Scan occurrences from the projected financial plan
@@ -1821,8 +1911,18 @@ export function calculateIncomeAccountBalances(
         }
 
         const occIncomeId = occ.incomeId || occ.ref?.incomeId;
-        const isThisAccount = (occIncomeId ? occIncomeId === inc.id : occ.ref?.id === inc.id) || 
-          (!validIncomeIds.has(occ.ref?.id) && (!occIncomeId || !validIncomeIds.has(occIncomeId)) && index === 0);
+        let isThisAccount = Boolean((occIncomeId && occIncomeId === inc.id) || (occ.ref?.id && occ.ref.id === inc.id));
+
+        if (!isThisAccount && occ.type === 'rescate_ahorros') {
+          const priorIncome = (plan || [])
+            .filter(p => p.type === 'income' && p.amt > 0 && p.ref?.id !== 'required_starting_fund' && p.ref?.id !== 'initial_required_funding')
+            .filter(p => (p.targetDate || p.date || p.originalDate) <= occDate)
+            .sort((a, b) => (b.targetDate || b.date || b.originalDate).localeCompare(a.targetDate || a.date || a.originalDate))[0];
+          const activeIncId = priorIncome?.incomeId || priorIncome?.ref?.id;
+          if (activeIncId && activeIncId === inc.id) {
+            isThisAccount = true;
+          }
+        }
 
         if (isThisAccount) {
           totalProjectedInflows += Math.abs(occUsd);
@@ -1846,9 +1946,8 @@ export function calculateIncomeAccountBalances(
       } else {
         // Outflows (expense, debt, savings, etc.)
         const assignedId = occ.incomeId || occ.ref?.incomeId;
-        // If unassigned or assigned to a non-existent account, attribute to primary account (index === 0)
-        // EXCEPTION: if assigned to required_starting_fund, do not attribute to primary account
-        const isAssignedToThis = assignedId === inc.id || (!assignedId && index === 0);
+        // Only attribute to an account if explicitly assigned to it
+        const isAssignedToThis = Boolean(assignedId && assignedId === inc.id && assignedId !== 'required_starting_fund' && assignedId !== 'initial_required_funding');
         if (isAssignedToThis && affectsCash) {
           totalProjectedOutflows += Math.abs(occUsd);
 
@@ -1894,100 +1993,74 @@ export function calculateIncomeAccountBalances(
     };
   });
 
-  // Calculate separate account for Fondo Requerido if it exists in the projected plan
-  const reqFundOcc = (plan || []).find(occ => 
-    occ?.ref?.id === 'required_starting_fund' || 
-    occ?.incomeId === 'required_starting_fund' || 
-    occ?.label === 'Fondo Requerido para Iniciar' ||
-    (typeof occ?.label === 'string' && occ.label.toLowerCase().includes('fondo requerido'))
-  );
+  return results;
+}
 
-  if (reqFundOcc) {
-    const isOccDone = !!reqFundOcc.done;
-    const occDate = reqFundOcc.date || reqFundOcc.targetDate || reqFundOcc.originalDate || today;
-    const isPastOrToday = occDate <= today || (reqFundOcc.targetDate && reqFundOcc.targetDate <= today);
-    const reqAmount = Math.abs(reqFundOcc.amt || 0);
+/**
+ * Calculates initial funding needed from plan start up to the first real income.
+ */
+export function calculateInitialFundingNeeded(profile: UserProfile, exchangeRates: Record<string, number> = {}) {
+  const plan = calculateProjections(profile, exchangeRates);
+  const startD = profile.settings?.planStart || todayStr();
+  const overrides = profile.overrides || {};
+  const initKey = `opening_balance_initial_required_funding_${startD}`;
+  const isInitDone = Boolean(overrides[initKey]?.done || overrides[`initial_required_funding_${startD}`]?.done);
 
-    let reqInflowsToDate = 0;
-    if (isOccDone) {
-      reqInflowsToDate = reqAmount;
+  let firstIncomeDate: string | null = null;
+  let firstIncomeName: string | null = null;
+  
+  for (const occ of plan) {
+    if (occ.type === 'income' && (occ.amt || 0) > 0 && occ.ref?.id !== 'required_starting_fund' && occ.ref?.id !== 'initial_required_funding') {
+      firstIncomeDate = occ.date;
+      firstIncomeName = occ.label || 'Primer Ingreso';
+      break;
     }
-    const reqProjectedInflows = reqAmount;
+  }
 
-    let reqOutflowsToDate = 0;
-    let reqProjectedOutflows = 0;
-    const reqPaidMovements: Array<{
-      date: string;
-      label: string;
-      type: string;
-      amount: number;
-    }> = [];
+  if (isInitDone) {
+    return {
+      neededAmount: 0,
+      firstIncomeDate,
+      firstIncomeName,
+      expensesCount: 0,
+      totalExpensesBeforeFirstIncome: 0,
+      currentOpeningBalance: 0,
+      isConfirmed: true,
+    };
+  }
 
-    // To prevent negative balance in the UI for this virtual account,
-    // we will calculate how much of the assigned expenses are covered by existing capital (opening balance + done incomes)
-    // and show it as a virtual inflow.
-    const tempInflows = reqInflowsToDate;
+  let totalExpensesBeforeFirstIncome = 0;
+  let expensesCount = 0;
 
-    (plan || []).forEach(occ => {
-      if (!occ || occ.type === 'income' || occ.type === 'opening_balance' || occ.type === 'rescate_ahorros') return;
-      const assignedId = occ.incomeId || occ.ref?.incomeId;
-      if (assignedId === 'required_starting_fund') {
-        const occUsd = Math.abs(occ.amt || 0);
-        reqProjectedOutflows += occUsd;
-        const occDone = !!occ.done;
-        const oDate = occ.date || occ.targetDate || occ.originalDate;
-        if (occDone) {
-          reqOutflowsToDate += occUsd;
-          reqPaidMovements.push({
-            date: oDate,
-            label: occ.label ? occ.label.replace(/\s*\(✓.*?\)/g, '').trim() : 'Egreso',
-            type: occ.type,
-            amount: occUsd,
-          });
-        }
+  if (firstIncomeDate) {
+    plan.forEach(occ => {
+      if (occ.date < firstIncomeDate! && (occ.type === 'expense' || occ.type === 'debt' || occ.type === 'savings') && (occ.amt || 0) < 0 && !occ.noAffectBalance) {
+        totalExpensesBeforeFirstIncome += Math.abs(occ.amt || 0);
+        expensesCount++;
       }
     });
-
-    const gap = reqOutflowsToDate - tempInflows;
-    if (gap > 0.001) {
-      const virtualInflow = Math.round(gap * 100) / 100;
-      reqInflowsToDate += virtualInflow;
-      reqPaidMovements.push({
-        date: today,
-        label: 'Capital Existente Aplicado',
-        type: 'income',
-        amount: virtualInflow
-      });
-    }
-
-    reqPaidMovements.sort((a, b) => b.date.localeCompare(a.date));
-
-    const reqAccountCurrency = (profile.settings?.minBalanceCurrency as CurrencyCode) || 'USD_BCV';
-    const rateToReqCurrency = convAmt(1, reqAccountCurrency) || 1;
-    const amountInReqCurrency = reqAmount / rateToReqCurrency;
-
-    const rawReqAvailableToday = reqInflowsToDate - reqOutflowsToDate;
-    const reqAvailableToday = Math.abs(rawReqAvailableToday) < 0.01 ? 0 : rawReqAvailableToday;
-
-    results.push({
-      id: 'required_starting_fund',
-      name: 'Fondo Requerido',
-      amount: amountInReqCurrency,
-      freq: 'one-time',
-      currency: reqAccountCurrency,
-      totalInflowsToDate: reqInflowsToDate,
-      totalOutflowsToDate: reqOutflowsToDate,
-      availableToday: reqAvailableToday,
-      totalProjectedInflows: reqProjectedInflows,
-      totalProjectedOutflows: reqProjectedOutflows,
-      projectedBalance: reqProjectedInflows - reqProjectedOutflows,
-      assignedItemsCount: 0,
-      nextIncomeDate: isOccDone ? null : occDate,
-      paidMovements: reqPaidMovements,
+  } else {
+    // If no income in plan, sum all expenses in the plan
+    plan.forEach(occ => {
+      if ((occ.type === 'expense' || occ.type === 'debt' || occ.type === 'savings') && (occ.amt || 0) < 0 && !occ.noAffectBalance) {
+        totalExpensesBeforeFirstIncome += Math.abs(occ.amt || 0);
+        expensesCount++;
+      }
     });
   }
 
-  return results;
+  const openingBalCurrency = profile.settings?.openingBalanceCurrency || 'USD';
+  const openingUsd = (Number(profile.settings?.openingBalance) || 0) * (exchangeRates[openingBalCurrency] ? 1 / exchangeRates[openingBalCurrency] : 1);
+  const neededAmount = Math.max(0, totalExpensesBeforeFirstIncome - openingUsd);
+
+  return {
+    neededAmount: Math.round(neededAmount * 100) / 100,
+    firstIncomeDate,
+    firstIncomeName,
+    expensesCount,
+    totalExpensesBeforeFirstIncome: Math.round(totalExpensesBeforeFirstIncome * 100) / 100,
+    currentOpeningBalance: Math.round(openingUsd * 100) / 100,
+  };
 }
 
 

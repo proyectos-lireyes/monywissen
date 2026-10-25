@@ -9,6 +9,9 @@ import {
   calculateProjections,
   calculateIncomeAccountBalances,
   getRemainingDebtAmount,
+  calculateInitialFundingNeeded,
+  toIsoDateSafe,
+  calculateIncomeCoverageAnalysis,
 } from '../../utils/financialEngine';
 import {
   TrendingUp,
@@ -28,6 +31,7 @@ import {
   Calendar,
   PiggyBank,
   Clock,
+  Coins,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -177,7 +181,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     [profile, plan, exchangeRates, today]
   );
   const totalAccountAvailableToday = accountBalances.length > 0
-    ? accountBalances.reduce((acc, a) => acc + (a.id !== 'required_starting_fund' ? a.availableToday : Math.max(0, a.availableToday)), 0)
+    ? accountBalances.reduce((acc, a) => acc + a.availableToday, 0)
     : todayBalance;
 
   const lastOccurrence = plan[plan.length - 1];
@@ -237,7 +241,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (e.type === 'rescate_ahorros') chartDataMap[e.date].rescates = (chartDataMap[e.date].rescates || 0) + e?.amt;
       if (e?.amt < 0 && e.type === 'expense') chartDataMap[e.date].expense += Math.abs(e?.amt);
       if (e?.amt < 0 && (e.type === 'debt' )) chartDataMap[e.date].debt += Math.abs(e?.amt);
-      if (e.insufficientFunds && e?.amt < 0) chartDataMap[e.date].deficit = (chartDataMap[e.date].deficit || 0) + ((e as any).deficitAmt || Math.abs(e?.amt));
+      if (e.balance < -0.01) chartDataMap[e.date].deficit = Math.max(chartDataMap[e.date].deficit || 0, Math.round(Math.abs(e.balance) * 100) / 100);
       chartDataMap[e.date].balance = e.balance;
       chartDataMap[e.date].savingsAccumulated = e.savingsAccumulated !== undefined ? e.savingsAccumulated : (chartDataMap[e.date].savingsAccumulated || 0);
       runningBalance = e.balance;
@@ -346,7 +350,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (e?.amt < 0 && e.type === 'expense') biweeklyDataMap[prefix].expense += Math.abs(e?.amt);
       if (e?.amt < 0 && (e.type === 'debt' )) biweeklyDataMap[prefix].debt += Math.abs(e?.amt);
       biweeklyDataMap[prefix].items.push(e);
-      if (e.insufficientFunds && e?.amt < 0) biweeklyDataMap[prefix].deficit = (biweeklyDataMap[prefix].deficit || 0) + ((e as any).deficitAmt || Math.abs(e?.amt));
+      if (e.balance < -0.01) biweeklyDataMap[prefix].deficit = Math.max(biweeklyDataMap[prefix].deficit || 0, Math.round(Math.abs(e.balance) * 100) / 100);
       biweeklyDataMap[prefix].balance = e.balance;
       biweeklyDataMap[prefix].savingsAccumulated = e.savingsAccumulated || 0;
     }
@@ -394,7 +398,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (e?.amt < 0 && e.type === 'expense') weeklyDataMap[weekPrefix].expense += Math.abs(e?.amt);
       if (e?.amt < 0 && (e.type === 'debt' )) weeklyDataMap[weekPrefix].debt += Math.abs(e?.amt);
       weeklyDataMap[weekPrefix].items.push(e);
-      if (e.insufficientFunds && e?.amt < 0) weeklyDataMap[weekPrefix].deficit = (weeklyDataMap[weekPrefix].deficit || 0) + ((e as any).deficitAmt || Math.abs(e?.amt));
+      if (e.balance < -0.01) weeklyDataMap[weekPrefix].deficit = Math.max(weeklyDataMap[weekPrefix].deficit || 0, Math.round(Math.abs(e.balance) * 100) / 100);
       weeklyDataMap[weekPrefix].balance = e.balance; // Keep last balance of the week
       weeklyDataMap[weekPrefix].savingsAccumulated = e.savingsAccumulated || 0;
     }
@@ -441,7 +445,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (e?.amt < 0 && e.type === 'expense') monthlyDataMap[monthPrefix].expense += Math.abs(e?.amt);
       if (e?.amt < 0 && (e.type === 'debt' )) monthlyDataMap[monthPrefix].debt += Math.abs(e?.amt);
       monthlyDataMap[monthPrefix].items.push(e);
-      if (e.insufficientFunds && e?.amt < 0) monthlyDataMap[monthPrefix].deficit = (monthlyDataMap[monthPrefix].deficit || 0) + ((e as any).deficitAmt || Math.abs(e?.amt));
+      if (e.balance < -0.01) monthlyDataMap[monthPrefix].deficit = Math.max(monthlyDataMap[monthPrefix].deficit || 0, Math.round(Math.abs(e.balance) * 100) / 100);
       monthlyDataMap[monthPrefix].balance = e.balance;
       monthlyDataMap[monthPrefix].savingsAccumulated = e.savingsAccumulated || 0;
     }
@@ -506,6 +510,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }));
 
   const PIE_COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#10b981'];
+
+  // Coverage periods and smart savings timing recommendation
+  const coveragePeriods = useMemo(() => {
+    return calculateIncomeCoverageAnalysis(profile, exchangeRates);
+  }, [profile, exchangeRates]);
+
+  const upcomingSavingsSuggestion = useMemo(() => {
+    if (!coveragePeriods || coveragePeriods.length === 0) return null;
+    const period = coveragePeriods.find(p => p.surplusIncome > 0 || p.surplusTotal > 0);
+    if (!period) return null;
+
+    const prevDayOfNextIncome = period.nextIncomeDate 
+      ? toIsoDateSafe(new Date(new Date(period.nextIncomeDate + 'T12:00:00').getTime() - 86400000))
+      : period.incomeDate;
+
+    return {
+      incomeDate: period.incomeDate,
+      incomeNames: period.incomeNames.join(', '),
+      totalIncomeAmount: period.totalIncomeAmount,
+      surplusIncome: period.surplusIncome,
+      nextIncomeDate: period.nextIncomeDate,
+      dateBeforeNextIncome: prevDayOfNextIncome,
+      surplusTotal: period.surplusTotal,
+      daysInPeriod: period.daysInPeriod,
+    };
+  }, [coveragePeriods]);
 
   // Next upcoming income in the plan (ignoring injected starting fund)
   const nextIncomeEvent = plan.find(e => 
@@ -577,8 +607,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     })
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  const startingFundItem = plan.find(e => e.ref?.id === 'required_starting_fund');
-  const hasPendingStartingFund = startingFundItem && !startingFundItem.done;
   const cushionCurrency = profile.settings.minBalanceCurrency || profile.settings.displayCurrency || 'USD';
   const cushionInBase = convertAmount(profile.settings.minBalance || 0, cushionCurrency);
   const autoSaveThresholdInBase = profile.settings.autoSaveThreshold ? convertAmount(profile.settings.autoSaveThreshold, profile.settings.displayCurrency || 'USD') : 0;
@@ -592,59 +620,53 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     showToast('Rango de fechas de proyección actualizado', '📅');
   };
 
+  const initialFunding = useMemo(() => calculateInitialFundingNeeded(profile, exchangeRates), [profile, exchangeRates]);
+
   return (
     <div className="space-y-6 pb-20">
-      {/* Starting Fund Required Alert Banner */}
-      {hasPendingStartingFund && (
-        <div className="p-4 bg-amber-50/95 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+
+      {/* Initial Funding Required Before First Income Banner */}
+      {initialFunding.neededAmount > 0 && (
+        <div className="p-4 bg-amber-50/95 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
           <div className="flex items-start gap-3">
             <div className="p-2.5 bg-amber-500 text-white rounded-xl shadow-xs shrink-0 mt-0.5 sm:mt-0">
-              <Wallet className="w-5 h-5" />
+              <Coins className="w-5 h-5" />
             </div>
             <div>
               <p className="text-xs font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wide flex items-center gap-1.5">
-                <span>Fondo Requerido para Iniciar el Plan</span>
+                <span>🪙 Dinero Necesario para Iniciar el Plan</span>
                 <span className="bg-amber-200 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 px-1.5 py-0.5 rounded text-[10px] font-extrabold">
-                  Pendiente
+                  Antes del 1er Ingreso ({initialFunding.firstIncomeDate ? formatDateStr(initialFunding.firstIncomeDate) : 'Pendiente'})
                 </span>
               </p>
-              <p className="text-sm font-semibold text-amber-950 dark:text-amber-100 mt-0.5">
-                Necesitas iniciar con al menos <span className="text-amber-700 dark:text-amber-400 font-black">{formatCurrency(startingFundItem.amt)}</span> para cubrir los compromisos previos a tu primer cobro {nextIncomeDate ? `(${formatDateStr(nextIncomeDate)})` : ''} sin quedar en saldo negativo.
+              <p className="text-sm font-semibold text-amber-950 dark:text-amber-100 mt-0.5 leading-relaxed">
+                Para cubrir los <strong className="text-amber-900 dark:text-amber-200 font-black">{initialFunding.expensesCount} egreso(s)</strong> previstos ({formatCurrency(initialFunding.totalExpensesBeforeFirstIncome)}) desde el inicio del plan hasta la llegada de tu primer ingreso ({initialFunding.firstIncomeName}), requieres un Saldo Inicial Base de <span className="text-amber-800 dark:text-amber-300 font-black">{formatCurrency(initialFunding.neededAmount)}</span>.
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-            <button
-              onClick={() => {
-                setTempOpeningBalanceStr(String(startingFundItem.amt));
-                setTempOpeningBalanceCurrency('USD'); // Injected fund is always in base currency
-                setTempPlanStart(profile.settings.planStart || today);
-                setShowSetupModal(true);
-              }}
-              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-colors shadow-xs"
-            >
-              Ajustar Saldo Inicial
-            </button>
-            <button
-              onClick={() => {
-                const key = `income_required_starting_fund_${profile.settings.planStart}`;
-                updateProfileData(draft => {
-                  if (!draft.overrides) draft.overrides = {};
-                  draft.overrides[key] = {
-                    ...(draft.overrides[key] || {}),
-                    done: true,
-                    amt: startingFundItem.amt,
-                    actualDate: profile.settings.planStart
-                  };
-                  draft.settings.openingBalance = (draft.settings.openingBalance || 0) + startingFundItem.amt;
-                });
-                showToast(`Saldo inicial de ${formatCurrency(startingFundItem.amt)} marcado como fondeado`, '✅');
-              }}
-              className="px-3 py-1.5 bg-white dark:bg-slate-800 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 hover:bg-amber-100/50 text-xs font-bold rounded-xl transition-colors"
-            >
-              Marcar Fondeado
-            </button>
-          </div>
+          <button
+            onClick={() => {
+              updateProfileData(draft => {
+                draft.incomes = (draft.incomes || []).filter(i => i.id !== 'required_starting_fund' && i.id !== 'initial_required_funding');
+                draft.settings.openingBalance = 0;
+                draft.settings.openingBalanceCurrency = 'USD';
+                const startD = draft.settings.planStart || todayStr();
+                draft.overrides = draft.overrides || {};
+                draft.overrides[`opening_balance_initial_required_funding_${startD}`] = {
+                  ...(draft.overrides[`opening_balance_initial_required_funding_${startD}`] || {}),
+                  done: true
+                };
+                draft.overrides[`initial_required_funding_${startD}`] = {
+                  ...(draft.overrides[`initial_required_funding_${startD}`] || {}),
+                  done: true
+                };
+              });
+              showToast(`Dinero Inicial Confirmado (${formatCurrency(initialFunding.neededAmount)})`, '💾');
+            }}
+            className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-colors shrink-0 shadow-xs cursor-pointer"
+          >
+            💾 Confirmar Disponibilidad de Dinero Inicial
+          </button>
         </div>
       )}
 
@@ -710,37 +732,79 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       )}
 
-      {/* Smart Auto-Savings Recommendation (Optional) */}
-      {profile.settings.enableAutoSavings && surplusBalance >= 10 && !dismissAutoSaveRec && (
-        <div className="p-4 bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-start gap-3">
-            <div className="p-2.5 bg-blue-500 text-white rounded-xl shadow-xs shrink-0 mt-0.5 sm:mt-0">
-              <PiggyBank className="w-5 h-5" />
+      {/* Smart Savings Timing Recommendation */}
+      {upcomingSavingsSuggestion && !dismissAutoSaveRec && (
+        <div className="p-4 bg-gradient-to-r from-emerald-50/90 to-blue-50/90 dark:from-emerald-950/40 dark:to-blue-950/40 border border-emerald-200/80 dark:border-emerald-800/60 rounded-2xl flex flex-col gap-3 shadow-xs">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-xs shrink-0">
+                <PiggyBank className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wide flex items-center gap-1.5">
+                  <span>💡 Sugerencia Inteligente: Cuándo Ahorrar</span>
+                  <span className="bg-emerald-200 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 px-1.5 py-0.5 rounded text-[10px] font-extrabold">
+                    Recomendación
+                  </span>
+                </p>
+                <p className="text-xs font-medium text-slate-700 dark:text-slate-300 mt-0.5">
+                  Basado en la cobertura de tus ingresos, te indicamos las dos mejores fechas para apartar dinero sin arriesgar tus pagos:
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-bold text-blue-700 dark:text-blue-300 uppercase tracking-wide flex items-center gap-1.5">
-                <span>Recomendación de Ahorro Inteligente</span>
-                <span className="bg-blue-200 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 px-1.5 py-0.5 rounded text-[10px] font-extrabold">
-                  Opcional
+            <button
+              onClick={() => setDismissAutoSaveRec(true)}
+              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-semibold shrink-0"
+            >
+              Ignorar
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-0.5">
+            {/* Strategy 1: On payday */}
+            <div className="p-3 bg-white/90 dark:bg-slate-900/90 border border-emerald-200/80 dark:border-emerald-900/60 rounded-xl space-y-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-extrabold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                  🎯 Opción A: El día de cobro
                 </span>
+                <span className="px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 rounded font-black text-[10px]">
+                  {formatDateStr(upcomingSavingsSuggestion.incomeDate)}
+                </span>
+              </div>
+              <p className="text-sm font-black text-slate-900 dark:text-slate-100">
+                Aparta <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">{formatCurrency(upcomingSavingsSuggestion.surplusIncome)}</span> al cobrar {upcomingSavingsSuggestion.incomeNames}.
               </p>
-              <p className="text-sm font-semibold text-blue-950 dark:text-blue-100 mt-0.5">
-                Detectamos un excedente de liquidez de <span className="text-blue-700 dark:text-blue-400 font-black">{formatCurrency(surplusBalance)}</span> por encima de tu colchón mínimo de seguridad.
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                Ahorras primero el día de pago. Tus gastos hasta el {upcomingSavingsSuggestion.nextIncomeDate ? formatDateStr(upcomingSavingsSuggestion.nextIncomeDate) : 'próximo pago'} están 100% cubiertos.
+              </p>
+            </div>
+
+            {/* Strategy 2: Right before next payday */}
+            <div className="p-3 bg-white/90 dark:bg-slate-900/90 border border-blue-200/80 dark:border-blue-900/60 rounded-xl space-y-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-extrabold text-blue-700 dark:text-blue-400 flex items-center gap-1">
+                  🗓️ Opción B: Al finalizar el ciclo
+                </span>
+                <span className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 rounded font-black text-[10px]">
+                  {formatDateStr(upcomingSavingsSuggestion.dateBeforeNextIncome)}
+                </span>
+              </div>
+              <p className="text-sm font-black text-slate-900 dark:text-slate-100">
+                Aparta <span className="text-blue-600 dark:text-blue-400 font-extrabold">{formatCurrency(upcomingSavingsSuggestion.surplusTotal)}</span> del sobrante en caja.
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                Es el día justo antes de tu siguiente pago ({upcomingSavingsSuggestion.nextIncomeDate ? formatDateStr(upcomingSavingsSuggestion.nextIncomeDate) : 'próximo cobro'}), tras cubrir todos tus compromisos del ciclo.
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+
+          <div className="flex items-center justify-end gap-2 pt-0.5">
             <button
               onClick={() => setActiveView('savings')}
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-colors shadow-xs"
+              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl transition-colors shadow-xs flex items-center gap-1.5"
             >
-              Apartar Ahorro
-            </button>
-            <button
-              onClick={() => setDismissAutoSaveRec(true)}
-              className="px-2.5 py-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-semibold"
-            >
-              Ignorar
+              <PiggyBank className="w-4 h-4" />
+              <span>Registrar Ahorro</span>
             </button>
           </div>
         </div>
@@ -1265,17 +1329,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
             {upcomingList.map((u, idx) => {
               const isOverdue = !u.done && u.date < today;
-              const isStartingFund = u.ref?.id === 'required_starting_fund';
 
               return (
                 <div
                   key={idx}
                   onClick={() => {
-                    if (isStartingFund) {
-                      setTempOpeningBalanceStr(String(u.amt));
-                      setTempPlanStart(profile.settings.planStart || today);
-                      setShowSetupModal(true);
-                    } else if (u.type !== 'opening_balance') {
+                    if (u.type !== 'opening_balance') {
                       onOpenDetails(u.type, u.ref?.id || '', u.originalDate, u.date);
                     }
                   }}
@@ -1284,9 +1343,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     borderLeftWidth: '4px'
                   } : {}}
                   className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between cursor-pointer ${
-                    isStartingFund
-                      ? 'bg-amber-50/70 border-amber-300 dark:bg-amber-950/30 dark:border-amber-800 hover:border-amber-400'
-                      : isOverdue
+                    isOverdue
                       ? 'bg-amber-50/60 border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/40'
                       : (!u.ref?.effectiveColor ? 'bg-slate-50 dark:bg-slate-800/60 border-slate-100 dark:border-slate-800 hover:border-slate-300' : 'bg-white dark:bg-slate-900 shadow-sm border-slate-100 dark:border-slate-800 hover:border-slate-300')
                   }`}
@@ -1294,32 +1351,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <div className="space-y-0.5">
                     <p className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 flex-wrap">
                       {u.label}
-                      {isStartingFund && (
-                        <span className="bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 px-1.5 py-0.2 rounded text-[9px] font-extrabold">
-                          Capital de inicio
-                        </span>
-                      )}
                       {u.originalDate && u.originalDate !== u.date && (
                           <span className="text-[9px] font-normal text-slate-500">(Plan: {formatDateStr(u.originalDate).substring(0,5)})</span>
                       )}
                     </p>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
-                      {isStartingFund ? (
-                        <span className="text-amber-700 dark:text-amber-400 font-semibold">
-                          Requerido para iniciar el plan sin déficit
-                        </span>
-                      ) : isOverdue ? (
+                      {isOverdue ? (
                         <span className="text-amber-600 dark:text-amber-400 font-semibold">
                           ⚠️ Atrasado ({formatDateStr(u.date)})
                         </span>
                       ) : (
                         <span>Proyectado: {formatDateStr(u.date)}</span>
                       )}
-                      {!isStartingFund && (
-                        <span className="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md border border-slate-200/50 dark:border-slate-700/50 font-bold">
-                          🏦 {profile.incomes.find(i => i.id === u.incomeId)?.name || 'Cuenta Principal'}
-                        </span>
-                      )}
+                      <span className="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md border border-slate-200/50 dark:border-slate-700/50 font-bold">
+                        🏦 {profile.incomes.find(i => i.id === u.incomeId)?.name || 'Cuenta Principal'}
+                      </span>
                     </p>
                   </div>
 
@@ -1331,29 +1377,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     >
                       {formatCurrency(Math.abs(u.amt))}
                     </p>
-                    {isStartingFund && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const key = `income_required_starting_fund_${profile.settings.planStart}`;
-                          updateProfileData(draft => {
-                            if (!draft.overrides) draft.overrides = {};
-                            draft.overrides[key] = {
-                              ...(draft.overrides[key] || {}),
-                              done: true,
-                              amt: u.amt,
-                              actualDate: profile.settings.planStart
-                            };
-                            draft.settings.openingBalance = (draft.settings.openingBalance || 0) + u.amt;
-                          });
-                          showToast(`Saldo inicial de ${formatCurrency(u.amt)} confirmado`, '✅');
-                        }}
-                        className="p-1 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded-lg text-[10px] font-extrabold transition-colors px-2"
-                        title="Marcar como depositado / fondeado"
-                      >
-                        Fondear
-                      </button>
-                    )}
                   </div>
                 </div>
               );

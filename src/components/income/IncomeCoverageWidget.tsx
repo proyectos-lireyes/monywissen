@@ -215,9 +215,43 @@ export const IncomeCoverageWidget: React.FC<IncomeCoverageWidgetProps> = ({
           : 'bg-rose-500/10 border-rose-200/60 dark:border-rose-800/40 text-rose-900 dark:text-rose-200'
       }`}>
         {isCovered ? (
-          <p>
-            <strong>✅ Ingreso Suficiente:</strong> Tu ingreso de <strong>{formatCurrency(currentPeriod.totalIncomeAmount)}</strong> del {formatDateStr(currentPeriod.incomeDate)} cubre con holgura los <strong>{formatCurrency(currentPeriod.totalEgresos)}</strong> requeridos hasta el próximo ingreso ({currentPeriod.nextIncomeDate ? formatDateStr(currentPeriod.nextIncomeDate) : 'fin de periodo'}). Te quedan <strong>{formatCurrency(currentPeriod.surplusIncome)}</strong> disponibles.
-          </p>
+          <div>
+            <p>
+              <strong>✅ Ingreso Suficiente:</strong> Tu ingreso de <strong>{formatCurrency(currentPeriod.totalIncomeAmount)}</strong> del {formatDateStr(currentPeriod.incomeDate)} cubre con holgura los <strong>{formatCurrency(currentPeriod.totalEgresos)}</strong> requeridos hasta el próximo ingreso ({currentPeriod.nextIncomeDate ? formatDateStr(currentPeriod.nextIncomeDate) : 'fin de periodo'}). Te quedan <strong>{formatCurrency(currentPeriod.surplusIncome)}</strong> disponibles.
+            </p>
+            {currentPeriod.surplusIncome > 0 && (
+              <div className="mt-2.5 pt-2 border-t border-emerald-200/80 dark:border-emerald-800/60 text-xs">
+                <span className="font-extrabold flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300">
+                  💡 ¿Cuándo Ahorrar en este Ciclo? (Fechas Recomendadas)
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1.5">
+                  <div className="p-2 rounded-xl bg-emerald-100/80 dark:bg-emerald-900/40 border border-emerald-200 dark:border-emerald-800/60">
+                    <span className="text-[10px] font-extrabold uppercase text-emerald-800 dark:text-emerald-200 block">
+                      🎯 Opción A: Al Cobrar ({formatDateStr(currentPeriod.incomeDate)})
+                    </span>
+                    <p className="text-xs font-bold text-emerald-950 dark:text-emerald-100 mt-0.5">
+                      Aparta <span className="font-black underline">{formatCurrency(currentPeriod.surplusIncome)}</span> de tu ingreso {currentPeriod.incomeNames.join(', ')}.
+                    </p>
+                    <span className="text-[10px] text-emerald-700 dark:text-emerald-300 block mt-0.5">
+                      Ahorras primero. Tus gastos hasta el {currentPeriod.nextIncomeDate ? formatDateStr(currentPeriod.nextIncomeDate) : 'próximo pago'} están 100% cubiertos.
+                    </span>
+                  </div>
+
+                  <div className="p-2 rounded-xl bg-blue-100/80 dark:bg-blue-900/40 border border-blue-200 dark:border-blue-800/60">
+                    <span className="text-[10px] font-extrabold uppercase text-blue-800 dark:text-blue-200 block">
+                      🗓️ Opción B: Al Finalizar el Ciclo ({currentPeriod.nextIncomeDate ? formatDateStr(currentPeriod.nextIncomeDate) : 'Fin de Periodo'})
+                    </span>
+                    <p className="text-xs font-bold text-blue-950 dark:text-blue-100 mt-0.5">
+                      Aparta <span className="font-black underline">{formatCurrency(currentPeriod.surplusTotal)}</span> del sobrante en caja.
+                    </p>
+                    <span className="text-[10px] text-blue-700 dark:text-blue-300 block mt-0.5">
+                      Tras pagar todos tus compromisos, este es tu excedente libre garantizado.
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         ) : isCoveredWithBal ? (
           <p>
             <strong>🟡 Cubierto con Saldo Acumulado:</strong> Tu ingreso directo de <strong>{formatCurrency(currentPeriod.totalIncomeAmount)}</strong> solo cubre el {currentPeriod.incomeCoveragePct}% de los <strong>{formatCurrency(currentPeriod.totalEgresos)}</strong> del ciclo. Sin embargo, combinándolo con tu saldo previo disponible (<strong>{formatCurrency(currentPeriod.balanceBeforeIncome)}</strong>), logras cubrir todos los compromisos antes del próximo pago.

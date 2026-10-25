@@ -31,7 +31,7 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
 
   // Compute projection plan to get up-to-date inflows and outflows per account
   const plan = calculateProjections(profile, exchangeRates);
-  const accountBalances = calculateIncomeAccountBalances(profile, plan, exchangeRates, todayStr());
+  const accountBalances = calculateIncomeAccountBalances(profile, plan, exchangeRates, todayStr()).filter(a => a.id !== 'required_starting_fund');
 
 
   let todayBalanceFromPlan = 0;
@@ -193,14 +193,12 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
                   <th className="py-3 px-4 bg-emerald-50/40 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300 font-black">
                     Disponible Hoy
                   </th>
-                  <th className="py-3 px-4">Egresos Asignados</th>
                   <th className="py-3 px-4">Próximo Ingreso</th>
                   <th className="py-3 px-4 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
                 {accountBalances.map((acc) => {
-                  const isRequiredFundAccount = acc.id === 'required_starting_fund';
                   const realIndex = (profile.incomes || []).findIndex(i => i.id === acc.id);
                   const isExpanded = expandedAccountId === acc.id;
 
@@ -212,31 +210,22 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
 
                   return (
                     <React.Fragment key={acc.id}>
-                      <tr className={`transition-colors ${isRequiredFundAccount ? 'bg-amber-50/40 dark:bg-amber-950/20 hover:bg-amber-50/70' : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'}`}>
+                      <tr className="transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
                         <td
-                          onClick={() => {
-                            if (!isRequiredFundAccount) onOpenEdit('income', realIndex);
-                          }}
-                          className={`py-3.5 px-4 group ${!isRequiredFundAccount ? 'cursor-pointer' : ''}`}
-                          title={!isRequiredFundAccount ? 'Toca para editar cuenta' : 'Fondo Requerido del Plan'}
+                          onClick={() => onOpenEdit('income', realIndex)}
+                          className="py-3.5 px-4 group cursor-pointer"
+                          title="Toca para editar cuenta"
                         >
                           <div className="flex items-center gap-2">
-                            <span className={`w-2 h-2 rounded-full shrink-0 ${isRequiredFundAccount ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                            <span className="w-2 h-2 rounded-full shrink-0 bg-emerald-500" />
                             <div>
                               <div className="flex items-center gap-1.5">
-                                <span className={`font-bold text-sm block ${isRequiredFundAccount ? 'text-amber-900 dark:text-amber-200' : 'text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400'} transition-colors`}>
+                                <span className="font-bold text-sm block text-slate-900 dark:text-slate-100 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                                   {acc.name}
                                 </span>
-                                {isRequiredFundAccount && (
-                                  <span className="text-[9px] font-black uppercase px-1.5 py-0.2 bg-amber-200 dark:bg-amber-800 text-amber-900 dark:text-amber-100 rounded-md">
-                                    Fondo Sistema
-                                  </span>
-                                )}
                               </div>
                               <span className="text-[10px] text-slate-400 capitalize">
-                                {isRequiredFundAccount
-                                  ? 'Fondo inicial para cubrir gastos previos'
-                                  : acc.freq === 'biweekly' ? `Quincenal (${acc.day || '15-30'})`
+                                {acc.freq === 'biweekly' ? `Quincenal (${acc.day || '15-30'})`
                                   : acc.freq === 'weekly' ? `Semanal (Día ${acc.day || '1'})`
                                   : acc.freq === 'monthly' ? `Mensual (Día ${acc.day || '1'})`
                                   : acc.freq === 'bimonthly' ? `Bimensual (Día ${acc.day || '1'})`
@@ -252,10 +241,10 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
 
                         <td
                           onClick={() => {
-                            if (!isRequiredFundAccount) onOpenEdit('income', realIndex);
+                            if (realIndex >= 0) onOpenEdit('income', realIndex);
                           }}
-                          className={`py-3.5 px-4 font-bold text-slate-700 dark:text-slate-300 ${!isRequiredFundAccount ? 'cursor-pointer hover:text-blue-600' : ''} transition-colors`}
-                          title={!isRequiredFundAccount ? 'Toca para editar monto' : 'Monto del fondo'}
+                          className="py-3.5 px-4 font-bold text-slate-700 dark:text-slate-300 cursor-pointer hover:text-blue-600 transition-colors"
+                          title="Toca para editar monto"
                         >
                           {formatCurrency(convertAmount(acc.amount, acc.currency))}
                         </td>
@@ -278,16 +267,6 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
                           </div>
                         </td>
 
-                        <td className="py-3.5 px-4">
-                          <button
-                            onClick={() => setExpandedAccountId(isExpanded ? null : acc.id)}
-                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-[11px] transition-colors cursor-pointer"
-                          >
-                            <span>{(acc.assignedItemsCount || paidMovements.length || 0)} movimientos</span>
-                            {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                          </button>
-                        </td>
-
                         <td className="py-3.5 px-4 text-slate-500">
                           {acc.nextIncomeDate ? (
                             <span className="flex items-center gap-1 text-[11px]">
@@ -308,121 +287,16 @@ export const IncomeView: React.FC<IncomeViewProps> = ({ onOpenCreate, onOpenEdit
                             >
                               <Plus className="w-4 h-4" />
                             </button>
-                            {!isRequiredFundAccount ? (
-                              <button
-                                onClick={() => handleDelete(acc.id, acc.name)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
-                                title="Eliminar cuenta"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            ) : (
-                              <span className="text-xs text-amber-500 font-bold px-1.5">🪙</span>
-                            )}
+                            <button
+                              onClick={() => handleDelete(acc.id, acc.name)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
+                              title="Eliminar cuenta"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </td>
                       </tr>
-
-                      {/* Expanded row with assigned items & paid movements */}
-                      {isExpanded && (
-                        <tr className="bg-slate-50/70 dark:bg-slate-800/40">
-                          <td colSpan={6} className="p-4 space-y-4">
-                            {/* Historial de Movimientos Efectuados en esta Cuenta */}
-                            <div>
-                              <span className="text-[11px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-wide flex items-center gap-1.5 mb-2">
-                                💸 Movimientos Registrados en {acc.name} ({paidMovements.length}):
-                              </span>
-                              {paidMovements.length === 0 ? (
-                                <p className="text-xs text-slate-400 italic bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
-                                  Aún no se han registrado movimientos procesados en esta cuenta. Al registrar o marcar un ingreso o gasto como listo, se afectará este saldo.
-                                </p>
-                              ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                                  {paidMovements.map((mov, idx) => (
-                                    <div key={idx} className="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center text-xs shadow-2xs">
-                                      <div>
-                                        <span className="font-bold text-slate-800 dark:text-slate-200 block truncate max-w-[170px]" title={mov.label}>
-                                          {mov.label}
-                                        </span>
-                                        <span className="text-[10px] text-slate-400">
-                                          {mov.date} · {mov.type === 'income' ? '📈 Ingreso' : mov.type === 'debt' ? '💳 Cuota' : mov.type === 'savings' ? '💰 Ahorro' : '📉 Gasto'}
-                                        </span>
-                                      </div>
-                                      <span className={`font-black shrink-0 ${mov.type === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                                        {mov.type === 'income' ? '+' : '-'}{formatCurrency(mov.amount)}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-
-                            <div className="flex flex-wrap justify-end gap-2 pt-2">
-                               <button 
-                                 onClick={() => onOpenCreate('income', true, acc.id)}
-                                 className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 text-emerald-600 dark:text-emerald-400 rounded-xl text-[10px] font-black flex items-center gap-1.5 transition-colors border border-emerald-100 dark:border-emerald-800/40"
-                               >
-                                 <Plus className="w-3 h-3" /> + Ingreso en {acc.name}
-                               </button>
-                               <button 
-                                 onClick={() => onOpenCreate('expense', true, acc.id)}
-                                 className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 rounded-xl text-[10px] font-black flex items-center gap-1.5 transition-colors border border-rose-100 dark:border-rose-800/40"
-                               >
-                                 <Plus className="w-3 h-3" /> - Gasto desde {acc.name}
-                               </button>
-                            </div>
-
-                            {/* Egresos y Compromisos Fijos Asignados a esta cuenta */}
-                            <div>
-                              <span className="text-[11px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-wide block mb-2">
-                                📋 Compromisos fijos asignados a {acc.name} ({assignedExpenses.length + assignedDebts.length + assignedSavings.length}):
-                              </span>
-
-                              {assignedExpenses.length === 0 && assignedDebts.length === 0 && assignedSavings.length === 0 ? (
-                                <p className="text-xs text-slate-400 italic bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
-                                  No hay compromisos fijos pre-asignados a esta cuenta. Puedes asignar gastos específicos desde el formulario o indicar la cuenta al momento de pagar.
-                                </p>
-                              ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                                  {assignedExpenses.map(exp => (
-                                    <div key={exp.id} className="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center text-xs shadow-2xs">
-                                      <div>
-                                        <span className="font-bold text-slate-800 dark:text-slate-200 block">{exp.name}</span>
-                                        <span className="text-[10px] text-slate-400">Gasto ({exp.freq || 'mensual'})</span>
-                                      </div>
-                                      <span className="font-black text-slate-900 dark:text-slate-100">
-                                        {formatCurrency(convertAmount(exp.amount, exp.currency))}
-                                      </span>
-                                    </div>
-                                  ))}
-                                  {assignedDebts.map(d => (
-                                    <div key={d.id} className="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center text-xs shadow-2xs">
-                                      <div>
-                                        <span className="font-bold text-slate-800 dark:text-slate-200 block">{d.name}</span>
-                                        <span className="text-[10px] text-slate-400">Deuda / Cuota</span>
-                                      </div>
-                                      <span className="font-black text-slate-900 dark:text-slate-100">
-                                        {formatCurrency(convertAmount(d.amount || d.balance || 0, d.currency))}
-                                      </span>
-                                    </div>
-                                  ))}
-                                  {assignedSavings.map(s => (
-                                    <div key={s.id} className="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center text-xs shadow-2xs">
-                                      <div>
-                                        <span className="font-bold text-slate-800 dark:text-slate-200 block">{s.person || 'Ahorro'}</span>
-                                        <span className="text-[10px] text-slate-400">Ahorro</span>
-                                      </div>
-                                      <span className="font-black text-emerald-600">
-                                        {formatCurrency(convertAmount(s.amount, s.currency))}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      )}
                     </React.Fragment>
                   );
                 })}

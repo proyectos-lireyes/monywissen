@@ -198,7 +198,7 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                          </span>
                       )}
                       <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-500 mt-1">
-                        🏦 {profile.incomes.find(i => i.id === item.incomeId)?.name || (item.incomeId === 'required_starting_fund' ? 'Fondo Requerido' : 'Cuenta Principal')}
+                        🏦 {profile.incomes.find(i => i.id === item.incomeId)?.name || 'Cuenta Principal'}
                       </span>
                     </div>
                   </div>

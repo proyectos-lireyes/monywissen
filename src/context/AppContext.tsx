@@ -110,12 +110,15 @@ function sanitizeProfile(raw: any): UserProfile {
     settings: {
       ...seed.settings,
       ...(raw.settings || {}),
+      openingBalance: 0,
       customDebts: customDebts,
       paymentMethods: Array.isArray(raw.settings?.paymentMethods) ? raw.settings.paymentMethods : seed.settings.paymentMethods,
       contacts: Array.isArray(raw.settings?.contacts) ? raw.settings.contacts : seed.settings.contacts,
       budgets: raw.settings?.budgets && typeof raw.settings.budgets === 'object' ? raw.settings.budgets : {},
     },
-    incomes: Array.isArray(raw.incomes) ? raw.incomes : [],
+    incomes: Array.isArray(raw.incomes) 
+      ? raw.incomes.filter((i: any) => i.id !== 'required_starting_fund' && i.id !== 'initial_required_funding') 
+      : [],
     expenses: Array.isArray(raw.expenses) ? raw.expenses : [],
     debts,
     savingsList: Array.isArray(raw.savingsList) ? raw.savingsList : [],
