@@ -547,19 +547,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const notifEnabled = rawProfile.settings.notificationsEnabled !== false;
     const notifTime = rawProfile.settings.notifTime || '08:00';
     
-    scheduleNativeDailyReminder(notifTime, notifEnabled);
+    scheduleNativeDailyReminder(profile, exchangeRates, notifTime, notifEnabled);
 
     // Active session interval reminder (when app is open)
     const interval = setInterval(() => {
       checkAndTriggerDailyReminder(
-        rawProfile.expenses,
-        rawProfile.debts,
+        profile,
+        exchangeRates,
         notifEnabled,
         notifTime
       );
     }, 60000);
     return () => clearInterval(interval);
-  }, [rawProfile.settings.notificationsEnabled, rawProfile.settings.notifTime, rawProfile.expenses, rawProfile.debts]);
+  }, [rawProfile.settings.notificationsEnabled, rawProfile.settings.notifTime, profile, exchangeRates]);
 
   // Persist state strictly to LocalStorage on changes
   const lastLocalMutationTimeRef = useRef<number>(Date.now());

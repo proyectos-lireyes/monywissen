@@ -30,7 +30,7 @@ interface SettingsViewProps {
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
-  const { profile, updateProfileData, showToast, state, importFullState, loginUser, logoutUser, currentProfileName, updateState, startBackgroundUpdateDownload, checkForUpdates, forceUploadLocalToCloud } = useApp();
+  const { profile, exchangeRates, updateProfileData, showToast, state, importFullState, loginUser, logoutUser, currentProfileName, updateState, startBackgroundUpdateDownload, checkForUpdates, forceUploadLocalToCloud } = useApp();
   const [subTab, setSubTab] = useState<'rules' | 'backup' | 'about' | 'reset'>('rules');
 
   const [isForceUploading, setIsForceUploading] = useState(false);
@@ -317,14 +317,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
       draft.settings.displayCurrency = displayCurrency;
       draft.settings.paymentCurrency = paymentCurrency;
     });
-    scheduleNativeDailyReminder(notifTime, notificationsEnabled);
+    scheduleNativeDailyReminder(profile, exchangeRates, notifTime, notificationsEnabled);
     showToast('Reglas y recordatorios guardados', '⚙️');
   };
 
   const handleTestNotification = async () => {
     setIsTestingNotif(true);
     try {
-      const res = await testNotificationNow();
+      const res = await testNotificationNow(profile, exchangeRates);
       if (res.success) {
         showToast(res.message, '🔔');
       } else {
@@ -543,10 +543,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenAuth }) => {
                 <div>
                   <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                     <Bell className="w-3.5 h-3.5 text-blue-600" />
-                    Recordatorios Diarios de Pagos y Deudas
+                    Recordatorios de Pagos y Resumen Semanal
                   </label>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Notificación automática a la hora configurada para avisarte sobre cuotas y gastos que vencen hoy o están atrasados.
+                    Notificación solo si tienes pagos pendientes para el día, y resumen semanal los lunes a la hora configurada.
                   </p>
                 </div>
                 <button
