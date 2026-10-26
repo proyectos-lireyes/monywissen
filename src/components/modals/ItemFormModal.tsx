@@ -770,8 +770,24 @@ export const ItemFormModal: React.FC<ItemFormModalProps> = ({
     showToast(editingPayment.isPaidState === false ? 'Fecha reprogramada' : 'Registro de pago actualizado', '✅');
   };
 
+  const lastInitializedRef = React.useRef<{ isOpen: boolean; type: string | null; editIndex: number | null } | null>(null);
+
   useEffect(() => {
-    if (!isOpen || !type) return;
+    if (!isOpen || !type) {
+      lastInitializedRef.current = null;
+      return;
+    }
+
+    if (
+      lastInitializedRef.current &&
+      lastInitializedRef.current.isOpen === isOpen &&
+      lastInitializedRef.current.type === type &&
+      lastInitializedRef.current.editIndex === editIndex
+    ) {
+      return;
+    }
+
+    lastInitializedRef.current = { isOpen, type, editIndex };
 
     if (editIndex !== null) {
       if (type === 'income') {
